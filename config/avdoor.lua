@@ -114,6 +114,18 @@ OPX.Config.MODULES.avdoor = {
 	BOARD = {
 		DELAY_MS = 450,
 		HOLD_MS = 1500,
+		-- A HULL THAT HAS JUST APPEARED IS NOT BOARDED YET. The owner,
+		-- 2026-10-03: "the maxtac av is not driving when i drive it off it stays
+		-- invisible". The client log of that flight: the pad put the pilot in the
+		-- seat 0.3 s after the hull appeared -- before its projection had
+		-- settled (the AV lift's drop onto the pad, the record's appearance
+		-- swapped in, the observer physics handed over) -- and for the whole
+		-- flight the hull the engine drew stayed on the pad while the controls
+		-- flew on (`hullTrailM` 14-17 m; a flight that works trails by
+		-- centimetres): a pilot flying in nothing, the AV left behind. A body
+		-- boards a hull no sooner than this long after it was created, whether
+		-- the pad seats it or the door key does (`M.Fresh`). `0` boards at once.
+		SETTLE_MS = 2500,
 	},
 
 	-- THE KEY. `F`, like the MaxTac crew door: the gesture a player already

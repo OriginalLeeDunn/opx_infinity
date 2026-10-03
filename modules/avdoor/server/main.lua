@@ -78,6 +78,10 @@ local pending = {}
 -- Players with a delayed boarding in flight, so one press is one boarding.
 local boarding = {}
 
+-- Hulls created a moment ago, by id as text: when (`OPX.Now()`) each was
+-- created. Nobody boards one until `BOARD.SETTLE_MS` has passed (`M.Fresh`).
+local fresh = {}
+
 -- Sounds sent and not yet answered, by token: `{ id, event, which, duration,
 -- bucket, at, sent = { [playerId] = true } }`.
 local heardBy = {}
@@ -331,6 +335,50 @@ function M.Verdict(playerId, raw)
 		end
 	end
 	return nil, 'no_seat'
+end
+
+--- Says a hull was created just now, so nobody boards it before it settled.
+--
+-- WHY A NEW HULL WAITS. The owner, 2026-10-03: "the maxtac av is not driving
+-- when i drive it off it stays invisible". The pilot's client log of that
+-- flight: the pad seated the pilot 0.3 s after the hull appeared, and for the
+-- whole flight the hull the engine drew stayed where it had appeared while the
+-- controls flew on -- `hullTrailM` 14-17 m, where a working flight trails by
+-- centimetres -- so the pilot flew in nothing and the AV was left on the pad.
+-- In those first moments the platform is still settling the projection: the AV
+-- lift's drop onto the pad, the record's appearance swapped in, the observer
+-- physics handed over. A body seated after that flies the hull it sees, so a
+-- new hull is boarded no sooner than `BOARD.SETTLE_MS` after it was created --
+-- by the pad (`garages`) and by the door key alike.
+-- @param id any the hull, as the host knows it
+-- @return number how long from now it settles, in milliseconds
+function M.Fresh(id)
+	if id == nil then return 0 end
+	local settle = M.BoardSettings().settle
+	if settle <= 0 then return 0 end
+	local now = OPX.Now()
+	-- The ledger only ever holds a few seconds of hulls: the settled ones go.
+	for key, at in pairs(fresh) do
+		if now - at >= settle then fresh[key] = nil end
+	end
+	fresh[tostring(id)] = now
+	return settle
+end
+
+--- How long a hull still settles before a body may board it.
+-- @param id any the hull, as the host knows it
+-- @return number milliseconds, 0 for a settled or unknown hull
+function M.SettleLeft(id)
+	if id == nil then return 0 end
+	local key = tostring(id)
+	local at = fresh[key]
+	if at == nil then return 0 end
+	local left = at + M.BoardSettings().settle - OPX.Now()
+	if left <= 0 then
+		fresh[key] = nil
+		return 0
+	end
+	return math.ceil(left)
 end
 
 --- Seats a player through the platform's own authoritative mount.
@@ -893,6 +941,7 @@ end
 local function reset()
 	registry, spoke, told, aircraftRecords = {}, {}, {}, {}
 	doorLedger, occupancy, pending, boarding, heardBy, warned = {}, {}, {}, {}, {}, {}
+	fresh = {}
 	soundSerial = 0
 	scanJob, tendJob = nil, nil
 	if M.Watch ~= nil then M.Watch.Reset() end
@@ -927,6 +976,11 @@ function M.Api()
 		end,
 		Verdict = function(playerId, id) return M.Verdict(playerId, id) end,
 		Board = function(playerId, id) return M.Board(playerId, id) end,
+		--- A hull was created just now: nobody boards it before it settled.
+		-- @return number milliseconds until it has (see `M.Fresh`)
+		Fresh = function(id) return M.Fresh(id) end,
+		--- Milliseconds before a body may board the hull, 0 when it may now.
+		SettleLeft = function(id) return M.SettleLeft(id) end,
 	})
 end
 
@@ -969,20 +1023,32 @@ function M.Start()
 		end
 		local board = M.BoardSettings()
 		local door = M.DoorOf(verdict.seat)
-		if board.delay <= 0 or door == nil then
+		-- A HULL THAT APPEARED A MOMENT AGO is boarded once it has settled (see
+		-- `M.Fresh`): the door opens on the press and the body steps in then.
+		local settling = M.SettleLeft(verdict.id)
+		local wait = math.max(board.delay, settling)
+		if wait <= 0 or (door == nil and settling <= 0) then
 			return answer(player, M.Board(player, verdict.id, { door = true }))
 		end
-		local opened, reason = M.OpenDoor(verdict.id, door, board.delay + board.hold, 'board')
-		if not opened then
-			-- A door the host will not swing is no reason to refuse the seat.
-			Open77.log.warn(('[avdoor] %d boards %s without its %s door (%s)')
-				:format(player, tostring(verdict.id), door, tostring(reason)))
-			return answer(player, M.Board(player, verdict.id))
+		local options = { door = true }
+		if door ~= nil then
+			local opened, reason = M.OpenDoor(verdict.id, door, wait + board.hold, 'board')
+			if not opened then
+				-- A door the host will not swing is no reason to refuse the seat.
+				Open77.log.warn(('[avdoor] %d boards %s without its %s door (%s)')
+					:format(player, tostring(verdict.id), door, tostring(reason)))
+				if settling <= 0 then return answer(player, M.Board(player, verdict.id)) end
+				options = nil
+			end
+		end
+		if settling > 0 then
+			Open77.log.info(('[avdoor] %d boards %s in %d ms: the hull appeared a moment ago and '
+				.. 'settles first'):format(player, tostring(verdict.id), wait))
 		end
 		boarding[player] = true
-		later(board.delay, function()
+		later(wait, function()
 			boarding[player] = nil
-			answer(player, M.Board(player, verdict.id, { door = true }))
+			answer(player, M.Board(player, verdict.id, options))
 		end)
 	end)
 

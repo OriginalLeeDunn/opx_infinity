@@ -661,8 +661,8 @@ end
 -- THE HAND-OFF, AND THE ONLY ONE THERE IS. An AV that comes out of a pad
 -- materialises hovering a lift above the marker, and the mount of a hovering
 -- airframe is a thing a player has to go find. "Pilotable from inside" begins
--- INSIDE, so the seat the flight controls are authored at is handed over the
--- moment the hull exists -- the platform's own
+-- INSIDE, so the seat the flight controls are authored at is handed over as
+-- soon as the hull has settled (`seatPilotSettled`, below) -- the platform's own
 -- `Open77.vehicles.warpPlayerIntoVehicle`, the same authoritative mount the
 -- crew door uses, with `moveBucket = false` because the exit is already in the
 -- player's own bucket and no exit lock because this is a recall and not a ride.
@@ -702,6 +702,81 @@ local function seatPilot(playerId, vehicleId)
 	Open77.log.info(('[garages] %s took the controls of their recalled aircraft in %s')
 		:format(tostring(playerId), seat))
 	return seat
+end
+
+-- How long a new hull settles before its pilot is seated when the door module
+-- (which keeps that time for every hull, `avdoor`'s `BOARD.SETTLE_MS`) is not
+-- running, and how far the recalling player may have walked from where they
+-- asked by then and still be seated, in metres on the ground.
+local SETTLE_FALLBACK_MS = 2500
+local SEAT_WANDER = 25.0
+
+--- Whether the hull is still there and the player still where they asked from.
+-- @param playerId number
+-- @param vehicleId any
+-- @param from table|nil where the player stood when they asked (`pointOf`)
+-- @return boolean
+-- @return string|nil why not
+local function stillWaiting(playerId, vehicleId, from)
+	local api = Open77.vehicles
+	if type(api) == 'table' and type(api.get) == 'function' then
+		local read, hull = pcall(api.get, vehicleId)
+		if not read or type(hull) ~= 'table' then return false, 'the hull is gone' end
+		if hull.destroyed == true or hull.exploded == true then return false, 'the hull is wrecked' end
+	end
+	-- A body the host cannot place is given the benefit of the doubt: the seat
+	-- was always handed over without asking where the player stood.
+	if from == nil then return true, nil end
+	local read, now = pcall(pointOf, playerId)
+	if not read or now == nil then return true, nil end
+	if now.bucket ~= from.bucket then return false, 'the player changed bucket' end
+	local dx, dy = now.x - from.x, now.y - from.y
+	if dx * dx + dy * dy > SEAT_WANDER * SEAT_WANDER then
+		return false, ('the player walked %.0f m off'):format(math.sqrt(dx * dx + dy * dy))
+	end
+	return true, nil
+end
+
+--- Seats the pilot of a hull this module has just created, once it has settled.
+--
+-- NOT ON THE SPOT. The owner, 2026-10-03: "the maxtac av is not driving when i
+-- drive it off it stays invisible". Seated 0.3 s after the division's AV
+-- appeared, the pilot flew away from a hull the engine kept drawing on the pad
+-- for the whole flight (`avdoor`'s `M.Fresh` has the measurement): the
+-- platform was still settling that projection when the flight began. The door
+-- module keeps the settle time for every new hull, so this seat and the door
+-- key wait for the same thing. When the wait is over the body is judged again:
+-- a player who walked off or left, or a hull that is gone, is not a seat to
+-- hand over (`seatPilot` already refuses a player who is seated elsewhere).
+-- @param playerId number the recalling connection
+-- @param vehicleId any the hull just created
+-- @return string|nil the seat taken at once, `settling` when it is owed
+local function seatPilotSettled(playerId, vehicleId)
+	local wait = SETTLE_FALLBACK_MS
+	local doors = OPX.Api.Get('avdoor')
+	if type(doors) == 'table' and type(doors.Fresh) == 'function' then
+		local read, ms = pcall(doors.Fresh, vehicleId)
+		wait = read and tonumber(ms) or SETTLE_FALLBACK_MS
+	end
+	if wait <= 0 then return seatPilot(playerId, vehicleId) end
+	Open77.log.info(('[garages] %s takes the controls of aircraft %s in %d ms, once it has settled')
+		:format(tostring(playerId), tostring(vehicleId), wait))
+	local readFrom, from = pcall(pointOf, playerId)
+	if not readFrom then from = nil end
+	CreateThread(function()
+		-- Measured on the server's own clock, a frame at a time, rather than one
+		-- long sleep: a host that resumes threads early still waits the time out.
+		local due = OPX.Now() + wait
+		repeat Wait(100) until OPX.Now() >= due
+		local here, why = stillWaiting(playerId, vehicleId, from)
+		if not here then
+			Open77.log.info(('[garages] %s is not seated in aircraft %s after all: %s')
+				:format(tostring(playerId), tostring(vehicleId), tostring(why)))
+			return
+		end
+		seatPilot(playerId, vehicleId)
+	end)
+	return 'settling'
 end
 
 --- Brings one of the connection's own vehicles out at a free exit of the
@@ -775,7 +850,7 @@ function M.Bring(source, key, wanted)
 	local seated = nil
 	if built.kind == M.KIND.AVPAD and Access.IsAv(pick.record)
 		and type(spawned.value) == 'table' and spawned.value.id ~= nil then
-		seated = seatPilot(source, spawned.value.id)
+		seated = seatPilotSettled(source, spawned.value.id)
 	end
 
 	-- THE OWNER LEAVES WITH A KEY, and with ONE. `Ensure` cuts a key only when
@@ -900,7 +975,7 @@ function M.Issue(source, key, record)
 
 	local seated = nil
 	if Access.IsAv(record) and type(spawned.value) == 'table' and spawned.value.id ~= nil then
-		seated = seatPilot(source, spawned.value.id)
+		seated = seatPilotSettled(source, spawned.value.id)
 	end
 
 	return Result.Ok({
@@ -980,7 +1055,7 @@ function M.TakeJob(source, key, slot)
 	local seated = nil
 	if built.kind == M.KIND.AVPAD and row.av
 		and type(spawned.value) == 'table' and spawned.value.id ~= nil then
-		seated = seatPilot(source, spawned.value.id)
+		seated = seatPilotSettled(source, spawned.value.id)
 	end
 
 	return Result.Ok({

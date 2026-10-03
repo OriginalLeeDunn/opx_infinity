@@ -7913,9 +7913,14 @@ do
 
 		-- THE PILOT'S HAND-OFF, and it is the other half of "pilotable from
 		-- inside": the hull is out, and the owner who recalled it is placed at
-		-- the controls the moment it exists -- the platform's own mount, the
-		-- same one the crew door uses -- rather than left to find the mount of
-		-- an airframe hovering a lift above the pad.
+		-- the controls as soon as it has settled -- the platform's own mount,
+		-- the same one the crew door uses -- rather than left to find the mount
+		-- of an airframe hovering a lift above the pad. Not the moment it
+		-- exists: seated 0.3 s after it appeared, a pilot flew away from a hull
+		-- the engine kept drawing on the pad (2026-10-03).
+		check('the recall does not seat the pilot while the new hull settles',
+			#control.vehicleWarps == 0, ('%d warp(s)'):format(#control.vehicleWarps))
+		control.Pump(30)
 		check('and the recall places the pilot at the controls of their own aircraft',
 			#control.vehicleWarps == 1 and control.vehicleWarps[1].playerId == trooper
 				and control.vehicleWarps[1].seat == 'seat_front_left'
@@ -8038,11 +8043,29 @@ do
 				and type(out.position) == 'table'
 				and math.abs(out.position.z - (0.0 + Access.AvLift())) < 1e-9,
 			out and out.position and tostring(out.position.z))
-		check('with the pilot placed at the controls the moment it exists',
+		-- NOT THE MOMENT IT EXISTS: a pilot seated 0.3 s after the hull appeared
+		-- flew away from a hull the engine kept drawing on the pad (2026-10-03).
+		-- The seat is owed until the hull has settled (`avdoor`'s `M.Fresh`).
+		check('with the pilot not seated yet while the new hull settles',
+			#control.vehicleWarps == warps,
+			('%d warp(s)'):format(#control.vehicleWarps - warps))
+		local doorsApi = OPX.Api.Get('avdoor')
+		local outId = nil
+		for _, car in ipairs(env.Open77.vehicles.all()) do
+			if car.record == 'Vehicle.av_luxury' then outId = car.id end
+		end
+		check('and the door module knows it is settling, so the door key waits for it too',
+			doorsApi ~= nil and type(doorsApi.SettleLeft) == 'function' and outId ~= nil
+				and (doorsApi.SettleLeft(outId) or 0) > 0,
+			doorsApi and tostring(outId and doorsApi.SettleLeft(outId)) or 'no api')
+		control.Pump(30)
+		check('and placed at the controls once it has settled',
 			#control.vehicleWarps == warps + 1
 				and control.vehicleWarps[#control.vehicleWarps].playerId == trooper
 				and control.vehicleWarps[#control.vehicleWarps].seat == 'seat_front_left',
 			('%d warp(s)'):format(#control.vehicleWarps - warps))
+		check('after which the hull is settled for the door key as well',
+			doorsApi ~= nil and outId ~= nil and doorsApi.SettleLeft(outId) == 0)
 		check('ISSUED, not borrowed: the hull is registered under the character, filed at the pad',
 			(function()
 				env.source = trooper
@@ -8738,11 +8761,15 @@ do
 		check('created in its NCPD livery, which the platform applies on every player\'s game',
 			bird ~= nil and bird.appearance == 'zetatech_atlus_ncpd_01',
 			bird and tostring(bird.appearance))
-		check('with its pilot placed at the controls, like any aircraft out of a pad',
+		check('its pilot is not seated while the new hull settles',
+			#control.vehicleWarps == warps, ('%d warp(s)'):format(#control.vehicleWarps - warps))
+		control.Pump(30)
+		check('and is placed at the controls once it has, like any aircraft out of a pad',
 			#control.vehicleWarps == warps + 1
 				and control.vehicleWarps[#control.vehicleWarps].playerId == detective)
 		env.Open77.vehicles.forcePlayerOutOfVehicle(detective)
 		answer = request(operator, hangar, 'maxtac_av')
+		control.Pump(30)
 		bird = control.vehicleCreates[#control.vehicleCreates]
 		check('and the MaxTac AV out of the division\'s hangar, the way the role needs it',
 			answer[2] == true and answer[6] == 'maxtac_av' and bird ~= nil
@@ -46767,6 +46794,40 @@ do
 				and boardedBy[2] == 'seat_front_left')
 		check('forgetting it takes the door away', contract.Forget(parked) == true
 			and select(2, contract.Verdict(offShift, parked)) == 'not_yours')
+
+		-- ── a hull that appeared a moment ago is boarded once it has settled ──
+		-- The owner, 2026-10-03: "the maxtac av is not driving when i drive it off
+		-- it stays invisible" -- seated 0.3 s after the hull appeared, the pilot
+		-- flew away from a hull the engine kept drawing where it had appeared.
+		control.Seat(pilot, nil)
+		OPX.ForgetCooldowns(pilot)
+		local settle = avdoor.BoardSettings().settle
+		check('a new hull settles for a while before anybody boards it', settle >= 1000, tostring(settle))
+		check('the contract marks a hull as just created, and says for how long',
+			contract.Fresh(hullId) == settle and contract.SettleLeft(hullId) > 0
+				and contract.SettleLeft(hullId) <= settle,
+			tostring(contract.SettleLeft(hullId)))
+		local settleWarps, settleMark = #control.vehicleWarps, #control.clientEvents
+		local early = press(pilot, hullId)
+		check('a press while it settles seats nobody yet',
+			early == nil and #control.vehicleWarps == settleWarps,
+			early and tostring(early.ok or early.reason) or 'no answer yet')
+		local late = nil
+		for _ = 1, 15 do
+			for index = settleMark + 1, #control.clientEvents do
+				local event = control.clientEvents[index]
+				if event.name == avdoor.Event.BOARDED and event.source == pilot then late = event[1] end
+			end
+			if late ~= nil then break end
+			control.Pump(1)
+		end
+		check('and the body steps in through the door once the hull has settled',
+			late ~= nil and late.ok == true and late.seat == 'seat_front_left'
+				and #control.vehicleWarps == settleWarps + 1,
+			late and tostring(late.seat or late.reason) or 'no answer')
+		check('after which the hull is settled for everybody', contract.SettleLeft(hullId) == 0)
+		check('and a hull nobody marked is never held', contract.SettleLeft(parked) == 0)
+		control.Seat(pilot, nil)
 
 		-- ── /opx.avdoor.why ─────────────────────────────────────────────────
 		control.Seat(pilot, nil)

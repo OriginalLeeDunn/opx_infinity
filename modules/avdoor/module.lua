@@ -199,6 +199,7 @@ function M.BoardSettings()
 	return {
 		delay = math.floor(M.Number(block.DELAY_MS, 0, 5000, 450)),
 		hold = math.floor(M.Number(block.HOLD_MS, 0, 60000, 1500)),
+		settle = math.floor(M.Number(block.SETTLE_MS, 0, 15000, 2500)),
 	}
 end
 
