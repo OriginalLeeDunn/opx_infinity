@@ -71,7 +71,9 @@ const DEFAULTS: Layout = {
   anchor: 'bottom-left',
   infoAnchor: 'top-right',
   statusAnchor: 'bottom-left',
-  statusOffset: 120,
+  // config/hud.lua's STATUS_OFFSET: the column at its tallest (five gauges and the
+  // microphone row, 136px) plus 8px of clearance.
+  statusOffset: 144,
   vehicleAnchor: 'bottom-center',
   width: 210,
   segments: 10,

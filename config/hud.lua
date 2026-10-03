@@ -23,8 +23,14 @@ OPX.Config.MODULES.hud = {
 	INFO_ANCHOR = 'top-left',
 	-- Absent, the strip rides in the gauge column's corner.
 	STATUS_ANCHOR = 'bottom-left',
-	-- Pixels of clearance between the chip strip and the gauges beneath it.
-	STATUS_OFFSET = 120,
+	-- Pixels from the anchored edge's inset to the foot of the chip strip, which
+	-- sits on top of the gauge column. 144 = the column at its tallest -- five
+	-- gauges and the microphone row, six 16 px rows with 8 px between them, 136
+	-- px -- plus the same 8 px of clearance. It was 120 for five rows; the voice
+	-- indicator became the column's sixth row when the game's round minimap took
+	-- the bottom-right corner it used to hold, and at 120 the chips sat on the
+	-- health gauge.
+	STATUS_OFFSET = 144,
 	VEHICLE_ANCHOR = 'bottom-center',
 
 	-- Gauge column width in pixels on the 1920-wide surface, and how many

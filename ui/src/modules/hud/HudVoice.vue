@@ -137,7 +137,7 @@ function share(value: number): number {
     </span>
 
     <span v-if="voice.mode || voice.distance" class="reach">
-      <span v-if="voice.mode" class="mode">{{ voice.mode }}</span>
+      <span v-if="voice.mode" class="mode op-truncate">{{ voice.mode }}</span>
       <span v-if="voice.distance" class="distance">{{ voice.distance }}</span>
     </span>
 
@@ -269,8 +269,14 @@ function share(value: number): number {
 .track {
   position: relative;
   box-sizing: border-box;
-  flex: 1;
-  min-width: 0;
+  /* A FIXED METER, NOT A FLEXIBLE ONE. It starts where the gauges' tracks start and
+     is its own, shorter instrument: an input level, not a pool. Fixed, because a
+     flexible one changed width whenever the rx counter came and went, and gave way
+     to the words -- a long reach squeezed it to its chamfer. 52px holds the eight
+     slats and leaves "NORMAL 15 M" whole beside a live rx counter in the 210px
+     column; longer words truncate instead (below). */
+  flex: none;
+  width: 52px;
   height: 16px;
   padding: 3px;
 }
@@ -308,8 +314,11 @@ function share(value: number): number {
    broken over two lines reads as two modes.
    ========================================================================== */
 .reach {
-  flex: none;
-  display: inline-flex;
+  /* The one part of the row that gives: the column is 210px and the row has to end
+     inside it, rx counter and all. */
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
   align-items: baseline;
   gap: 5px;
   font: 700 var(--op-fs-label) / 1 var(--op-font-mono);
@@ -319,11 +328,17 @@ function share(value: number): number {
   white-space: nowrap;
 }
 
+/* THE WORD TRUNCATES, THE DISTANCE NEVER DOES. "15 M" is the fact; the mode's name
+   is how the player asked for it, and an open-voice label the catalogue has no word
+   for can be any length. The cut is the design system's one `.op-truncate` (on the
+   element); this only lets the word be the thing that shrinks. */
 .mode {
+  flex: 0 1 auto;
   color: var(--voice-tone);
 }
 
 .distance {
+  flex: none;
   color: var(--op-red-idle);
 }
 
@@ -336,9 +351,9 @@ function share(value: number): number {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   height: 16px;
-  padding: 0 calc(5px + var(--op-cut-sm)) 0 5px;
+  padding: 0 calc(4px + var(--op-cut-sm)) 0 4px;
   box-sizing: border-box;
   font: 700 var(--op-fs-micro) / 1 var(--op-font-mono);
   letter-spacing: var(--op-track-label);

@@ -84,6 +84,16 @@ function box(selector) {
   return rect.width === 0 && rect.height === 0 ? null : rect
 }
 
+/** True when an element's text is drawn whole: its text's own extent, to the sub-pixel,
+    fits the element's box. `scrollWidth` rounds, and an ellipsis is drawn for a
+    fraction of a pixel too much. */
+function whole(element) {
+  if (!element) return false
+  const range = document.createRange()
+  range.selectNodeContents(element)
+  return range.getBoundingClientRect().width <= element.getBoundingClientRect().width + 0.01
+}
+
 function overlaps(one, other) {
   if (!one || !other) return false
   return one.left < other.right && other.left < one.right &&
@@ -134,7 +144,7 @@ async function run() {
   // The shipped layout, exactly as config/hud.lua and config/prompts.lua declare it.
   window.__deliver('opx:hud:config', {
     anchor: 'bottom-left', infoAnchor: 'top-left', statusAnchor: 'bottom-left',
-    statusOffset: 120, vehicleAnchor: 'bottom-center', width: 210,
+    statusOffset: 144, vehicleAnchor: 'bottom-center', width: 210,
     segments: 10, voiceSegments: 8
   })
   window.__deliver('opx:prompts:config', { anchor: 'bottom-right', offset: 270, maxWidth: 420 })
@@ -159,9 +169,11 @@ async function run() {
     integrityLabel: 'hud.vehicle.integrity', tone: 'neutral'
   })
   // A player mid-sentence, with two others audible: the fullest the voice row gets.
+  // The words arrive RENDERED, as modules/hud/client/main.lua sends them (`locale()`
+  // on the Lua side), not as catalogue keys.
   window.__deliver('opx:hud:voice', {
-    active: true, state: 'talking', caption: 'hud.voice.state.talking',
-    mode: 'hud.voice.mode.normal', distance: '15 M', level: 62,
+    active: true, state: 'talking', caption: 'TALKING',
+    mode: 'NORMAL', distance: '15 M', level: 62,
     count: 3, index: 2, key: 'Z', activation: 'B', heard: 2
   })
   // An open key strip: a door and a vehicle at once.
@@ -205,6 +217,36 @@ async function run() {
         document.querySelector('.vitals .voice .fill')?.style.clipPath)
   check('the reach reads in the readout column', (document.querySelector('.vitals .voice .reach')?.textContent || '').trim().length > 0)
   check('the rx counter shows the two others', (document.querySelector('.vitals .voice .rx')?.textContent || '').indexOf('2') !== -1)
+
+  // The row is one more instrument in the column: its meter starts where the gauges'
+  // tracks start, keeps a usable width, and the row ends at the column's edge.
+  const voiceTrack = box('.vitals .voice .track')
+  const gaugeTrack = box('.vitals .gauge .track')
+  check('its meter starts where the gauges\' tracks start', voiceTrack !== null && gaugeTrack !== null &&
+        Math.abs(voiceTrack.left - gaugeTrack.left) <= 1, `${describe(voiceTrack)} vs ${describe(gaugeTrack)}`)
+  const trackElement = document.querySelector('.vitals .voice .track')
+  check('and keeps its fixed width beside the reach and the rx counter',
+        trackElement !== null && trackElement.offsetWidth === 52, trackElement ? String(trackElement.offsetWidth) : 'not drawn')
+  const fullMode = document.querySelector('.vitals .voice .mode')
+  const fullDistance = document.querySelector('.vitals .voice .distance')
+  check('the whole reach reads, NORMAL and 15 M, with two others audible',
+        fullMode !== null && fullDistance !== null &&
+        fullMode.textContent.trim() === 'NORMAL' && whole(fullMode) &&
+        fullDistance.textContent.trim() === '15 M' && whole(fullDistance),
+        fullMode ? `${JSON.stringify(fullMode.textContent)} ${fullMode.scrollWidth}/${fullMode.clientWidth}` : 'not drawn')
+  const gaugeRows = [...document.querySelectorAll('.vitals .gauge')].map((element) => element.getBoundingClientRect())
+  const voiceRow = box('.vitals .voice')
+  check('the row ends at the column\'s edge, like the gauges', voiceRow !== null && gaugeRows.length > 0 &&
+        voiceRow.right <= gaugeRows[0].right + 1, `${describe(voiceRow)} vs ${describe(gaugeRows[0])}`)
+
+  // The chip strip sits ON the column: never on a gauge, with the microphone row in it.
+  const chips = box('.hud .strip')
+  const columnTop = Math.min(...gaugeRows.map((rect) => rect.top))
+  check('the chip strip clears the vitals column, the microphone row included',
+        chips !== null && chips.bottom <= columnTop + 0.5,
+        `chips bottom ${chips ? chips.bottom.toFixed(1) : '-'} vs column top ${columnTop.toFixed(1)}`)
+  check('and stays close above it', chips !== null && columnTop - chips.bottom <= 16,
+        `gap ${chips ? (columnTop - chips.bottom).toFixed(1) : '-'}`)
   check('no voice block is pinned to a corner any more',
         [...document.querySelectorAll('.voice')].every((element) => element.closest('.vitals') !== null),
         `${document.querySelectorAll('.voice').length} voice element(s)`)
@@ -237,6 +279,40 @@ async function run() {
     vitals: describe(vitals), voice: describe(voice), chips: describe(box('.hud .strip')),
     vehicle: describe(box('.vehicle')), info: describe(box('.info')), prompts: describe(strip)
   }
+
+  // ── a label longer than the catalogue's ─────────────────────────────────
+  // open-voice's own label reaches the page when the catalogue has no word for a
+  // mode (modules/hud/client/main.lua `modeLabel`). It truncates; the meter does not.
+  window.__deliver('opx:hud:voice', {
+    active: true, state: 'detected', caption: 'DETECTED',
+    mode: 'MEGAPHONE BROADCAST', distance: '120 M', level: 30,
+    count: 4, index: 4, key: 'Z', activation: 'B', heard: 12
+  })
+  await sleep(150)
+  const longTrack = document.querySelector('.vitals .voice .track')
+  const longRow = box('.vitals .voice')
+  check('a long reach label leaves the meter its width', longTrack !== null && longTrack.offsetWidth === 52,
+        longTrack ? String(longTrack.offsetWidth) : 'not drawn')
+  check('and the row stays inside the column', longRow !== null && gaugeRows.length > 0 &&
+        longRow.right <= gaugeRows[0].right + 1, describe(longRow))
+  const longMode = document.querySelector('.vitals .voice .mode')
+  const longDistance = document.querySelector('.vitals .voice .distance')
+  check('the mode\'s name truncates', longMode !== null && longMode.scrollWidth > longMode.clientWidth,
+        longMode ? `${longMode.scrollWidth} > ${longMode.clientWidth}` : 'not drawn')
+  check('the distance does not', longDistance !== null && longDistance.scrollWidth <= longDistance.clientWidth &&
+        longDistance.textContent.trim() === '120 M', longDistance ? JSON.stringify(longDistance.textContent) : 'not drawn')
+  check('and the rx counter still reads', (document.querySelector('.vitals .voice .rx')?.textContent || '').indexOf('12') !== -1)
+
+  // Back to the scene the screenshot shows.
+  window.__deliver('opx:hud:voice', {
+    active: true, state: 'talking', caption: 'TALKING',
+    mode: 'NORMAL', distance: '15 M', level: 62,
+    count: 3, index: 2, key: 'Z', activation: 'B', heard: 2
+  })
+  await sleep(150)
+  check('back on NORMAL, the reach reads whole again',
+        whole(document.querySelector('.vitals .voice .mode')) && whole(document.querySelector('.vitals .voice .distance')),
+        document.querySelector('.vitals .voice .reach')?.textContent)
   window.__RESULT__ = { failed, results, done: true, boxes: window.__boxes }
   draw()
 }
