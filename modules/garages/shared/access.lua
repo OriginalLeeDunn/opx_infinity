@@ -265,6 +265,46 @@ end
 local USE_RADIUS = finiteNumber(Config.USE_RADIUS) or 0
 Access.USE_RADIUS = USE_RADIUS
 Access.USE_RADIUS_SQ = USE_RADIUS * USE_RADIUS
+
+-- A seated pilot's reach to a pad's door (`AV_PUTAWAY` in config/garages.lua):
+-- never shorter than the walk-up reach, never absurd, and a missing block is the
+-- shipped values.
+local putaway = type(Config.AV_PUTAWAY) == 'table' and Config.AV_PUTAWAY or {}
+local PUTAWAY_RADIUS = math.max(USE_RADIUS, math.min(40.0, finiteNumber(putaway.RADIUS) or 14.0))
+Access.AV_PUTAWAY_RADIUS = PUTAWAY_RADIUS
+Access.AV_PUTAWAY_RADIUS_SQ = PUTAWAY_RADIUS * PUTAWAY_RADIUS
+Access.AV_PUTAWAY_HEIGHT = math.max(1.0, math.min(50.0, finiteNumber(putaway.HEIGHT) or 6.0))
+
+--- The nearest DOOR (`M.ROLE.ENTRY`) within reach of a SEATED player: the walk-up
+--- reach for every door, and a pilot's reach for a pad's door when they sit in an
+--- aircraft. Seated, the key is the door's -- the menu beside it lists what to
+--- bring OUT, which is not what a driver at the door came for -- and a pad
+--- captured in game puts its menu and its door on the same spot, where the plain
+--- nearest-point rule always handed the tie to the menu.
+-- @param spots table points by key
+-- @param x number
+-- @param y number
+-- @param aircraft boolean the player sits in an aircraft
+-- @return table|nil the door
+-- @return number|nil its squared flat distance
+function Access.NearestDoor(spots, x, y, aircraft)
+	x, y = OPX.Spots.Coordinate(x), OPX.Spots.Coordinate(y)
+	if x == nil or y == nil then return nil end
+	local best, bestDistance
+	for _, spot in pairs(spots) do
+		if spot.role == M.ROLE.ENTRY then
+			local limit = (aircraft and spot.kind == M.KIND.AVPAD) and Access.AV_PUTAWAY_RADIUS_SQ
+				or Access.USE_RADIUS_SQ
+			local dx, dy = x - spot.x, y - spot.y
+			local flat = dx * dx + dy * dy
+			if flat <= limit and (bestDistance == nil or flat < bestDistance or
+				(flat == bestDistance and spot.key < best.key)) then
+				best, bestDistance = spot, flat
+			end
+		end
+	end
+	return best, bestDistance
+end
 Access.SCAN_MS = math.floor(finiteNumber(Config.SCAN_MS) or 0)
 Access.POLL_MS = math.floor(finiteNumber(Config.POLL_MS) or 0)
 Access.COOLDOWN_MS = math.floor(finiteNumber(Config.COOLDOWN_MS) or 0)

@@ -526,13 +526,16 @@ end
 -- @param key string|nil the point or garage name; the nearest point when omitted
 -- @return spot|nil
 -- @return Result|nil the refusal, when there is one
-local function resolve(source, key)
+local function resolve(source, key, craft)
 	local at = pointOf(source)
 	if at == nil then return nil, Result.Err('garages.noPosition') end
 
 	local point = nil
 	if key == nil or key == '' then
 		point = Access.Nearest(spots, at.x, at.y)
+		if (point == nil or point.role ~= M.ROLE.ENTRY) and craft ~= nil then
+			point = Access.NearestDoor(spots, at.x, at.y, craft == 'aircraft') or point
+		end
 	else
 		point = Access.Spot(spots, key)
 		if point == nil and garages[key] ~= nil then
@@ -552,9 +555,21 @@ local function resolve(source, key)
 	if point == nil then return nil, Result.Err('garages.noSuchSpot') end
 	if point.bucket ~= at.bucket then return nil, Result.Err('garages.wrongBucket') end
 
+	-- A PILOT AT A PAD'S DOOR reaches it from the cockpit (`AV_PUTAWAY` in
+	-- config/garages.lua): further than a walker, and no higher over it than a
+	-- landed hull or a low hover puts them.
+	local pilot = craft == 'aircraft' and point.role == M.ROLE.ENTRY and point.kind == M.KIND.AVPAD
+	local reach = pilot and Access.AV_PUTAWAY_RADIUS_SQ or Access.USE_RADIUS_SQ
 	local flat = Access.FlatDistanceSquared(point, at.x, at.y)
-	if flat == nil or flat > Access.USE_RADIUS_SQ then
+	if flat == nil or flat > reach then
 		return nil, Result.Err('garages.tooFar', point.key)
+	end
+	if pilot and type(point.z) == 'number' then
+		local read, full = pcall(Open77.players.position, source)
+		local z = read and type(full) == 'table' and tonumber(full.z) or nil
+		if z ~= nil and z - point.z > Access.AV_PUTAWAY_HEIGHT then
+			return nil, Result.Err('garages.landFirst', point.key)
+		end
 	end
 	return point, nil
 end
@@ -704,12 +719,37 @@ local function seatPilot(playerId, vehicleId)
 	return seat
 end
 
--- How long a new hull settles before its pilot is seated when the door module
--- (which keeps that time for every hull, `avdoor`'s `BOARD.SETTLE_MS`) is not
--- running, and how far the recalling player may have walked from where they
--- asked by then and still be seated, in metres on the ground.
+-- THE PAD'S HAND-OFF, AND WHAT IT WAITS FOR.
+--
+-- The owner, 2026-10-03: "the maxtac av is not driving when i drive it off it
+-- stays invisible". Seated 0.3 s after the division's AV appeared, the pilot
+-- flew away from a hull the engine kept drawing on the pad for the whole flight
+-- (the client log: `hullTrailM` 14-17 m, where a working flight trails by
+-- centimetres). The platform's client (2.31.21+op77.125,
+-- `client/src/network/VehicleReplication.cpp`) hands a vehicle over to its new
+-- owner only once its copy has been ATTACHED FOR A SECOND (`projectionReady`),
+-- but it engages the AV flight -- and masks the chassis for it -- the moment the
+-- owner is seated. A pilot seated inside that second has the hand-off land
+-- under a flight already flying: it hands the chassis its physics back, the
+-- body fights the flight's moves, and the hull stays where it appeared while
+-- the controls, the camera and the pilot fly on.
+--
+-- So the seat waits for the pilot's OWN client to say its copy of the hull has
+-- been attached `HANDOFF_ATTACHED_MS` (SETTLE / SETTLED), and never comes
+-- sooner than the door module's settle time for a new hull (`avdoor`'s
+-- `BOARD.SETTLE_MS`, which the door key waits for too). A client that never
+-- answers is seated at `HANDOFF_MAX_MS` all the same: a seat was always handed
+-- over here, and a late one is better than none.
+local HANDOFF_ATTACHED_MS = 1500
+local HANDOFF_MAX_MS = 8000
+-- The floor when the door module is not running, and how far the player may
+-- have walked from where they asked by the time the seat is handed over.
 local SETTLE_FALLBACK_MS = 2500
 local SEAT_WANDER = 25.0
+
+-- The seat each connection is owed: `{ key, since, ready }`, by player id. One
+-- per connection: a second bring-out replaces the first.
+local owedSeats = {}
 
 --- Whether the hull is still there and the player still where they asked from.
 -- @param playerId number
@@ -737,46 +777,87 @@ local function stillWaiting(playerId, vehicleId, from)
 	return true, nil
 end
 
---- Seats the pilot of a hull this module has just created, once it has settled.
---
--- NOT ON THE SPOT. The owner, 2026-10-03: "the maxtac av is not driving when i
--- drive it off it stays invisible". Seated 0.3 s after the division's AV
--- appeared, the pilot flew away from a hull the engine kept drawing on the pad
--- for the whole flight (`avdoor`'s `M.Fresh` has the measurement): the
--- platform was still settling that projection when the flight began. The door
--- module keeps the settle time for every new hull, so this seat and the door
--- key wait for the same thing. When the wait is over the body is judged again:
--- a player who walked off or left, or a hull that is gone, is not a seat to
--- hand over (`seatPilot` already refuses a player who is seated elsewhere).
+--- The pilot's client says its copy of the hull it is owed a seat in has been
+--- attached long enough to fly. Anything else is ignored.
+-- @param playerId number
+-- @param payload table `{ id }`
+function M.Settled(playerId, payload)
+	local owed = owedSeats[tonumber(playerId) or -1]
+	if owed == nil or type(payload) ~= 'table' or tostring(payload.id) ~= owed.key then return false end
+	if not owed.ready then
+		owed.ready = true
+		owed.readyAt = OPX.Now()
+	end
+	return true
+end
+
+--- Seats the pilot of a hull this module has just created, once it can be flown
+--- (see THE PAD'S HAND-OFF above). When the wait is over the body is judged
+--- again: a player who walked off or left, or a hull that is gone, is not a
+--- seat to hand over (`seatPilot` already refuses one seated elsewhere).
 -- @param playerId number the recalling connection
 -- @param vehicleId any the hull just created
 -- @return string|nil the seat taken at once, `settling` when it is owed
 local function seatPilotSettled(playerId, vehicleId)
-	local wait = SETTLE_FALLBACK_MS
+	local floor = SETTLE_FALLBACK_MS
 	local doors = OPX.Api.Get('avdoor')
 	if type(doors) == 'table' and type(doors.Fresh) == 'function' then
 		local read, ms = pcall(doors.Fresh, vehicleId)
-		wait = read and tonumber(ms) or SETTLE_FALLBACK_MS
+		floor = read and tonumber(ms) or SETTLE_FALLBACK_MS
 	end
-	if wait <= 0 then return seatPilot(playerId, vehicleId) end
-	Open77.log.info(('[garages] %s takes the controls of aircraft %s in %d ms, once it has settled')
-		:format(tostring(playerId), tostring(vehicleId), wait))
+	local key = tostring(vehicleId)
+	local owed = { key = key, since = OPX.Now(), ready = false }
+	owedSeats[playerId] = owed
 	local readFrom, from = pcall(pointOf, playerId)
 	if not readFrom then from = nil end
+	local sent = pcall(TriggerClientEvent, M.Event.SETTLE, playerId,
+		{ id = key, attachedMs = HANDOFF_ATTACHED_MS })
+	Open77.log.info(('[garages] %s takes the controls of aircraft %s once their game has it ready to fly '
+		.. '(no sooner than %d ms, no later than %d ms)%s'):format(tostring(playerId), key, floor,
+		HANDOFF_MAX_MS, sent and '' or '; the client could not be asked, so the latest it is'))
 	CreateThread(function()
-		-- Measured on the server's own clock, a frame at a time, rather than one
-		-- long sleep: a host that resumes threads early still waits the time out.
-		local due = OPX.Now() + wait
-		repeat Wait(100) until OPX.Now() >= due
+		local due, latest = owed.since + floor, owed.since + HANDOFF_MAX_MS
+		while true do
+			Wait(100)
+			-- A newer bring-out took this connection's seat, or the module stopped.
+			if owedSeats[playerId] ~= owed then return end
+			local now = OPX.Now()
+			if (owed.ready and now >= due) or now >= latest then break end
+		end
+		owedSeats[playerId] = nil
+		local waited = OPX.Now() - owed.since
 		local here, why = stillWaiting(playerId, vehicleId, from)
 		if not here then
 			Open77.log.info(('[garages] %s is not seated in aircraft %s after all: %s')
-				:format(tostring(playerId), tostring(vehicleId), tostring(why)))
+				:format(tostring(playerId), key, tostring(why)))
 			return
+		end
+		if not owed.ready then
+			Open77.log.warn(('[garages] %s is seated in aircraft %s after %d ms with no word from their '
+				.. 'game that it has the hull: if the flight leaves the hull behind, this is why')
+				:format(tostring(playerId), key, waited))
+		else
+			Open77.log.info(('[garages] %s: their game has had aircraft %s ready for %d ms; seated after %d ms')
+				:format(tostring(playerId), key, OPX.Now() - owed.readyAt, waited))
 		end
 		seatPilot(playerId, vehicleId)
 	end)
 	return 'settling'
+end
+
+--- What a connection sits in, as the host's own seat ledger says: nil on foot,
+--- `aircraft` in an AV, `vehicle` in anything else.
+-- @param source number
+-- @return string|nil
+local function seatedCraft(source)
+	local api = Open77.vehicles
+	if type(api) ~= 'table' or type(api.getPlayerSeat) ~= 'function' then return nil end
+	local read, seat = pcall(api.getPlayerSeat, source)
+	if not read or type(seat) ~= 'table' then return nil end
+	if seat.vehicleId == nil or type(api.get) ~= 'function' then return 'vehicle' end
+	local readCar, car = pcall(api.get, seat.vehicleId)
+	if readCar and type(car) == 'table' and Access.IsAv(car.record) then return 'aircraft' end
+	return 'vehicle'
 end
 
 --- Brings one of the connection's own vehicles out at a free exit of the
@@ -1099,7 +1180,7 @@ function M.Use(source, key, wanted)
 	-- is the bring-out half -- the behaviour every marker had before this.
 	local seated = type(vehicles.Occupied) == 'function' and vehicles.Occupied(source) or nil
 	if seated ~= nil and seated.ok and seated.value ~= nil then
-		local point, refusal = resolve(source, key)
+		local point, refusal = resolve(source, key, seatedCraft(source))
 		if point == nil then return refusal end
 		local built = garages[point.garage]
 		if built == nil then return Result.Err('garages.noSuchSpot') end
@@ -1127,7 +1208,7 @@ function M.Use(source, key, wanted)
 	local seatedJob = type(vehicles.JobOccupied) == 'function' and vehicles.JobOccupied(source) or nil
 	if seatedJob ~= nil and seatedJob.ok and seatedJob.value ~= nil
 		and type(vehicles.ReturnJob) == 'function' then
-		local point, refusal = resolve(source, key)
+		local point, refusal = resolve(source, key, seatedCraft(source))
 		if point == nil then return refusal end
 		local built = garages[point.garage]
 		if built == nil then return Result.Err('garages.noSuchSpot') end
@@ -1621,6 +1702,7 @@ function M.Init()
 	captures = {}
 	rebuild()
 	windows = {}
+	owedSeats = {}
 	running = false
 	reportedOccupancy = false
 	OPX.Schema.Add(M.Storage.SCHEMA)
@@ -1686,10 +1768,19 @@ function M.Start()
 
 	RegisterNetEvent(M.Event.REQUEST, onRequested)
 	RegisterNetEvent(M.Event.LIST, onListed)
+	-- The pilot's game has the hull a pad owes them a seat in (`seatPilotSettled`).
+	RegisterNetEvent(M.Event.SETTLED, function(payload)
+		local src = tonumber(source)
+		if src == nil or src <= 0 then return end
+		M.Settled(src, payload)
+	end)
 
 	AddEventHandler(OPX.Host.PLAYER_DISCONNECTED, function(playerId)
 		local player = tonumber(playerId)
-		if player ~= nil then windows[player] = nil end
+		if player ~= nil then
+			windows[player] = nil
+			owedSeats[player] = nil
+		end
 	end)
 
 	-- THE JOB FLEET FOLLOWS THE JOB. A change the character module announces --
@@ -1864,6 +1955,7 @@ end
 function M.Stop()
 	running = false
 	windows = {}
+	owedSeats = {}
 	if sweepJob ~= nil then
 		OPX.Scheduler.Cancel(sweepJob)
 		sweepJob = nil

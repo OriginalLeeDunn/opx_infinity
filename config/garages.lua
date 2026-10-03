@@ -120,6 +120,18 @@ OPX.Config.MODULES.garages = {
 	-- its own AV spawns.
 	AV_LIFT = 1.2,
 
+	-- PUTTING AN AIRCRAFT AWAY FROM ITS COCKPIT. The owner, 2026-10-03: "theres
+	-- no way for me to put av back in hanger when i fly back to the av garage".
+	-- `USE_RADIUS` is a walk-up reach, and an AV's pilot sits metres from the
+	-- middle of the hull (3.7 m in the MaxTac AV, measured): a hull set down
+	-- squarely on its pad left the pilot out of reach of the pad's door, so the
+	-- key had nothing to put away. A pilot SEATED IN AN AIRCRAFT reaches a pad's
+	-- door within `RADIUS` flat metres, and no higher than `HEIGHT` metres over
+	-- it -- landed, or a low hover; higher than that, putting it away would take
+	-- the hull out from under a pilot in the air. On foot and in a car the reach
+	-- is `USE_RADIUS`, as before.
+	AV_PUTAWAY = { RADIUS = 14.0, HEIGHT = 6.0 },
+
 	-- WHICH RECORDS ARE AVs IS NOT A GARAGE SETTING. It is one list,
 	-- `AV_MATCHES` in `config/shared.lua`, read by one helper: this module, the
 	-- dealership and the admin catalogue each used to carry their own, and a

@@ -6719,6 +6719,68 @@ do
 		check('and nothing is sent', #cctl.serverEvents == mark)
 		check('and the verdict is published on the local bus',
 			#decisions == 1 and decisions[1].error == 'garages.noSuchSpot')
+
+		-- ── a pad's hand-off: this game says when it has the hull ─────────
+		-- The platform hands a vehicle to its new owner only once this client's
+		-- copy has been attached for a second, and flies an AV the moment its
+		-- pilot is seated; so the pad waits for this answer (2026-10-03).
+		local function settledSent(from)
+			for index = from + 1, #cctl.serverEvents do
+				local event = cctl.serverEvents[index]
+				if event.name == garages.Event.SETTLED then return event[1] end
+			end
+			return nil
+		end
+		local streamedAt = nil
+		cenv.Open77.vehicles = cenv.Open77.vehicles or {}
+		cenv.Open77.vehicles.whenStreamed = function(id)
+			return { await = function()
+				-- Attached three passes from now, the way a hull streams in.
+				for _ = 1, 3 do cenv.Wait(0) end
+				streamedAt = cenv.OPX.Now()
+				return { id = id, streamed = true }
+			end }
+		end
+		mark = #cctl.serverEvents
+		cctl.netEvents[garages.Event.SETTLE]({ id = '4294967297', attachedMs = 1500 })
+		cctl.Pump(8)
+		check('a pad\'s hand-off is not answered before the hull has been here long enough to fly',
+			settledSent(mark) == nil and streamedAt ~= nil)
+		cctl.Pump(15)
+		local said = settledSent(mark)
+		check('and is answered once it has, naming the hull',
+			said ~= nil and said.id == '4294967297', said and tostring(said.id) or 'not answered')
+		cenv.Open77.vehicles.whenStreamed = function()
+			return { await = function() return nil, 'timeout' end }
+		end
+		mark = #cctl.serverEvents
+		cctl.netEvents[garages.Event.SETTLE]({ id = '4294967298', attachedMs = 1500 })
+		cctl.Pump(25)
+		check('a hull that never reaches this game is never said to be ready', settledSent(mark) == nil)
+
+		-- ── seated, the key is a door's ──────────────────────────────────────
+		-- A pad captured in game puts its menu and its door on one spot, where the
+		-- nearest-point rule hands the tie to the menu; and a pilot sits metres
+		-- from the middle of the hull they set down (2026-10-03).
+		local PadAccess = garages.Access
+		local padSpots = {
+			['hq_pad#1'] = { key = 'hq_pad#1', kind = 'avpad', role = 'menu', x = 0.0, y = 0.0, z = 0.0, bucket = 0 },
+			['hq_pad#1.in'] = { key = 'hq_pad#1.in', kind = 'avpad', role = 'entry', x = 0.0, y = 0.0, z = 0.0, bucket = 0 },
+			['yard#1.in'] = { key = 'yard#1.in', kind = 'garage', role = 'entry', x = 100.0, y = 0.0, z = 0.0, bucket = 0 },
+		}
+		check('on foot at a captured pad, the nearest point is its menu',
+			(PadAccess.Nearest(padSpots, 1.0, 0.0) or {}).key == 'hq_pad#1')
+		check('seated in an aircraft there, it is the pad\'s door',
+			(PadAccess.NearestDoor(padSpots, 1.0, 0.0, true) or {}).key == 'hq_pad#1.in')
+		check('and the door is in a pilot\'s reach 9 m off, where a walker\'s ends at 4',
+			(PadAccess.NearestDoor(padSpots, 9.0, 0.0, true) or {}).key == 'hq_pad#1.in'
+				and PadAccess.NearestDoor(padSpots, 9.0, 0.0, false) == nil
+				and PadAccess.Nearest(padSpots, 9.0, 0.0) == nil)
+		check('but a garage\'s door keeps the walk-up reach, even from an aircraft',
+			PadAccess.NearestDoor(padSpots, 109.0, 0.0, true) == nil
+				and (PadAccess.NearestDoor(padSpots, 103.0, 0.0, false) or {}).key == 'yard#1.in')
+		check('and nothing past the pilot\'s reach',
+			PadAccess.NearestDoor(padSpots, PadAccess.AV_PUTAWAY_RADIUS + 1.0, 0.0, true) == nil)
 	end
 end
 
@@ -7920,7 +7982,26 @@ do
 		-- the engine kept drawing on the pad (2026-10-03).
 		check('the recall does not seat the pilot while the new hull settles',
 			#control.vehicleWarps == 0, ('%d warp(s)'):format(#control.vehicleWarps))
+		-- The seat waits for the pilot's own game to have the hull ready to fly:
+		-- the server names it (SETTLE) and the game answers (SETTLED).
+		local asked = nil
+		for index = #control.clientEvents, 1, -1 do
+			local event = control.clientEvents[index]
+			if event.name == garages.Event.SETTLE and event.source == trooper then asked = event[1] break end
+		end
+		check('the pilot\'s game is asked to say when it has the hull ready to fly',
+			asked ~= nil and type(asked.id) == 'string' and (tonumber(asked.attachedMs) or 0) >= 1000,
+			asked and tostring(asked.attachedMs) or 'not asked')
 		control.Pump(30)
+		check('and without its word the seat is not handed over early',
+			#control.vehicleWarps == 0, ('%d warp(s)'):format(#control.vehicleWarps))
+		env.source = trooper
+		control.netEvents[garages.Event.SETTLED]({ id = 'some other hull' })
+		control.Pump(3)
+		check('a word about another hull moves nothing', #control.vehicleWarps == 0)
+		control.netEvents[garages.Event.SETTLED]({ id = asked and asked.id })
+		env.source = nil
+		control.Pump(3)
 		check('and the recall places the pilot at the controls of their own aircraft',
 			#control.vehicleWarps == 1 and control.vehicleWarps[1].playerId == trooper
 				and control.vehicleWarps[1].seat == 'seat_front_left'
@@ -8058,6 +8139,15 @@ do
 			doorsApi ~= nil and type(doorsApi.SettleLeft) == 'function' and outId ~= nil
 				and (doorsApi.SettleLeft(outId) or 0) > 0,
 			doorsApi and tostring(outId and doorsApi.SettleLeft(outId)) or 'no api')
+		for index = #control.clientEvents, 1, -1 do
+			local event = control.clientEvents[index]
+			if event.name == garages.Event.SETTLE and event.source == trooper then
+				env.source = trooper
+				control.netEvents[garages.Event.SETTLED]({ id = event[1].id })
+				env.source = nil
+				break
+			end
+		end
 		control.Pump(30)
 		check('and placed at the controls once it has settled',
 			#control.vehicleWarps == warps + 1
@@ -8763,13 +8853,35 @@ do
 			bird and tostring(bird.appearance))
 		check('its pilot is not seated while the new hull settles',
 			#control.vehicleWarps == warps, ('%d warp(s)'):format(#control.vehicleWarps - warps))
+		for index = #control.clientEvents, 1, -1 do
+			local event = control.clientEvents[index]
+			if event.name == garages.Event.SETTLE and event.source == detective then
+				env.source = detective
+				control.netEvents[garages.Event.SETTLED]({ id = event[1].id })
+				env.source = nil
+				break
+			end
+		end
 		control.Pump(30)
 		check('and is placed at the controls once it has, like any aircraft out of a pad',
 			#control.vehicleWarps == warps + 1
 				and control.vehicleWarps[#control.vehicleWarps].playerId == detective)
 		env.Open77.vehicles.forcePlayerOutOfVehicle(detective)
+		-- A GAME THAT NEVER ANSWERS is seated all the same, at the latest -- a seat
+		-- was always handed over at a pad -- and the journal says why it was late.
+		local maxtacWarps = #control.vehicleWarps
 		answer = request(operator, hangar, 'maxtac_av')
 		control.Pump(30)
+		check('a pilot whose game never answers is not seated at the settle time',
+			#control.vehicleWarps == maxtacWarps, ('%d warp(s)'):format(#control.vehicleWarps - maxtacWarps))
+		control.Pump(60)
+		check('but at the latest, with the reason in the journal',
+			#control.vehicleWarps == maxtacWarps + 1 and (function()
+				for _, line in ipairs(control.log.warn) do
+					if line:find('with no word from their game', 1, true) then return true end
+				end
+				return false
+			end)())
 		bird = control.vehicleCreates[#control.vehicleCreates]
 		check('and the MaxTac AV out of the division\'s hangar, the way the role needs it',
 			answer[2] == true and answer[6] == 'maxtac_av' and bird ~= nil
@@ -8808,6 +8920,49 @@ do
 			#updates == writes and #inserts == 0)
 		check('and the player is told it went back', noticeSince(mark, cadet, 'garages.jobReturned') ~= nil)
 		control.Seat(cadet, nil)
+
+		-- ── an aircraft, put away from its cockpit ─────────────────────────
+		-- The owner, 2026-10-03: "theres no way for me to put av back in hanger
+		-- when i fly back to the av garage". A pilot sits metres from the middle
+		-- of the hull they set down, out of the walk-up reach of the pad's door.
+		local avId = vehicleApi.JobLiveId('citizen-detective', 'ncpd_av')
+		local padDoor = pad.locations[1].entry
+		check('the NCPD aircraft is still out, for the flight back', avId ~= nil and padDoor ~= nil)
+		control.Seat(detective, { vehicleId = avId, seat = 'seat_front_left' })
+		OPX.ForgetCooldowns(detective)
+		control.Stand(detective, padDoor.x + 9.0, padDoor.y, padDoor.z + 20.0)
+		env.source = detective
+		control.netEvents[garages.Event.REQUEST](padDoor.key)
+		control.Pump(8)
+		answer = lastEvent(garages.Event.ANSWER) or {}
+		check('a pilot hovering high over the pad is told to set it down first, and it stays out',
+			answer[2] == false and answer[3] == 'garages.landFirst'
+				and vehicleApi.JobLiveId('citizen-detective', 'ncpd_av') ~= nil, tostring(answer[3]))
+		OPX.ForgetCooldowns(detective)
+		control.Stand(detective, padDoor.x + 9.0, padDoor.y, padDoor.z + 2.0)
+		removedCount = #control.vehicleRemoves
+		control.netEvents[garages.Event.REQUEST](padDoor.key)
+		control.Pump(8)
+		answer = lastEvent(garages.Event.ANSWER) or {}
+		check('landed 9 m off the door -- out of a walker\'s reach -- the pilot puts it back in the pool',
+			answer[2] == true and answer[5] == 'returned' and answer[6] == 'ncpd_av'
+				and #control.vehicleRemoves == removedCount + 1
+				and vehicleApi.JobLiveId('citizen-detective', 'ncpd_av') == nil,
+			('%s %s'):format(tostring(answer[3]), tostring(answer[5])))
+		env.source = nil
+		control.Seat(detective, nil)
+		OPX.ForgetCooldowns(cadet)
+		control.Seat(cadet, { vehicleId = 'no such car', seat = 'seat_front_left' })
+		control.Stand(cadet, entry.x + 9.0, entry.y, entry.z)
+		env.source = cadet
+		control.netEvents[garages.Event.REQUEST](entry.key)
+		control.Pump(8)
+		answer = lastEvent(garages.Event.ANSWER) or {}
+		check('while a driver 9 m off a garage\'s door is still too far from it',
+			answer[2] == false and answer[3] ~= 'garages.landFirst', tostring(answer[3]))
+		env.source = nil
+		control.Seat(cadet, nil)
+		OPX.ForgetCooldowns(cadet)
 
 		-- ── leaving the job takes them back ────────────────────────────────
 		-- AT ONCE means inside the announcement: read with NO pump in between,

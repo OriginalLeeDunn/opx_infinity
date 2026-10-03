@@ -149,6 +149,20 @@ local function seated()
 	return read and type(assignment) == 'table'
 end
 
+-- What the player sits in: nil on foot, `aircraft` in an AV, `vehicle` in
+-- anything else. The same hint as `seated`, with the one fact a pad's door needs:
+-- a pilot reaches it from further away than a walker (`Access.NearestDoor`).
+local function seatedIn()
+	local vehicles = Open77.vehicles
+	if type(vehicles) ~= 'table' or type(vehicles.getPlayerSeat) ~= 'function' then return nil end
+	local read, assignment = pcall(vehicles.getPlayerSeat)
+	if not read or type(assignment) ~= 'table' then return nil end
+	if assignment.vehicleId == nil or type(vehicles.get) ~= 'function' then return 'vehicle' end
+	local readCar, car = pcall(vehicles.get, assignment.vehicleId)
+	if readCar and type(car) == 'table' and Access.IsAv(car.record) then return 'aircraft' end
+	return 'vehicle'
+end
+
 -- What the key is about to do, as a locale key. A door says "put it away" while
 -- the player is sitting in something and "drive in" while they are not; a menu
 -- point says what it opens, per kind.
@@ -616,6 +630,19 @@ local function scan()
 		return
 	end
 	nearest = Access.Nearest(spots, x, y)
+	-- SEATED, THE KEY IS A DOOR'S. A driver at a garage wants to put the vehicle
+	-- away, not read the list of what to bring out; and a pilot sits metres from
+	-- the middle of the hull they just set down on a pad, out of the walk-up
+	-- reach of its door (the owner, 2026-10-03: "theres no way for me to put av
+	-- back in hanger when i fly back to the av garage"). The server judges the
+	-- same reach again before it puts anything away.
+	if nearest == nil or nearest.role ~= M.ROLE.ENTRY then
+		local craft = seatedIn()
+		if craft ~= nil then
+			local door = Access.NearestDoor(spots, x, y, craft == 'aircraft')
+			if door ~= nil then nearest = door end
+		end
+	end
 	syncPrompt()
 	reconcile(x, y)
 end
@@ -770,6 +797,43 @@ function Runtime.Start()
 		if not verdict.ok then
 			say('error', locale(verdict.error))
 		end
+	end)
+
+	-- A PAD IS ABOUT TO SEAT THIS PLAYER IN THE HULL IT JUST CREATED, and waits
+	-- for this game to have it: the platform hands a vehicle over to its new owner
+	-- only once this client's copy has been attached for a second, but flies an AV
+	-- the moment its pilot is seated -- seated sooner, the hand-off lands under the
+	-- flight and the hull stays where it appeared (the owner, 2026-10-03: "the
+	-- maxtac av is not driving when i drive it off it stays invisible"). So the
+	-- answer goes once the copy is attached and has been for `attachedMs`; a copy
+	-- that never comes is left to the server's own deadline.
+	RegisterNetEvent(M.Event.SETTLE, function(payload)
+		if type(payload) ~= 'table' or payload.id == nil then return end
+		local key = tostring(payload.id)
+		local attachedMs = math.floor(math.max(0, math.min(5000, tonumber(payload.attachedMs) or 1500)))
+		CreateThread(function()
+			local api = Open77.vehicles
+			if type(api) == 'table' and type(api.whenStreamed) == 'function' then
+				local asked, pending = pcall(api.whenStreamed, tonumber(key) or key, 8000)
+				if asked and pending ~= nil then
+					-- A promise of whatever shape the host hands out: one that cannot be
+					-- awaited is no reason to hold the answer back (the wait below still
+					-- runs), one that answers nothing is a hull that never came.
+					local waited, car = pcall(function() return pending:await() end)
+					if waited and car == nil then
+						Open77.log.info(('[garages] aircraft %s never reached this game; the seat is the '
+							.. 'server\'s to hand over'):format(key))
+						return
+					end
+				end
+			end
+			local due = OPX.Now() + attachedMs
+			repeat Wait(100) until OPX.Now() >= due
+			local sent, reason = TriggerServerEvent(M.Event.SETTLED, { id = key })
+			if not sent then
+				Open77.log.warn(('[garages] could not say aircraft %s is ready: %s'):format(key, tostring(reason)))
+			end
+		end)
 	end)
 
 	-- Asked now so the first scan has a list, then on the poll so a change of

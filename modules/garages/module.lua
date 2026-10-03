@@ -87,12 +87,19 @@ M.Event = {
 	-- the client between two opens -- a roster cached across a purchase, another
 	-- location's put-away or a sale is a roster that lies.
 	LIST = OPX.Event(NET, 'garages', 'list'),
+	-- The answer to SETTLE: this client's own copy of the named hull has been
+	-- attached long enough to be flown. Only ever moves a seat the server already
+	-- owes this connection, for that hull (see `seatPilotSettled`).
+	SETTLED = OPX.Event(NET, 'garages', 'settled'),
 
 	-- Server to client: the points this player may see, the list behind one of
 	-- them, and one verdict.
 	SYNC = OPX.Event(NET, 'garages', 'sync'),
 	VEHICLES = OPX.Event(NET, 'garages', 'vehicles'),
 	ANSWER = OPX.Event(NET, 'garages', 'answer'),
+	-- A pad is about to seat this player in the hull it just created: answer
+	-- SETTLED once this client's copy of it has been attached for `attachedMs`.
+	SETTLE = OPX.Event(NET, 'garages', 'settle'),
 
 	-- The client's own bus. `decision` carries every verdict, local refusals
 	-- included. Public: a bare AddEventHandler reaches it.

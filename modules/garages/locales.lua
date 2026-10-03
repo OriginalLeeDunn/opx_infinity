@@ -37,6 +37,7 @@ local EN = {
 	['garages.noPosition'] = 'Your position could not be read.',
 	['garages.wrongBucket'] = 'That marker is not the one in front of you.',
 	['garages.tooFar'] = 'You are too far from the marker. Stand on it and try again.',
+	['garages.landFirst'] = 'Set the aircraft down on the pad first, then put it away.',
 	['garages.nothingHere'] = 'You own nothing that comes out here.',
 	['garages.notYours'] = 'That vehicle of yours does not come out here.',
 	-- EVERY EXIT IS TAKEN. The owner chose a refusal over a queue and over
@@ -129,6 +130,7 @@ local FR = {
 	['garages.noPosition'] = "Votre position n'a pas pu être lue.",
 	['garages.wrongBucket'] = "Ce marqueur n'est pas celui devant vous.",
 	['garages.tooFar'] = 'Vous êtes trop loin du marqueur. Mettez-vous dessus.',
+	['garages.landFirst'] = 'Posez d\'abord l\'appareil sur la plateforme, puis rangez-le.',
 	['garages.nothingHere'] = 'Vous ne possédez rien qui sorte ici.',
 	['garages.notYours'] = "Ce véhicule ne sort pas ici.",
 	['garages.noFreeExit'] =
