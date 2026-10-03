@@ -24859,11 +24859,15 @@ do
 		-- AND IT STILL REPORTS ONE where the native is there: a guard that never
 		-- lets the read through is a heading nobody ever hears.
 		env.Open77.character.yaw = function() return 42.0 end
-		control.Pump(40)
-		local sent = false
-		for _, entry in ipairs(control.serverEvents) do
-			if entry.name == character.Event.HEADING then sent = true end
-		end
+		-- SETTLED, NOT COUNTED: when the job's first pass lands depends on how
+		-- many jobs the client carries (the scheduler staggers them), and a
+		-- module that adds jobs (doorlock) moved it past a fixed forty pumps.
+		local sent = settle(control, function()
+			for _, entry in ipairs(control.serverEvents) do
+				if entry.name == character.Event.HEADING then return true end
+			end
+			return false
+		end, 200)
 		check('and one that has it still reports the heading', sent)
 	end
 end
@@ -47715,11 +47719,12 @@ do
 			pumpUntil(function() return not avdoor.Status().guarding and #fades >= 2 end, 80)
 				and #teles == 8, #teles .. ' move(s)')
 		-- The slack is the harness's, not the module's: a pump is 100 ms and the
-		-- client scheduler runs four jobs a pass in rotation, so one more job on
-		-- the client (main's `loading`) is one more 100 ms round before the
-		-- avdoor job sees its ceiling. In game a pass is a frame.
+		-- client scheduler runs four jobs a pass in rotation, so every job another
+		-- module adds on the client (main's `loading`, then `doorlock`'s) can be
+		-- one more 100 ms round before the avdoor job sees its ceiling. In game a
+		-- pass is a frame.
 		check('and the screen still comes back, inside its ceiling',
-			fades[2] ~= nil and fades[2].at - fades[1].at <= avdoor.Settings.EXIT_FADE.MAX_HOLD_MS + 500,
+			fades[2] ~= nil and fades[2].at - fades[1].at <= avdoor.Settings.EXIT_FADE.MAX_HOLD_MS + 800,
 			fades[2] and ('%d ms'):format(fades[2].at - fades[1].at) or 'never')
 		landing = true
 		settle()
