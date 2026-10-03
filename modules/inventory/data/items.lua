@@ -83,6 +83,14 @@ M.Data.ITEMS = {
 		USE = { CONSUME = 0, CLOSE = false },
 	},
 
+	-- THE KEY TO ONE PRECISE DOOR, the same idea as `vehicle_key`: what it opens
+	-- is its metadata, `{ door = '<door key>', label = '<door name>' }`, written
+	-- by `modules/doorlock` (`/opx.doorlock.key`) and nothing else. A door that
+	-- lists `{ NAME = 'door_key', BOUND = true }` opens for a key carrying its
+	-- own key and for no other. No USE: a key turns a door from the eye or the
+	-- interaction key at the door, and the bag has nothing to add to that.
+	door_key = { WEIGHT = 20, CATEGORY = 'tool', STACK = false, MODEL = 'crate.valuable' },
+
 	-- MONEY YOU CAN HAND OVER. One unit is one eddie, and the stack is a BEARER
 	-- NOTE drawn against the EDDIES balance: `/withdraw` debits the balance and
 	-- puts the units here, using the stack destroys it and credits the balance

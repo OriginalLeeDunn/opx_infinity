@@ -1388,6 +1388,16 @@ SCREENS.world = function()
 	items[#items + 1] = icon(form('save', 'admin.menu.saveHere', 'location', nil,
 		Command.WORLD_LOC_ADD), 'plus')
 	items[#items + 1] = go('saved', 'admin.menu.saved', 'saved', nil, { icon = 'list' })
+	-- THE DOOR PANEL IS THE DOORLOCK MODULE'S, and this row only opens it: a
+	-- command line, so the host checks `command.opx.doorlock` before anything is
+	-- drawn, and the staff menu closes first because one owner holds the menu
+	-- surface at a time.
+	if link.DOORLOCK then
+		items[#items + 1] = section('admin.menu.section.doors')
+		local doors = icon(command('doors', 'admin.menu.doors', { link.DOORLOCK }), 'lock')
+		doors.data.closeAfter = true
+		items[#items + 1] = doors
+	end
 	return locale('admin.menu.world'), items
 end
 

@@ -340,6 +340,87 @@ holding a key to that plate, within 6 m or seated in it, both measured by the se
 `inventory.error.locked` and closes one already open on the next reach sweep. The
 glovebox is not asked; it opens only from a seat. Nothing gates the engine yet.
 
+### Door locks
+
+`doorlock` is ox_doorlock's model on Open77's own world doors: **"les portes fermées /
+ouvrables par des jobs, grades etc."**, configured from a staff panel. A door has a
+name, **one or two native doors** (a double door is two leaves turned together), a
+default state, the **groups** that turn it (a job or a gang, each with a minimum
+grade; any one is enough), the **key items** that turn it, the **characters** that turn
+it, an optional **code**, an **autolock** delay, whether it can be **picked** and how
+hard, how close a player has to stand, and whether its prompt is drawn. A door with no
+rule at all opens for staff only, as in ox.
+
+**A door is named by its native id** (`0x` and sixteen hex digits), never by a model or
+a coordinate. The native door keeps its own animation, sound and collision: this module
+only ever moves its LOCK, and it does so through one of two backends (`BACKEND` in
+`config/doorlock.lua`):
+
+- **networked** — the platform's `open77_doors`. Each managed door is `register`ed to
+  this resource and locked with its `setLocked` export, so the lock is the platform's
+  server state and refuses every player's open request. A sweep re-adopts a door the
+  service forgot after a restart.
+- **local** — no platform service. The server holds the state and broadcasts it per
+  routing bucket; every client puts its streamed managed doors into it with
+  `Open77.doors.setLocked` and refuses vanilla interaction on a locked one
+  (`setInteractionAllowed`). **This is what the test server runs today**, because
+  `open77_doors` depends on `open77_elevators`, which would take the cabins away from
+  the job-gated `elevators` module. It is the weaker promise — a modified client can
+  open its own copy of a door — and `auto` moves to the networked backend by itself the
+  day `open77_doors` is in `resources.load`.
+
+**The server decides.** A client sends a door key and the state it wants; the server
+reads the player's position and bucket from the host (the door's own reach plus
+`SLACK`), the job, gang and grade through `OPX.JobGate`, the bag through the inventory
+contract, and only then turns the lock, arms the autolock on its own clock and tells the
+bucket. A refusal is a toast naming why (grade too low, off duty, no key, wrong code,
+too far). **E is shared**: away from a managed door the key sends nothing and says
+nothing. The target eye carries *Lock / unlock* (with the state as its checkbox) and
+*Pick the lock* (a locked, pickable door, a `lockpick` in the bag). A pick is a
+`progress` bar on the client and a clock and a roll on the server: a "done" that arrives
+before the bar could have run is refused and audited, and a failed roll breaks the pick
+at `LOCKPICK.BREAK_CHANCE`.
+
+**Key items.** `{ NAME = 'keycard', REMOVE = true }` opens for anybody carrying one and
+spends it; `{ NAME = 'door_key', BOUND = true }` opens only for a `door_key` whose
+metadata names THIS door — `/opx.doorlock.key <door> [player]` cuts one — and is never
+spent.
+
+**Two places a door comes from.** `DOORS` in `config/doorlock.lua` are read-only
+defaults; everything staff create in game lives in `opx77_doorlock` (one row per door,
+the door itself one JSON column, like ox). The panel can turn a config door and
+teleport to it, never edit or delete it. `/opx.doorlock.list <door>` prints any door as
+the config block that checks it in.
+
+**The staff panel** opens from **World → Door locks** in the staff menu, from
+`/opx.doorlock`, or from the eye's *Manage door* row on any door. *The door in front of
+me* (crosshair, else the closest within 3 m) opens a managed door's editor or a new
+draft for an unmanaged one; *Doors* lists every door, paged and searchable. The editor
+is a DRAFT — toggles, sliders and lists change this client's copy until **Save** — and
+holds the name, locked by default, *Lock now*, jobs and gangs with a grade, key items,
+characters, the code (never sent back to a panel; an edit that does not name it keeps
+it), on-duty only, autolock, pickable and difficulty, reach, hide the prompt, the
+second leaf (picked from the native doors within 4 m), *Teleport to the door* (the staff
+module's `opx.admin.player.tp`), *Give me a key* and *Delete*.
+
+| ACL entry | what it opens |
+|---|---|
+| `command.opx.doorlock` | the panel, the list, the eye's *Manage door* row |
+| `command.opx.doorlock.save` | the panel's Save (a net event the server gates on this entry) |
+| `command.opx.doorlock.remove` / `.lock` / `.key` / `.list` | the commands of those names |
+| `command.opx.doorlock.bypass` | turning any door without a key or a code |
+
+So an operator role needs `command.opx.doorlock` **and** `command.opx.doorlock.*`.
+Every save, delete, staff lock and key is audited (`doorlock.create`, `.edit`,
+`.remove`, `.lock`, `.unlock`, `.key`), and every change of state is published as
+`opx:on:doorlock:changed`.
+
+**Not here, deliberately:** ox's `doorRate` (the native door animates at its own speed)
+and its NUI sounds (`SOUNDS.LOCK` / `.UNLOCK`, or a door's own, are Wwise events played
+through `Open77.sfx.play` for the player who turned it, and ship empty). The platform's
+own force / pay / hack door actions are not declared: a locked managed door refuses
+them.
+
 ### Getting dressed
 
 `clothing` is a **place**, like a garage spot and a dealer: stand on the marker, press
@@ -568,7 +649,8 @@ error the resource ever sees.
 **A role for an operator therefore needs both spellings, and the same shape repeats
 wherever a module owns a namespace:** `command.opx.admin` *and* `command.opx.admin.*`
 to open the panel and use it, `command.opx.garages.*`, `command.opx.dealership.*` and
-`command.opx.clothing.*` for the garage, dealer and wardrobe commands, and
+`command.opx.clothing.*` for the garage, dealer and wardrobe commands,
+`command.opx.doorlock` and `command.opx.doorlock.*` for the door panel, and
 `command.opx.weather.*`,
 `command.opx.time` and `command.opx.time.*` for the world controls.
 
@@ -713,7 +795,9 @@ local data = exports.opx_infinity:GetPlayerData(playerId)
 | `AddMoney` / `RemoveMoney(src, type, amount, reason?)`, `AddMoneyOffline(cid, type, amount, reason?)` | write |
 | `AddItem` / `RemoveItem(target, item, count?, meta?)`, `AddToStash` / `RemoveFromStash(stash, item, count?, meta?)` | write |
 | `SendChat(src, msg)`, `BroadcastChat(msg, { bucket?, radius?, origin? })` | write |
-| `RevokeKeys(target, plate)`, `RevokeAllKeys(plate)`, `SetVehicleState(plate, 'stored'\|'impounded', garage?)` | write |
+| `RevokeKeys(target, plate)`, `RevokeAllKeys(plate)`, `SetVehicleState(plate, 'stored'
+| `GetDoor(key)` | read |
+| `SetDoorLocked(key, locked)` | write |\|'impounded', garage?)` | write |
 | `SetJob` / `SetGang(target, name, grade?)`, `RemoveJob` / `RemoveGang(target, name)`, `SetDuty(src, onDuty)` | write |
 | `GetMetadata(src, key?)`, `IsDown(src)` | read |
 | `SetMetadata(src, key, value)`, `Revive(src, reason?)` | write |
@@ -754,7 +838,8 @@ its audit line naming caller and reason) and answers its codes: `not_down`,
 `source` is nil for a character who is not online): `opx:on:character:loaded`,
 `unloaded`, `money`, `job`, `gang`; `opx:on:inventory:changed`, `used`;
 `opx:on:downed:changed`; `opx:on:vehicles:spawned`, `stored`;
-`opx:on:dealership:sold`; `opx:on:hauling:sold`. Payloads are closed copies built
+`opx:on:dealership:sold`; `opx:on:hauling:sold`; `opx:on:doorlock:changed` (`{ door,
+locked, by }`). Payloads are closed copies built
 for the bus, never live records — PlayerData's free-form `metadata` is not on it.
 
 **Client exports** draw on the local player's screen: `OpenMenu(spec)`,

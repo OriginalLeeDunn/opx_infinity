@@ -737,6 +737,25 @@ publish('SetVehicleState', 'write', function(_, plate, state, garage)
 	return answered(vehicles.SetState(plate, state, garage))
 end, true)
 
+-- ── doors ────────────────────────────────────────────────────────────────────
+
+publish('GetDoor', 'read', function(_, key)
+	local doorlock = OPX.Api.Get('doorlock')
+	if doorlock == nil or doorlock.Get == nil then return refuse('error.unavailable') end
+	if type(key) ~= 'string' then return refuse('export.badArgument') end
+	return answered(doorlock.Get(key))
+end)
+
+-- A write that names no player: the caller decided who may, and the door's own
+-- rules are not consulted. On the networked backend it reaches `open77_doors`
+-- and yields, so it is awaited like every other write.
+publish('SetDoorLocked', 'write', function(caller, key, locked)
+	local doorlock = OPX.Api.Get('doorlock')
+	if doorlock == nil or doorlock.SetLocked == nil then return refuse('error.unavailable') end
+	if type(key) ~= 'string' or type(locked) ~= 'boolean' then return refuse('export.badArgument') end
+	return answered(doorlock.SetLocked(key, locked, 'ext:' .. caller))
+end, true)
+
 if not hasExports() then
 	Open77.log.warn('[exports] this host has no `exports`: the creator surface is not published')
 end

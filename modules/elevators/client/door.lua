@@ -108,7 +108,13 @@ Door.REFUSAL = {
 -- @return table
 function Door.Open(origin)
 	local opened = Panel.Open(nil)
-	if opened.ok ~= true then say(opened.error) end
+	-- NOT A WORD WHEN THE KEY FINDS NO LIFT. E is shared: clothing, garages,
+	-- dealership and teleports declare it too, and they already stay silent away
+	-- from their spots. This one answered every press anywhere on the map with
+	-- "you are not standing at an elevator", which is the owner's report. Only a
+	-- press AT a lift, or a caller that named itself, is told why it failed.
+	local quiet = (origin == nil or origin == 'key') and opened.error == 'no_elevator_nearby'
+	if opened.ok ~= true and not quiet then say(opened.error) end
 	opened.source = origin or 'key'
 	return opened
 end

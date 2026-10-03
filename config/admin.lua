@@ -279,6 +279,8 @@ OPX.Config.MODULES.admin = {
 		-- The ripperdoc's override on the operator's own body: `full` puts a
 		-- fresh life on every piece of chrome fitted (Myself only).
 		CHROME = 'opx.clinic.chrome',
+		-- The door panel: `modules/doorlock`, opened by its own restricted command.
+		DOORLOCK = 'opx.doorlock',
 	},
 
 	-- Weather names the sky screen offers. They are the NAME column of

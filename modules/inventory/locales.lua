@@ -160,6 +160,9 @@ OPX.Locale.Register('en', {
 	['inventory.item.vehicle_key'] = 'Vehicle key',
 	['inventory.item.vehicle_key.description'] =
 		'Opens one vehicle, the one named on it. Use it beside that vehicle to lock or unlock it.',
+	['inventory.item.door_key'] = 'Door key',
+	['inventory.item.door_key.description'] =
+		'Opens one door, the one named on it.',
 	['inventory.item.shard'] = 'Data shard',
 	['inventory.item.eddies'] = 'Eddies',
 	['inventory.item.eddies.description'] =
@@ -517,6 +520,9 @@ OPX.Locale.Register('fr', {
 	['inventory.item.vehicle_key'] = 'Clé de véhicule',
 	['inventory.item.vehicle_key.description'] =
 		'Ouvre un seul véhicule, celui dont le nom est dessus. Utilisez-la à côté pour le verrouiller ou le déverrouiller.',
+	['inventory.item.door_key'] = 'Clé de porte',
+	['inventory.item.door_key.description'] =
+		'Ouvre une seule porte, celle dont le nom est dessus.',
 	['inventory.item.shard'] = 'Éclat de données',
 	['inventory.item.eddies'] = 'Eddies',
 	['inventory.item.eddies.description'] =

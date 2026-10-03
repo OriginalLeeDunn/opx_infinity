@@ -12116,23 +12116,15 @@ do
 		check('and it is NOT sent to the entity-bound call, which would resolve it as a CName',
 			#cctl.effects.entityPlays == 0, #cctl.effects.entityPlays)
 		check('and the noclip native was really switched on', cctl.travels.noclip == true)
-		-- THE BODY, AND NOT "NOTHING AT ALL HAPPENED". This used to assert the
-		-- raw count of client events across the window, and it was a hostage to
-		-- the scheduler's stagger: every module's own poll (`*:ask`, `*:sync`)
-		-- registers at boot with `nextAt = now + (registered * 17) % interval`,
-		-- so WHICH poll's first fire lands in this 400 ms window depends on how
-		-- many jobs the resource happens to carry. Adding a module re-rolls it --
-		-- `opx:net:teleports:ask` walked into the window the moment
-		-- `headquarters` joined the manifest -- and the failure named a toggle
-		-- that had sent nothing. What this check means is what its words say: on
-		-- the way up, the BODY is not reported. `NOCLIP_BODY` is the one event
-		-- that reports it, and none may fire here.
-		check('and the body is NOT reported on the way up -- the server already knew', (function()
-			for index = mark + 1, #cctl.serverEvents do
-				if cctl.serverEvents[index].name == admin.Event.NOCLIP_BODY then return false end
-			end
-			return true
-		end)())
+		-- Counted by NAME, not by length: every module's own periodic ask (the
+		-- teleports list, the door list) rides the same recorder, and which of
+		-- them lands inside these four pumps is a scheduler rotation, not noclip.
+		local reported = 0
+		for index = mark + 1, #cctl.serverEvents do
+			if cctl.serverEvents[index].name == admin.Event.NOCLIP_BODY then reported = reported + 1 end
+		end
+		check('and the body is NOT reported on the way up -- the server already knew',
+			reported == 0, reported)
 
 		-- ── and it RIDES the operator ─────────────────────────────────────
 		-- A world effect is placed once and then stays where it was put. An
@@ -17637,6 +17629,20 @@ do
 		local away = M.Door.Open('test')
 		check('and the key then answers that no lift is near',
 			away.ok == false and away.error == 'no_elevator_nearby', tostring(away.error))
+
+		-- THE OWNER: pressing E away from any lift raised "you are not standing at
+		-- an elevator". E is shared with four other modules that stay silent away
+		-- from their spots, so a press with no lift near says nothing at all.
+		local toasts = {}
+		local realShow = OPX.Toast.Show
+		OPX.Toast.Show = function(spec) toasts[#toasts + 1] = spec; return realShow(spec) end
+		mapping.pressed()
+		OPX.Toast.Show = realShow
+		local spoke = 0
+		for _, spec in ipairs(toasts) do
+			if type(spec) == 'table' and spec.id == 'opx.elevators.answer' then spoke = spoke + 1 end
+		end
+		check('and the key pressed away from any lift raises no toast', spoke == 0, spoke)
 	end
 end
 
@@ -22858,10 +22864,17 @@ do
 	check('the client boots', why == nil, why)
 
 	if why == nil then
-		-- One bounded unit per resume at the proven grain (40 keys a part,
-		-- ~2 400 instructions): the catalogue drains in 48 units. The twenty
-		-- this drove only ever fitted the coarse 250-key grain's ten units.
-		control.Pump(120)
+		-- SETTLED, NOT COUNTED. One part goes out per frame and the key list is
+		-- built a slice per frame before that, so how many frames the catalogue
+		-- takes grows with every module's locale file; twenty stopped being
+		-- enough the day a module added a panel's worth of strings.
+		settle(control, function()
+			local page = control.pages[1]
+			for _, sent in ipairs(page and page.sent or {}) do
+				if sent.channel == 'opx:locale:set' and sent.payload.done == true then return true end
+			end
+			return false
+		end, 200)
 		local page = control.pages[1]
 		check('a page was created', page ~= nil)
 
@@ -48722,7 +48735,7 @@ do
 			'AddMoney', 'RemoveMoney', 'AddMoneyOffline', 'HasJob', 'HasGang', 'GetJob',
 			'GetGang', 'HasItem', 'CountItem', 'AddItem', 'RemoveItem', 'CountInStash',
 			'AddToStash', 'RemoveFromStash', 'SendChat', 'BroadcastChat', 'RevokeKeys',
-			'RevokeAllKeys', 'SetVehicleState',
+			'RevokeAllKeys', 'SetVehicleState', 'GetDoor', 'SetDoorLocked',
 		}
 		local missing = {}
 		for _, name in ipairs(SERVER_EXPORTS) do
@@ -50678,6 +50691,725 @@ do
 		check('the walk over 600 rows yields on its way', fromBuilder >= 10, fromBuilder)
 		check('and the screen still lands', admin.Menu.IsOpen() and admin.Menu.Screen() == 'weaponList',
 			admin.Menu.Screen())
+	end
+end
+
+
+-- ── doorlock ─────────────────────────────────────────────────────────────────
+-- The door locks. The server is booted against a bridge that keeps what it was
+-- given, with three config doors patched in after `config/doorlock.lua` loads,
+-- and the character and inventory contracts swapped for fakes that answer what
+-- each case needs: a job or gang at a grade, a key in the bag, a lockpick.
+
+local DOORLOCK_IDS = {
+	front = '0x00000000000000AA', gateA = '0x00000000000000B1', gateB = '0x00000000000000B2',
+	vault = '0x00000000000000C1', den = '0x00000000000000D1', back = '0x00000000000000E1',
+}
+
+local function doorlockBridge(state)
+	state.rows = state.rows or {}
+	state.writes = state.writes or {}
+	state.saved = state.saved or {}
+	return Host.Database({
+		scalar = function() return 1 end,
+		update = function(sql, params)
+			if sql:find('INSERT INTO opx77_doorlock', 1, true) then
+				state.writes[#state.writes + 1] = { kind = 'upsert', params = params }
+				state.saved[params.key] = { door_key = params.key, name = params.name,
+					bucket = params.bucket, data = params.data }
+			elseif sql:find('DELETE FROM opx77_doorlock', 1, true) then
+				state.writes[#state.writes + 1] = { kind = 'delete', params = params }
+			end
+			return 1
+		end,
+		query = function(sql)
+			if sql:find('FROM opx77_doorlock', 1, true) then return state.rows end
+			return {}
+		end,
+		single = function() return nil end,
+		insert = function() return 1 end,
+		transaction = function() return true end,
+	})
+end
+
+-- The config doors every server test boots with.
+local function doorlockConfig(env, file)
+	if file ~= 'config/doorlock.lua' then return end
+	env.OPX.Config.MODULES.doorlock.DOORS = {
+		front = { NAME = 'Front', DOORS = { '0xAA' }, X = 0.0, Y = 0.0, Z = 0.0, LOCKED = true,
+			GROUPS = { { JOB = 'ncpd', GRADE = 2 } }, AUTOLOCK = 2, LOCKPICK = true, DIFFICULTY = 'easy' },
+		gate = { NAME = 'Gate', DOORS = { '0xB1', '0xb2' }, X = 50.0, Y = 0.0, Z = 0.0, LOCKED = true,
+			ITEMS = { { NAME = 'door_key', BOUND = true }, { NAME = 'keycard', REMOVE = true } } },
+		vault = { NAME = 'Vault', DOORS = { '0xC1' }, X = 100.0, Y = 0.0, Z = 0.0, LOCKED = true,
+			PASSCODE = '1234' },
+		den = { NAME = 'Den', DOORS = { '0xD1' }, X = 150.0, Y = 0.0, Z = 0.0, LOCKED = true,
+			GROUPS = { { GANG = 'maelstrom', GRADE = 1 } } },
+		broken = { NAME = 'Broken', DOORS = { 'nope' }, X = 0.0, Y = 0.0, Z = 0.0 },
+	}
+end
+
+-- Swaps two contracts for fakes, in place, and answers the knobs.
+local function doorlockFakes(OPX)
+	local fakes = {
+		players = {},
+		counts = {},
+		bound = {},
+		removed = {},
+		added = {},
+		countWhere = {},
+		known = { door_key = true, keycard = true, lockpick = true },
+	}
+	local realGet = OPX.Api.Get
+	local character = {
+		GetPlayer = function(source)
+			local data = fakes.players[source]
+			return data and { PlayerData = data } or nil
+		end,
+	}
+	local inventory = {
+		GetItemCount = function(source, name)
+			return { ok = true, value = (fakes.counts[source] or {})[name] or 0 }
+		end,
+		CountWhere = function(source, name, match)
+			fakes.countWhere[#fakes.countWhere + 1] = { source = source, name = name, match = match }
+			local held = (fakes.bound[source] or {})[name]
+			return { ok = true, value = held and match and held == match.door and 1 or 0 }
+		end,
+		RemoveItem = function(source, name, count)
+			fakes.removed[#fakes.removed + 1] = { source = source, name = name, count = count }
+			local bag = fakes.counts[source] or {}
+			bag[name] = math.max(0, (bag[name] or 0) - (count or 1))
+			return { ok = true }
+		end,
+		AddItem = function(source, name, count, metadata)
+			fakes.added[#fakes.added + 1] = { source = source, name = name, count = count, metadata = metadata }
+			return { ok = true }
+		end,
+		GetItem = function(name) return fakes.known[name] and { name = name } or nil end,
+	}
+	OPX.Api.Get = function(name, minimum)
+		if name == 'character' then return character end
+		if name == 'inventory' then return inventory end
+		return realGet(name, minimum)
+	end
+	return fakes
+end
+
+local function doorlockLast(control, name, source)
+	for index = #control.clientEvents, 1, -1 do
+		local event = control.clientEvents[index]
+		if event.name == name and (source == nil or event.source == source) then return event[1] end
+	end
+	return nil
+end
+
+section('doorlock: what a door is, and who may turn it')
+do
+	local env, control, why = boot('server', doorlockBridge({}), nil, doorlockConfig)
+	check('the server boots with the doorlock module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local dl = OPX.Modules.Get('doorlock')
+		local Access = dl.Access
+		check('the module is running', OPX.Modules.IsRunning('doorlock'),
+			OPX.Modules.Record('doorlock').Reason)
+
+		check('a short door id is padded to the platform spelling',
+			Access.DoorId('0xfc85') == '0x000000000000FC85', Access.DoorId('0xfc85'))
+		check('a zero id and a non-hex id are no door',
+			Access.DoorId('0x0') == nil and Access.DoorId('0xZZ') == nil and Access.DoorId(12) == nil)
+		check('three leaves are not a door',
+			Access.Normalize('three', { doors = { '0x1', '0x2', '0x3' }, x = 0, y = 0, z = 0 }) == nil)
+		local _, dup = Access.Normalize('dup', { doors = { '0x1', '0x01' }, x = 0, y = 0, z = 0 })
+		check('and a double door of one leaf twice is refused', dup == 'duplicate_door_id', dup)
+		local refused = false
+		for _, line in ipairs(control.log.warn) do
+			if line:find('DOORS.broken refused', 1, true) then refused = true end
+		end
+		check('a config door with a bad id is named in the journal, not loaded', refused)
+		local contract = OPX.Api.Get('doorlock')
+		check('and the good ones are', contract.Get('front').ok and contract.Get('gate').ok
+			and not contract.Get('broken').ok)
+		check('a double door keeps both leaves, canonical',
+			contract.Get('gate').ok and contract.Get('gate').value.ids[2] == DOORLOCK_IDS.gateB)
+
+		-- ── the decision, pure ──────────────────────────────────────────────
+		local door = Access.Normalize('t', { doors = { '0x9' }, x = 0, y = 0, z = 0,
+			groups = { { kind = 'job', name = 'ncpd', grade = 2 }, { kind = 'gang', name = 'maelstrom', grade = 1 } },
+			items = { { name = 'keycard' } }, characters = { 'CIT001' } }, 'db')
+		local now = 1000
+		local function decide(subject) return Access.Evaluate(door, subject, now) end
+		local function snap(fields)
+			fields.atMs = now
+			return fields
+		end
+		check('a job at the grade turns it',
+			decide({ snapshot = snap({ job = { name = 'ncpd', grade = { level = 2 } } }) }) == true)
+		local ok, reason = decide({ snapshot = snap({ job = { name = 'ncpd', grade = { level = 1 } } }) })
+		check('one grade below is refused, and says so', ok == false and reason == 'grade_too_low', reason)
+		ok, reason = decide({ snapshot = snap({ job = { name = 'fixer', grade = { level = 9 } } }) })
+		check('another job is refused', ok == false, reason)
+		check('a gang at the grade turns it',
+			decide({ snapshot = snap({ job = { name = 'x' }, gang = { name = 'maelstrom', grade = { level = 1 } } }) }) == true)
+		check('so does a gang membership at the grade',
+			decide({ snapshot = snap({ job = { name = 'x' }, gangs = { maelstrom = 3 } }) }) == true)
+		check('a listed character turns it',
+			decide({ snapshot = snap({ job = { name = 'x' }, citizenId = 'CIT001' }) }) == true)
+		local passed, how, item = decide({ items = function(entry) return entry.name == 'keycard' and 1 or 0 end })
+		check('a key item turns it, and names the item', passed and how == 'item' and item.name == 'keycard')
+		check('staff turn it', decide({ staff = true }) == true)
+		local bare = Access.Normalize('bare', { doors = { '0x9' }, x = 0, y = 0, z = 0 }, 'db')
+		ok, reason = Access.Evaluate(bare, { snapshot = snap({ job = { name = 'ncpd' } }) }, now)
+		check('a door with no rule opens for staff only, as in ox', ok == false and reason == 'not_allowed', reason)
+		check('a stale snapshot closes a gated door',
+			decide({ snapshot = { job = { name = 'ncpd', grade = { level = 5 } }, atMs = now - 120000 } }) == false)
+	end
+end
+
+section('doorlock: a player at a door, measured by the server')
+do
+	local env, control, why = boot('server', doorlockBridge({}), nil, doorlockConfig)
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local dl = OPX.Modules.Get('doorlock')
+		local contract = OPX.Api.Get('doorlock')
+		local fakes = doorlockFakes(OPX)
+		local function locked(key) return contract.Get(key).value.locked end
+		local function ask(source, payload, rounds)
+			env.source = source
+			control.netEvents[dl.Event.TOGGLE](payload)
+			control.Pump(rounds or 8)
+			return doorlockLast(control, dl.Event.ANSWER, source)
+		end
+
+		check('the backend is local while open77_doors is not running', contract.Mode() == 'local')
+
+		control.Admit(51, 'acct-51')
+		fakes.players[51] = { job = { name = 'ncpd', grade = { level = 2 }, onDuty = true },
+			jobs = { ncpd = 2 }, citizenId = 'CIT051' }
+		local answer = ask(51, { key = 'front', locked = false })
+		check('an officer at the grade unlocks the front door',
+			answer ~= nil and answer.ok == true and answer.code == 'unlocked' and locked('front') == false,
+			answer and tostring(answer.code))
+		local state = doorlockLast(control, dl.Event.STATE, 51)
+		check('and everyone in the bucket is told its state',
+			state ~= nil and state.key == 'front' and state.locked == false)
+
+		-- The autolock: two seconds on this door, on the server's own clock.
+		check('it stays unlocked a moment', locked('front') == false)
+		local relocked = settle(control, function() return locked('front') == true end, 60)
+		check('and the autolock locks it again by itself', relocked)
+
+		control.Admit(52, 'acct-52')
+		fakes.players[52] = { job = { name = 'ncpd', grade = { level = 1 } }, jobs = { ncpd = 1 } }
+		answer = ask(52, { key = 'front', locked = false })
+		check('an officer one grade short is refused with the grade',
+			answer ~= nil and answer.ok == false and answer.code == 'grade_too_low' and locked('front'),
+			answer and tostring(answer.code))
+
+		control.Pump(8)
+		control.Stand(51, 10.0, 0.0, 0.0)
+		answer = ask(51, { key = 'front', locked = false })
+		check('ten metres away is too far, whatever the client thinks',
+			answer ~= nil and answer.code == 'too_far' and locked('front'), answer and tostring(answer.code))
+		control.Stand(51, 0.5, 0.0, 0.0)
+		control.world.buckets[51] = 4
+		control.Pump(8)
+		answer = ask(51, { key = 'front', locked = false })
+		check('and another routing bucket is not this door',
+			answer ~= nil and answer.code == 'wrong_bucket' and locked('front'), answer and tostring(answer.code))
+		control.world.buckets[51] = 0
+
+		-- Gangs.
+		control.Admit(53, 'acct-53')
+		control.Stand(53, 150.0, 0.0, 0.0)
+		fakes.players[53] = { job = { name = 'unemployed', grade = { level = 0 } },
+			gang = { name = 'maelstrom', grade = { level = 1 } }, gangs = { maelstrom = 1 } }
+		answer = ask(53, { key = 'den', locked = false })
+		check('a Maelstrom enforcer opens the den', answer ~= nil and answer.ok and locked('den') == false,
+			answer and tostring(answer.code))
+		control.Admit(54, 'acct-54')
+		control.Stand(54, 150.0, 0.0, 0.0)
+		fakes.players[54] = { job = { name = 'unemployed', grade = { level = 0 } }, gangs = { maelstrom = 0 } }
+		answer = ask(54, { key = 'den', locked = true })
+		check('a chromehead does not', answer ~= nil and answer.ok == false and locked('den') == false,
+			answer and tostring(answer.code))
+
+		-- Key items, bound and plain.
+		control.Admit(55, 'acct-55')
+		control.Stand(55, 50.0, 0.0, 0.0)
+		fakes.players[55] = { job = { name = 'unemployed', grade = { level = 0 } } }
+		fakes.bound[55] = { door_key = 'gate' }
+		answer = ask(55, { key = 'gate', locked = false })
+		check('a key cut for the gate opens it', answer ~= nil and answer.ok and locked('gate') == false,
+			answer and tostring(answer.code))
+		local asked = fakes.countWhere[#fakes.countWhere]
+		check('and the bag was asked for a key carrying THIS door',
+			asked ~= nil and asked.name == 'door_key' and asked.match.door == 'gate')
+		check('a bound key is never spent', #fakes.removed == 0)
+
+		contract.SetLocked('gate', true)
+		control.Pump(4)
+		control.Admit(56, 'acct-56')
+		control.Stand(56, 50.0, 0.0, 0.0)
+		fakes.players[56] = { job = { name = 'unemployed', grade = { level = 0 } } }
+		fakes.counts[56] = { keycard = 2 }
+		answer = ask(56, { key = 'gate', locked = false })
+		check('a keycard opens it', answer ~= nil and answer.ok and locked('gate') == false)
+		check('and one keycard is spent',
+			#fakes.removed == 1 and fakes.removed[1].name == 'keycard' and fakes.counts[56].keycard == 1)
+
+		control.Admit(57, 'acct-57')
+		control.Stand(57, 50.0, 0.0, 0.0)
+		fakes.players[57] = { job = { name = 'unemployed', grade = { level = 0 } } }
+		answer = ask(57, { key = 'gate', locked = true })
+		check('nobody else turns it', answer ~= nil and answer.code == 'no_key' and locked('gate') == false,
+			answer and tostring(answer.code))
+
+		-- Staff, and the code.
+		control.Admit(58, 'acct-58')
+		control.Stand(58, 100.0, 0.0, 0.0)
+		control.Allow(58, 'command.opx.doorlock.bypass')
+		answer = ask(58, { key = 'vault', locked = false })
+		check('staff with the bypass grant open the vault without its code',
+			answer ~= nil and answer.ok and locked('vault') == false, answer and tostring(answer.code))
+		contract.SetLocked('vault', true)
+
+		control.Admit(59, 'acct-59')
+		control.Stand(59, 100.0, 0.0, 0.0)
+		fakes.players[59] = { job = { name = 'unemployed', grade = { level = 0 } } }
+		answer = ask(59, { key = 'vault', locked = false })
+		check('a coded door asks for its code', answer ~= nil and answer.code == 'passcode_required'
+			and answer.locked == false, answer and tostring(answer.code))
+		control.Pump(8)
+		answer = ask(59, { key = 'vault', locked = false, code = '0000' })
+		check('a wrong code is refused', answer ~= nil and answer.code == 'wrong_passcode' and locked('vault'))
+		control.Pump(8)
+		answer = ask(59, { key = 'vault', locked = false, code = '1234' })
+		check('and a guess inside three seconds is not even tried',
+			answer ~= nil and answer.code == 'too_fast' and locked('vault'), answer and tostring(answer.code))
+		control.Pump(35)
+		answer = ask(59, { key = 'vault', locked = false, code = '1234' })
+		check('the right code opens it', answer ~= nil and answer.ok and locked('vault') == false,
+			answer and tostring(answer.code))
+
+		-- The bus.
+		local published = false
+		env.AddEventHandler(dl.Event.ON_CHANGED, function(source, payload)
+			if type(payload) == 'table' and payload.door == 'vault' then published = true end
+		end)
+		contract.SetLocked('vault', true)
+		control.Pump(2)
+		check('a change is published on opx:on:doorlock:changed', published)
+	end
+end
+
+section('doorlock: a lockpick is timed and rolled by the server')
+do
+	local env, control, why = boot('server', doorlockBridge({}), nil, doorlockConfig)
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local dl = OPX.Modules.Get('doorlock')
+		local contract = OPX.Api.Get('doorlock')
+		local fakes = doorlockFakes(OPX)
+		local function locked(key) return contract.Get(key).value.locked end
+		control.Admit(60, 'acct-60')
+		fakes.players[60] = { job = { name = 'unemployed', grade = { level = 0 } } }
+		env.source = 60
+
+		control.netEvents[dl.Event.PICK]({ key = 'front' })
+		control.Pump(6)
+		local answer = doorlockLast(control, dl.Event.ANSWER, 60)
+		check('no pick in the bag, no attempt', answer ~= nil and answer.code == 'no_lockpick',
+			answer and tostring(answer.code))
+
+		fakes.counts[60] = { lockpick = 2 }
+		control.Pump(8)
+		control.netEvents[dl.Event.PICK]({ key = 'front' })
+		control.Pump(6)
+		local go = doorlockLast(control, dl.Event.PICK_GO, 60)
+		check('with one, the server says go and how long the bar runs',
+			go ~= nil and go.key == 'front' and go.durationMs == 4000, go and tostring(go.durationMs))
+		local before = #control.log.warn
+		dl.Roll = function() return 0 end
+		env.source = 60
+		control.netEvents[dl.Event.PICKED]({ key = 'front', finished = true })
+		control.Pump(4)
+		answer = doorlockLast(control, dl.Event.ANSWER, 60)
+		check('a "done" that arrives before the bar could have run picks nothing',
+			answer ~= nil and answer.code == 'pick_failed' and locked('front'))
+		local audited = false
+		for index = before + 1, #control.log.warn do
+			if control.log.warn[index]:find('doorlock.pickEarly', 1, true) then audited = true end
+		end
+		check('and is written down as what it is', audited)
+
+		control.Pump(8)
+		control.netEvents[dl.Event.PICK]({ key = 'front' })
+		control.Pump(45)
+		env.source = 60
+		control.netEvents[dl.Event.PICKED]({ key = 'front', finished = true })
+		control.Pump(4)
+		answer = doorlockLast(control, dl.Event.ANSWER, 60)
+		check('one that ran its time, and rolled well, opens the lock',
+			answer ~= nil and answer.code == 'picked' and locked('front') == false, answer and tostring(answer.code))
+
+		contract.SetLocked('front', true)
+		local rolls = { 0.99, 0.0 }
+		dl.Roll = function() return table.remove(rolls, 1) or 0.99 end
+		control.Pump(8)
+		env.source = 60
+		control.netEvents[dl.Event.PICK]({ key = 'front' })
+		control.Pump(45)
+		env.source = 60
+		control.netEvents[dl.Event.PICKED]({ key = 'front', finished = true })
+		control.Pump(4)
+		answer = doorlockLast(control, dl.Event.ANSWER, 60)
+		check('a bad roll holds, and the break roll takes the pick',
+			answer ~= nil and answer.code == 'pick_broke' and locked('front')
+				and fakes.counts[60].lockpick == 1, answer and tostring(answer.code))
+		dl.Roll = math.random
+	end
+end
+
+section('doorlock: staff write through the ACL, and the row comes back')
+do
+	local state = {}
+	local env, control, why = boot('server', doorlockBridge(state), nil, doorlockConfig)
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local dl = OPX.Modules.Get('doorlock')
+		local contract = OPX.Api.Get('doorlock')
+		local fakes = doorlockFakes(OPX)
+		for _, name in ipairs({ 'opx.doorlock', 'opx.doorlock.list', 'opx.doorlock.remove',
+			'opx.doorlock.lock', 'opx.doorlock.key' }) do
+			check(('%s is registered and restricted'):format(name),
+				control.commands[name] ~= nil and control.commands[name].restricted == true)
+		end
+
+		local staff = 70
+		control.Admit(staff, 'acct-70')
+		control.Stand(staff, 1.0, 1.0, 0.0)
+		local function save(payload)
+			env.source = staff
+			control.netEvents[dl.Event.STAFF_SAVE](payload)
+			control.Pump(10)
+			return doorlockLast(control, dl.Event.STAFF_SAVED, staff)
+		end
+		local door = { name = 'Back Room', doors = { DOORLOCK_IDS.back }, x = 1.5, y = 1.0, z = 0.0,
+			bucket = 0, locked = true, groups = { { kind = 'job', name = 'ncpd', grade = 0 } },
+			items = { { name = 'door_key', bound = true } }, characters = {}, passcode = '99',
+			autolock = 30, lockpick = true, difficulty = 'hard', maxDistance = 2.5 }
+
+		local answer = save({ door = door })
+		check('a save without the grant is refused', answer ~= nil and answer.ok == false
+			and answer.code == 'not_permitted' and #state.writes == 0, answer and tostring(answer.code))
+
+		control.Allow(staff, 'command.opx.doorlock.save')
+		control.Pump(12)
+		answer = save({ door = door })
+		check('with it, the door is created under a key from its name',
+			answer ~= nil and answer.ok == true and answer.key == 'back_room', answer and tostring(answer.code))
+		local write = state.writes[#state.writes]
+		check('and written as one row', write ~= nil and write.kind == 'upsert' and write.params.key == 'back_room')
+		local stored = write and env.json.decode(write.params.data) or {}
+		check('carrying every field, the code included',
+			stored.passcode == '99' and stored.groups[1].name == 'ncpd' and stored.items[1].bound == true
+				and stored.difficulty == 'hard' and stored.autolock == 30 and stored.doors[1] == DOORLOCK_IDS.back)
+		check('and the door is live at once', contract.Get('back_room').ok)
+
+		control.Pump(12)
+		local bad = {}
+		for field, value in pairs(door) do bad[field] = value end
+		bad.groups = { { kind = 'job', name = 'nosuchjob', grade = 0 } }
+		bad.doors = { '0xE9' }
+		answer = save({ door = bad })
+		check('a job nobody defined is refused', answer ~= nil and answer.code == 'unknown_group',
+			answer and tostring(answer.code))
+		control.Pump(12)
+		bad.groups, bad.doors = {}, { '0xAA' }
+		answer = save({ door = bad })
+		check('a native door another door manages is refused', answer ~= nil and answer.code == 'door_taken'
+			and answer.detail == 'front', answer and tostring(answer.code))
+		control.Pump(12)
+		answer = save({ key = 'front', door = door })
+		check('a config door is read only', answer ~= nil and answer.code == 'config_door')
+		control.Pump(12)
+		control.Stand(staff, 500.0, 0.0, 0.0)
+		bad.doors = { '0xE8' }
+		answer = save({ door = bad })
+		check('a capture far from where staff stand is refused', answer ~= nil and answer.code == 'too_far',
+			answer and tostring(answer.code))
+		control.Stand(staff, 1.0, 1.0, 0.0)
+
+		-- An edit that does not name the code keeps it: it is never sent to a panel.
+		control.Pump(12)
+		local edit = {}
+		for field, value in pairs(door) do edit[field] = value end
+		edit.passcode, edit.name = nil, 'Back Room B'
+		answer = save({ key = 'back_room', door = edit })
+		stored = env.json.decode(state.writes[#state.writes].params.data)
+		check('an edit keeps the code it was not shown', answer ~= nil and answer.ok and stored.passcode == '99'
+			and stored.name == 'Back Room B')
+
+		-- The list.
+		local listed = #control.clientEvents
+		env.source = staff
+		control.netEvents[dl.Event.STAFF_ASK]({})
+		check('the list is not sent without the opener grant', doorlockLast(control, dl.Event.STAFF_LIST, staff) == nil
+			and #control.clientEvents == listed)
+		control.Allow(staff, 'command.opx.doorlock')
+		control.Pump(4)
+		control.netEvents[dl.Event.STAFF_ASK]({ key = 'back_room' })
+		local detail = doorlockLast(control, dl.Event.STAFF_LIST, staff)
+		check('a door\'s detail goes to staff, and its code does not',
+			detail ~= nil and type(detail.detail) == 'table' and detail.detail.passcode == nil
+				and detail.detail.hasPasscode == true)
+
+		-- The commands.
+		local row = state.saved['back_room']
+		control.commands['opx.doorlock.remove'].run(staff, { 'front' }, 'opx.doorlock.remove front')
+		control.Pump(6)
+		local deletes = 0
+		for _, entry in ipairs(state.writes) do if entry.kind == 'delete' then deletes = deletes + 1 end end
+		check('removing a config door deletes nothing', deletes == 0 and contract.Get('front').ok)
+		control.commands['opx.doorlock.lock'].run(staff, { 'back_room', 'off' }, 'opx.doorlock.lock back_room off')
+		control.Pump(6)
+		check('the lock command turns a door from anywhere', contract.Get('back_room').value.locked == false)
+		control.commands['opx.doorlock.key'].run(staff, { 'back_room' }, 'opx.doorlock.key back_room')
+		control.Pump(6)
+		local cut = fakes.added[#fakes.added]
+		check('a key is cut carrying the door',
+			cut ~= nil and cut.name == 'door_key' and cut.metadata.door == 'back_room')
+		control.commands['opx.doorlock.remove'].run(staff, { 'back_room' }, 'opx.doorlock.remove back_room')
+		control.Pump(8)
+		check('a saved door is deleted', state.writes[#state.writes].kind == 'delete'
+			and not contract.Get('back_room').ok)
+
+		-- The row, read back by a fresh boot.
+		local env2, control2, why2 = boot('server', doorlockBridge({ rows = { row } }), nil, doorlockConfig)
+		check('a second boot reads the saved row', why2 == nil, why2)
+		if why2 == nil then
+			control2.Pump(10)
+			local again = env2.OPX.Api.Get('doorlock').Get('back_room')
+			check('and the door is back as it was saved',
+				again.ok and again.value.origin == 'db' and again.value.ids[1] == DOORLOCK_IDS.back
+					and again.value.locked == true, again.error)
+			local fakes2 = doorlockFakes(env2.OPX)
+			control2.Admit(80, 'acct-80')
+			control2.Stand(80, 1.5, 1.0, 0.0)
+			fakes2.players[80] = { job = { name = 'ncpd', grade = { level = 0 } } }
+			env2.source = 80
+			control2.netEvents[env2.OPX.Modules.Get('doorlock').Event.TOGGLE]({ key = 'back_room', locked = false })
+			control2.Pump(8)
+			local reply = doorlockLast(control2, env2.OPX.Modules.Get('doorlock').Event.ANSWER, 80)
+			check('with its rules and its code', reply ~= nil and reply.code == 'passcode_required',
+				reply and tostring(reply.code))
+		end
+	end
+end
+
+section('doorlock: on open77_doors the platform holds the lock')
+do
+	local calls = {}
+	local function prelude(env)
+		env.GetResourceState = function(name) return name == 'open77_doors' and 'running' or 'stopped' end
+		env.Open77.exports.call = function(resource, method, ...)
+			local args = { ... }
+			calls[#calls + 1] = { resource = resource, method = method, args = args }
+			local first = true
+			if method == 'get' then first = nil end
+			if method == 'register' then first = { id = args[1].id } end
+			return { await = function() return first end, status = function() return 'resolved' end }
+		end
+	end
+	local env, control, why = boot('server', doorlockBridge({}), prelude, doorlockConfig)
+	check('the server boots', why == nil, why)
+	if why == nil then
+		control.Pump(10)
+		local OPX = env.OPX
+		local dl = OPX.Modules.Get('doorlock')
+		local contract = OPX.Api.Get('doorlock')
+		local fakes = doorlockFakes(OPX)
+		check('the backend is the platform\'s', contract.Mode() == 'networked')
+		local registered, configured = {}, {}
+		for _, call in ipairs(calls) do
+			if call.resource == 'open77_doors' and call.method == 'register' then
+				registered[call.args[1].id] = call.args[1]
+			end
+			if call.method == 'configure' and type(call.args[3]) == 'table' then
+				configured[call.args[1]] = call.args[3].locked
+			end
+		end
+		check('every leaf of every door is registered with it',
+			registered[DOORLOCK_IDS.front] ~= nil and registered[DOORLOCK_IDS.gateA] ~= nil
+				and registered[DOORLOCK_IDS.gateB] ~= nil)
+		check('at the door\'s own position when the service has not seen it',
+			registered[DOORLOCK_IDS.gateA] and registered[DOORLOCK_IDS.gateA].position.x == 50.0)
+		check('and locked as the door says', configured[DOORLOCK_IDS.gateA] == true
+			and configured[DOORLOCK_IDS.gateB] == true)
+
+		control.Admit(61, 'acct-61')
+		control.Stand(61, 50.0, 0.0, 0.0)
+		fakes.players[61] = { job = { name = 'unemployed', grade = { level = 0 } } }
+		fakes.counts[61] = { keycard = 1 }
+		local mark = #calls
+		env.source = 61
+		control.netEvents[dl.Event.TOGGLE]({ key = 'gate', locked = false })
+		control.Pump(10)
+		local unlocked = {}
+		for index = mark + 1, #calls do
+			local call = calls[index]
+			if call.method == 'setLocked' and call.args[3] == false then unlocked[call.args[1]] = true end
+		end
+		check('a double door unlocks both leaves on the platform',
+			unlocked[DOORLOCK_IDS.gateA] and unlocked[DOORLOCK_IDS.gateB])
+	end
+end
+
+section('doorlock, client side: E is silent away from a door, and a lock is a lock')
+do
+	local native = { calls = {}, list = {} }
+	local function prelude(env)
+		env.Open77.doors = {
+			near = function() return native.list end,
+			setLocked = function(id, locked)
+				native.calls[#native.calls + 1] = { 'setLocked', id, locked }
+				return true
+			end,
+			setInteractionAllowed = function(id, allowed)
+				native.calls[#native.calls + 1] = { 'allow', id, allowed }
+				return true
+			end,
+			reset = function(id) native.calls[#native.calls + 1] = { 'reset', id } return true end,
+			state = function(id) return native.byEntity and native.byEntity[id] or nil end,
+		}
+	end
+	local env, control, why = boot('client', nil, prelude)
+	check('the client boots with the doorlock module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local dl = OPX.Modules.Get('doorlock')
+		local Runtime = dl.Runtime
+		check('the client half is running', OPX.Modules.IsRunning('doorlock'),
+			OPX.Modules.Record('doorlock').Reason)
+		local mapping = control.keyMappings.byId['opx.doorlock.use']
+		check('the key is declared, E by default', mapping ~= nil and mapping.key == 'E')
+
+		local toasts = 0
+		local realToast = OPX.Toast.Show
+		OPX.Toast.Show = function(definition)
+			toasts = toasts + 1
+			return realToast(definition)
+		end
+		local function toggles()
+			local count = 0
+			for _, event in ipairs(control.serverEvents) do
+				if event.name == dl.Event.TOGGLE then count = count + 1 end
+			end
+			return count
+		end
+
+		mapping.pressed()
+		control.Pump(4)
+		check('E with no door anywhere sends nothing and says nothing', toggles() == 0 and toasts == 0,
+			('%d/%d'):format(toggles(), toasts))
+
+		control.netEvents[dl.Event.SYNC]({ bucket = 0, mode = 'local', offset = 0, done = true, doors = {
+			{ key = 'front', name = 'Front', ids = { DOORLOCK_IDS.front }, x = 0.0, y = 0.0, z = 0.0,
+				locked = true, reach = 2.0 },
+			{ key = 'gate', name = 'Gate', ids = { DOORLOCK_IDS.gateA, DOORLOCK_IDS.gateB },
+				x = 50.0, y = 0.0, z = 0.0, locked = true, reach = 2.0 },
+		} })
+		check('standing at a door finds it', settle(control, function()
+			return Runtime.Report().nearest == 'front' end), Runtime.Report().nearest)
+		local prompts = OPX.Api.Get('prompts')
+		local listed = nil
+		settle(control, function()
+			listed = prompts and prompts.List('doorlock') or nil
+			return listed ~= nil and listed.ok and listed.value.count == 1
+		end)
+		check('and posts its row on the next scan', listed ~= nil and listed.ok and listed.value.count == 1)
+
+		mapping.pressed()
+		control.Pump(2)
+		local sent = control.serverEvents[#control.serverEvents]
+		check('E at a locked door asks to unlock it, naming the door and nothing else',
+			sent ~= nil and sent.name == dl.Event.TOGGLE and sent[1].key == 'front' and sent[1].locked == false
+				and sent[1].x == nil)
+
+		control.placement.x = 30.0
+		check('walking away loses it', settle(control, function()
+			return Runtime.Report().nearest == nil end))
+		local before, toastsBefore = toggles(), toasts
+		mapping.pressed()
+		control.Pump(4)
+		check('and E between two doors is silent again', toggles() == before and toasts == toastsBefore)
+
+		-- The local lock.
+		native.list = {
+			{ id = DOORLOCK_IDS.gateA, locked = false, lift = false },
+			{ id = DOORLOCK_IDS.gateB, locked = false, lift = false },
+			{ id = '0x00000000000000FF', locked = false, lift = false },
+		}
+		local function lastFor(id, kind)
+			for index = #native.calls, 1, -1 do
+				local call = native.calls[index]
+				if call[1] == kind and call[2] == id then return call[3] end
+			end
+			return nil
+		end
+		settle(control, function() return lastFor(DOORLOCK_IDS.gateB, 'setLocked') ~= nil end)
+		check('both leaves of a streamed double door are locked',
+			lastFor(DOORLOCK_IDS.gateA, 'setLocked') == true and lastFor(DOORLOCK_IDS.gateB, 'setLocked') == true)
+		check('and the game\'s own interaction is refused on them',
+			lastFor(DOORLOCK_IDS.gateA, 'allow') == false and lastFor(DOORLOCK_IDS.gateB, 'allow') == false)
+		check('an unmanaged door is not touched', lastFor('0x00000000000000FF', 'setLocked') == nil)
+
+		control.netEvents[dl.Event.STATE]({ key = 'gate', locked = false })
+		check('an unlock from the server lands on both leaves at once',
+			lastFor(DOORLOCK_IDS.gateA, 'setLocked') == false and lastFor(DOORLOCK_IDS.gateB, 'setLocked') == false
+				and lastFor(DOORLOCK_IDS.gateA, 'allow') == true)
+
+		local mark = #native.calls
+		control.netEvents[dl.Event.SYNC]({ bucket = 0, mode = 'networked', offset = 0, done = true, doors = {
+			{ key = 'gate', name = 'Gate', ids = { DOORLOCK_IDS.gateA, DOORLOCK_IDS.gateB },
+				x = 50.0, y = 0.0, z = 0.0, locked = true, reach = 2.0 } } })
+		control.Pump(10)
+		local touched = false
+		for index = mark + 1, #native.calls do
+			if native.calls[index][1] == 'setLocked' then touched = true end
+		end
+		check('on the networked backend the client leaves the lock to the platform', not touched)
+
+		-- A coded door asks for its code on this client.
+		local forms = OPX.Api.Get('form')
+		control.netEvents[dl.Event.ANSWER]({ ok = false, code = 'passcode_required', key = 'gate', name = 'Gate' })
+		control.Pump(4)
+		local open = forms and forms.State() or nil
+		check('a coded door opens a form for its code',
+			open ~= nil and open.ok and open.value.open == true and open.value.form == 'doorlock.passcode',
+			open and open.value and tostring(open.value.form))
+		if open and open.value.open then forms.Close(open.value.handle) end
+
+		-- The staff panel.
+		check('a player who is not staff has no panel', Runtime.Staff() == nil
+			and OPX.Api.Get('doorlock').OpenStaff().ok == false)
+		control.netEvents[dl.Event.SYNC]({ bucket = 0, mode = 'local', offset = 0, done = true, doors = {},
+			staff = { save = true, remove = true, lock = true, key = true } })
+		control.Pump(4)
+		local opened = dl.Staff.Manage({ id = '0xF1', position = { x = 1.0, y = 2.0, z = 3.0 } })
+		check('staff manage an unmanaged door as a new draft', opened == true)
+		settle(control, function() return dl.Staff.Report().open end, 40)
+		local report = dl.Staff.Report()
+		check('on the door screen, with the leaf and the position captured',
+			report.open and report.screen == 'door' and report.draft.door.doors[1] == '0x00000000000000F1'
+				and report.draft.door.z == 3.0 and report.draft.key == nil, report.screen)
+		dl.Staff.Close()
+		OPX.Toast.Show = realToast
 	end
 end
 
