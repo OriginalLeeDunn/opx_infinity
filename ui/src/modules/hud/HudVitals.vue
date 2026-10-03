@@ -5,9 +5,15 @@ import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
 import { useLocale } from '@/composables/useLocale'
 import { iconPaths } from './icons'
+import HudVoice from './HudVoice.vue'
 
 /**
  * THE VITALS COLUMN -- health, armour, stamina, hunger, thirst.
+ *
+ * AND THE MICROPHONE. The voice indicator is this column's last row (HudVoice.vue): the
+ * game's minimap took the bottom-right corner it used to hold, and the owner asked for it
+ * "smaller to fit in the health ui". It draws a gauge row's glyph, track and readout, so
+ * it reads as one more instrument in the column rather than a block beside it.
  *
  * THE ONE HOT CHANNEL ON THIS SURFACE. `opx:hud:vitals` is a numeric stream at roughly
  * the surface's 30 Hz, and the store is a `shallowRef` REPLACED WHOLESALE for exactly
@@ -44,9 +50,10 @@ import { iconPaths } from './icons'
  */
 const { t } = useLocale()
 
-withDefaults(defineProps<{ segments?: number; width?: number }>(), {
+withDefaults(defineProps<{ segments?: number; width?: number; voiceSegments?: number }>(), {
   segments: 10,
-  width: 210
+  width: 210,
+  voiceSegments: 8
 })
 
 type Tone = 'neutral' | 'health' | 'warn' | 'bad'
@@ -153,6 +160,11 @@ useBridge('opx:hud:vitals', (payload: Payload) => {
 
       <span class="readout">{{ readout(vital) }}</span>
     </div>
+
+    <!-- THE MICROPHONE, AS THE COLUMN'S LAST ROW. It was a block of its own in the
+         bottom-right corner, which is the round minimap's now; here it takes a gauge
+         row's geometry and rides this column's plane. See HudVoice.vue. -->
+    <HudVoice :segments="voiceSegments" />
   </div>
 </template>
 

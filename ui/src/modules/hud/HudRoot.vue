@@ -8,7 +8,6 @@ import HudInfo from './HudInfo.vue'
 import HudStatus from './HudStatus.vue'
 import HudVehicle from './HudVehicle.vue'
 import HudVitals from './HudVitals.vue'
-import HudVoice from './HudVoice.vue'
 import { anchorOf } from './anchors'
 import type { Anchor } from './anchors'
 
@@ -119,7 +118,11 @@ onMounted(() => {
 <template>
   <div class="hud" :class="{ open: visible }">
     <div class="at" :class="layout.anchor">
-      <HudVitals :segments="layout.segments" :width="layout.width" />
+      <HudVitals
+        :segments="layout.segments"
+        :width="layout.width"
+        :voice-segments="layout.voiceSegments"
+      />
     </div>
 
     <div class="at" :class="layout.infoAnchor">
@@ -138,13 +141,11 @@ onMounted(() => {
       <HudVehicle />
     </div>
 
-    <!-- The voice block pins itself: it is the one read-out with no anchor, because it is
-         the only one that is not a cluster of one edge but a single tall column, and it
-         reads the bottom-right corner -- the one corner voting leaves free (vitals and the
-         chip strip are bottom-left, the vehicle chip is bottom-centre, the info block is
-         top-right). It therefore carries its own perspective and its own tilt sign; every
-         other block gets both from the `.at` it sits in. -->
-    <HudVoice :segments="layout.voiceSegments" />
+    <!-- THE BOTTOM-RIGHT CORNER IS THE MINIMAP'S. The game's own map sits there now,
+         round (opx_sandy_view's opx_minimap.archive), and nothing on this surface is
+         anchored to that corner: the voice block that used to be pinned there is the last
+         row of the vitals column (HudVitals.vue -> HudVoice.vue), and the key strip
+         (`config/prompts.lua` OFFSET) opens above the map rather than over it. -->
   </div>
 </template>
 
@@ -170,11 +171,6 @@ onMounted(() => {
    ========================================================================== */
 
 .hud {
-  /* THE BLACK UNDER AN UNCHAMFERED BOX. A cut shape needs a `drop-shadow`,
-     which follows the diagonal; this is the plain outset one, and its two
-     remaining users are both on the voice meter, which has no chamfer. */
-  --hud-shadow: var(--op-shadow);
-
   /* How much room a cluster's shadows and blooms need INSIDE its wrapper. The
      wrapper clips (see `.at`), so the bleed is padding and the anchor offsets
      pay it straight back. */
