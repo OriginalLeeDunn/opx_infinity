@@ -155,6 +155,29 @@ written into three separate gradients.
   values, with no token behind them), type scale (fixed pixel layouts are configured
   elsewhere), and the neutral ramp, which is neutral on purpose.
 
+### The two styles
+
+`STYLE` in `config/theme.lua` picks the look, `'cyberpunk'` or `'minimal'`, and the block
+of the same name holds that look's knobs, so switching is one word and each look keeps
+its own colours. The style is the one word on the wire: `palette.lua` and `theme.ts` each
+hold the same two-word allowlist, and the page writes it as `data-op-style` on `<html>`.
+
+`design-system/minimal.css` is everything the minimal style changes, and every rule in it
+is scoped to `:root[data-op-style="minimal"]` -- with the attribute absent or `cyberpunk`,
+the page is exactly what the other sheets draw. It rounds every augmented shape at half
+its cut (so `CUT` becomes a roundness), turns the stroke into a hairline, flattens the
+plane, drops the interlace and the bloom, sets the headings in Saira and eases the
+entrance instead of stuttering it. Geometry there outranks every module; paint is wrapped
+in `:where()` so states and module rules still beat it.
+
+- **A new surface needs nothing for the minimal style** if it is built from the presets
+  and the tokens. A literal chamfer (`clip-path: polygon(...)`) stays a chamfer in both.
+- **The fallback ladder in `minimal.css` is held equal** to what the shipped `minimal`
+  block derives, by `tests/run.lua`. Change the block's `ACCENT` and the suite names the
+  rungs to update.
+- `/harness/theme-styles.html?style=minimal` (dev server) draws the HUD, a menu and a
+  toast in either style over a game still.
+
 ### The join screen is outside all of this
 
 `web/loading.html` is the server's declared load screen. It runs **before the bundle

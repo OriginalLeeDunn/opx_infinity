@@ -1,0 +1,179 @@
+/* =============================================================================
+   OPEN//77 DESIGN SYSTEM -- THE MINIMAL STYLE
+   =============================================================================
+   The second look, chosen by the operator with `STYLE = 'minimal'` in
+   `config/theme.lua`. The server sends the word, `design-system/theme.ts` writes
+   it onto the root as `data-op-style="minimal"`, and this file is everything
+   that word changes. With the attribute absent -- or `cyberpunk` -- not one
+   rule below matches, and the page is the one the other three sheets draw.
+
+   THE SAME SURFACES, NOT A SECOND SET. Every module keeps its markup, its
+   presets and its states. What changes is the vocabulary they are drawn in:
+
+     the chamfer       becomes a rounded corner, at half the cut size, so the
+                       operator's CUT still scales it and a chip, a toast and a
+                       bay stay one shape at three sizes
+     the stroke        becomes a hairline, and a state is a brighter hairline
+                       and a lifted ground rather than a heavier one
+     the plane         is flat: no lean toward the screen edge
+     the scanline      and the bloom are gone, which is also two layers and one
+                       filter fewer for the compositor
+     the type          drops the condensed display face for Saira, lighter and
+                       less tracked
+     the entrance      eases in rather than stuttering
+
+   THE COLOURS ARE NOT HERE. They are the operator's `minimal` block, derived
+   from its ACCENT like every other ladder, and they arrive as properties on the
+   root which outrank anything a stylesheet says. The values below are the
+   fallbacks for a server that names the style and nothing else, and they are
+   the ladder the shipped `minimal` block derives, so the two agree.
+
+   SPECIFICITY IS CHOSEN PER RULE, and it is the one thing to know before
+   editing this file. GEOMETRY (the clip, the radius, the ring) outranks every
+   module so no surface keeps a chamfer by accident. PAINT (the hairline
+   colour, the stroke weight) is wrapped in `:where()` so it sits at the same
+   weight as the default it replaces in `shapes.css`, and every state rule and
+   every module rule still beats it -- exactly as they beat the default.
+   ========================================================================== */
+
+:root[data-op-style="minimal"] {
+  /* --- the ladder, as the shipped `minimal` block derives it -------------- */
+  --op-red-rgb:      207, 200, 188;
+  --op-red-idle-rgb: 198, 192, 182;
+  --op-red-deep-rgb: 168, 160, 145;
+  --op-red-hi-rgb:   227, 223, 216;
+  --op-red-text-rgb: 212, 208, 200;
+  --op-alarm-rgb:    255, 122, 107;
+  --op-plate-rgb:     20, 18, 16;
+  --op-plate-lit-rgb: 52, 49, 43;
+  --op-plate-a:       0.72;
+  --op-plate-quiet-a: 0.52;
+  --op-plate-lit-a:   0.84;
+
+  /* No bloom anywhere: a glow is the neon look's, and this one is lit by
+     contrast alone. */
+  --op-red-glow:   transparent;
+  --op-alarm-glow: rgba(var(--op-alarm-rgb), 0.35);
+
+  /* A neutral ramp with the same warmth as the accent, so the grey under a
+     heading does not read as a second, colder colour. */
+  --op-text:       #f5f3ef;
+  --op-text-dim:   #a8a29a;
+  --op-text-faint: rgba(168, 162, 154, 0.70);
+  --op-line:       rgba(245, 243, 239, 0.14);
+
+  /* Lighter ink: the ground and the paler type carry most of the contrast. */
+  --op-ink:
+    0 1px 2px rgba(0, 0, 0, 0.55),
+    0 0 6px rgba(0, 0, 0, 0.35);
+  --op-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+
+  --op-interlace-a: 0;
+  --op-tilt: 0deg;
+
+  /* --- type ---------------------------------------------------------------
+     Saira for headings as well as copy. Both faces are already bundled at 400
+     and 700, so nothing new is inlined; `Segoe UI` is the fallback a Windows
+     machine always has. */
+  --op-font-display: 'Saira', 'Segoe UI', system-ui, sans-serif;
+  --op-font-body:    'Saira', 'Segoe UI', system-ui, sans-serif;
+
+  --op-track-micro: 0.14em;
+  --op-track-label: 0.08em;
+  --op-track-lead:  0.06em;
+  --op-track-head:  0.01em;
+
+  /* --- motion -------------------------------------------------------------
+     An ease, not three steps: the stutter is the cyberpunk look's. */
+  --op-stutter: cubic-bezier(0.2, 0, 0, 1);
+  --op-enter-ms: 240ms;
+
+  /* The corner radius as a fraction of the cut. */
+  --op-round: 0.5;
+}
+
+/* --- the geometry: a rounded box instead of a chamfered one ------------------
+   `inset() round` keeps what the chamfer polygon did besides the corner -- it
+   still clips the element's children to its box -- and only the corner
+   changes. The radius is read from the element's own `--aug-tr`, which every
+   preset sets from the operator's cut, so CUT keeps working as a roundness. */
+:root[data-op-style="minimal"] [data-augmented-ui] {
+  --op-radius: calc(var(--aug-tr, 12px) * var(--op-round));
+  border-radius: var(--op-radius);
+  clip-path: inset(0 round var(--op-radius));
+}
+
+/* A preset that is NOT augmented -- the menu's rows are `.op-frame` with a
+   ground and no border layer -- has no `--aug-tr` to read, so it takes its
+   preset's own cut. Without this a row is a square plate inside a rounded bay. */
+:root[data-op-style="minimal"] .op-frame:not([data-augmented-ui]),
+:root[data-op-style="minimal"] .op-cap:not([data-augmented-ui]) {
+  border-radius: calc(var(--op-cut-sm) * var(--op-round));
+}
+
+/* The ring, now a rounded one. The polygon could only draw straight edges, so
+   the layer becomes a padded box whose content area is masked out: what is
+   left is a ring exactly `--aug-border-all` wide that follows the radius, and
+   still takes a gradient in `--aug-border-bg`. Both mask spellings, because
+   the engine baseline is unmeasured and the prefixed one is what an older CEF
+   reads. */
+:root[data-op-style="minimal"] [data-augmented-ui~="border"]::after {
+  box-sizing: border-box;
+  padding: var(--aug-border-all);
+  border-radius: inherit;
+  clip-path: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+
+/* --- the paint: a hairline at rest -------------------------------------------
+   Same weight as the default it replaces, so every state still wins. */
+:where(:root[data-op-style="minimal"]) [data-augmented-ui] {
+  --aug-border-bg: rgba(var(--op-red-idle-rgb), 0.28);
+}
+
+/* The lit edge is a chamfer's idea -- light catching a cut. Without the cut it
+   is one even hairline, a little brighter than rest. */
+:where(:root[data-op-style="minimal"]) .op-arete,
+:where(:root[data-op-style="minimal"]) .op-arete.is-end {
+  --aug-border-bg: rgba(var(--op-red-idle-rgb), 0.40);
+}
+
+/* States brighten the line and lift the ground; they do not thicken it. */
+:where(:root[data-op-style="minimal"]) .op-frame.is-hover,
+:where(:root[data-op-style="minimal"]) .op-frame:hover:not(.is-off):not(.is-on) {
+  --aug-border-bg: rgba(var(--op-red-hi-rgb), 0.55);
+  --aug-border-all: 1px;
+  color: var(--op-text);
+}
+
+:where(:root[data-op-style="minimal"]) .op-frame.is-on {
+  --aug-border-bg: var(--op-red-hi);
+  --aug-border-all: 1px;
+  color: var(--op-text);
+}
+
+:where(:root[data-op-style="minimal"]) .op-frame.is-alarm {
+  --aug-border-all: 1.5px;
+}
+
+/* --- what the minimal look leaves out ---------------------------------------- */
+
+/* The scanline layer is removed, not merely made transparent: a transparent
+   gradient is still a layer the compositor paints. */
+:root[data-op-style="minimal"] .op-interlace::before {
+  content: none;
+}
+
+/* The bloom is a filter and a filter is a backing store; with no glow to draw,
+   it is all cost. */
+:root[data-op-style="minimal"] .op-lift {
+  filter: none;
+}
+
+/* Headings in the lighter weight, still in capitals: tracked uppercase at 400
+   is the quiet register of the same voice. */
+:root[data-op-style="minimal"] .op-label {
+  font-weight: 400;
+}

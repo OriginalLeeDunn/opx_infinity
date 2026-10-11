@@ -6471,6 +6471,61 @@ do
 		-- who deletes the file gets, and what every other resource gets.
 		check('an absent block is still no theme at all', Palette.IsEmpty(Palette.Resolve(nil)))
 
+		-- ── the style ────────────────────────────────────────────────────────
+		-- One word picks the look AND the block of knobs read for it, so the
+		-- shipped red never follows an operator onto the minimal surface.
+		check('the shipped config names the cyberpunk style', shipped.style == 'cyberpunk',
+			tostring(shipped.style))
+
+		local block = OPX.Config.MODULES.theme
+		local asMinimal = {}
+		for key, value in pairs(block) do asMinimal[key] = value end
+		asMinimal.STYLE = 'minimal'
+		local minimal, minimalNotes = Palette.Resolve(asMinimal)
+		check('switching the shipped config to minimal is one word and no complaints',
+			minimal.style == 'minimal' and #minimalNotes == 0,
+			table.concat(minimalNotes, ' | '))
+		check('and reads the minimal block, not the red one',
+			type(minimal.accent) == 'table' and minimal.accent[1] == 207
+				and minimal.accent[2] == 200 and minimal.accent[3] == 188
+				and minimal.interlaceAlpha == 0 and minimal.tiltDeg == 0,
+			minimal.accent and table.concat(minimal.accent, ',') or 'no accent')
+
+		-- `minimal.css` carries the ladder as fallbacks for a server that names
+		-- the style and nothing else. They are only fallbacks if they are the
+		-- ladder the shipped block derives; a drift would be a surface that
+		-- changes colour the moment its knobs arrive.
+		local sheetHandle = io.open('ui/src/design-system/minimal.css', 'r')
+		local sheet = sheetHandle and sheetHandle:read('a') or ''
+		if sheetHandle then sheetHandle:close() end
+		local SHEET_RUNGS = {
+			accent = 'red', idle = 'red-idle', deep = 'red-deep', hi = 'red-hi',
+			text = 'red-text', alarm = 'alarm', plate = 'plate', plateLit = 'plate-lit',
+		}
+		local drift = {}
+		for key, name in pairs(SHEET_RUNGS) do
+			local r, g, b = sheet:match('%-%-op%-' .. name:gsub('%-', '%%-')
+				.. '%-rgb:%s*(%d+),%s*(%d+),%s*(%d+);')
+			local want = minimal[key]
+			if want == nil or tonumber(r) ~= want[1] or tonumber(g) ~= want[2]
+				or tonumber(b) ~= want[3] then
+				drift[#drift + 1] = ('%s sheet=%s,%s,%s'):format(key, tostring(r),
+					tostring(g), tostring(b))
+			end
+		end
+		table.sort(drift)
+		check('the fallbacks in minimal.css are the ladder the shipped block derives',
+			#drift == 0, table.concat(drift, ' '))
+
+		local unknown, unknownNotes = Palette.Resolve({ STYLE = 'vaporwave', TILT = 3 })
+		check('a style that is not one is refused and named, and the knobs still apply',
+			unknown.style == nil and unknown.tiltDeg == 3 and #unknownNotes == 1,
+			table.concat(unknownNotes, ' | '))
+
+		local flat = Palette.Resolve({ STYLE = 'minimal', TILT = 4 })
+		check('a style with no block of its own reads the knobs at the top level',
+			flat.style == 'minimal' and flat.tiltDeg == 4, tostring(flat.tiltDeg))
+
 		-- ── the ladder is the shipped one, restated ──────────────────────────
 		-- The factors in `palette.lua` were measured off these seven literals.
 		-- If the derivation ever stops reproducing them, every themed server is
@@ -6565,7 +6620,11 @@ do
 			tiltDeg = 99,
 			cutSm = 'six',
 			somethingElse = 1,
+			style = 'minimal;}html{display:none',
 		})
+		check('a style this build does not know is dropped', fromWire.style == nil)
+		check('and a known one is kept, as the same word',
+			Palette.Sanitise({ style = 'minimal' }).style == 'minimal')
 		check('a channel out of range is clamped to a byte',
 			fromWire.accent[1] == 255 and fromWire.accent[2] == 0 and fromWire.accent[3] == 71,
 			table.concat(fromWire.accent, ','))
@@ -19441,7 +19500,7 @@ do
 	-- The stylesheets and every view, read once. Listed rather than globbed,
 	-- because a directory walk in the harness would quietly cover nothing on a
 	-- host whose `io.popen` is off and pass by finding no files at all.
-	local sheets = { 'tokens.css', 'shapes.css', 'surface.css', 'fonts.css' }
+	local sheets = { 'tokens.css', 'shapes.css', 'surface.css', 'fonts.css', 'minimal.css' }
 	local system = ''
 	for _, sheet in ipairs(sheets) do
 		system = system .. read('ui/src/design-system/' .. sheet)
