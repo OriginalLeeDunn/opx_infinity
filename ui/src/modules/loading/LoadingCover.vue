@@ -305,7 +305,7 @@ const percent = computed(() => Math.floor(fraction.value * 100))
    A title card, not a terminal booting: the film still plays behind a deeper,
    neutral scrim -- the cover's own, and the one dark thing this look allows,
    because it is a cover over the game and not a ground under a component --
-   and the bay is no box at all: the wordmark in Manrope, the phase and the
+   and the bay is no box at all: the wordmark in Space Grotesk, the phase and the
    percentage on one line, and a 1px line for the progress. The `//` in the
    wordmark keeps its place and loses its red: it is set in the dim grey,
    which is the only accent this look has. */

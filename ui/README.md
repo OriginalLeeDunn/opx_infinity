@@ -166,7 +166,7 @@ hold the same two-word allowlist, and the page writes it as `data-op-style` on `
 
 **The minimal style is a different object, not a quieter cyberpunk.** The cyberpunk look
 is an instrument -- outlined, chamfered, tilted, in capitals and mono, on dark plates.
-The minimal look is square and quiet: Manrope in sentence case, a dark ground under each
+The minimal look is square and quiet: Space Grotesk in sentence case, a dark ground under each
 THING -- a row, a cell, a button, a toast -- and never a panel around them, so nothing
 on screen is enveloped. A state is the thing's ground lighting up and its words going
 white.
@@ -176,10 +176,10 @@ white.
 exactly what the other sheets draw. Geometry there outranks every module; paint is
 wrapped in `:where()` so states and module rules still beat it.
 
-- **The face is Manrope, as `'OPX Minimal'`** (`fonts.css`): one variable file declared
-  over 200..600, so a surface asking for 700 or 900 is drawn at 600 and no surface
-  restates a weight. All three font tokens point at it, mono included; figures are
-  tabular page-wide.
+- **The face is Space Grotesk, as `'OPX Minimal'`** (`fonts.css`): one variable file
+  declared over 300..600, so a surface asking for 700 or 900 is drawn at 600 and no
+  surface restates a weight. All three font tokens point at it, mono included; figures
+  are tabular page-wide. The type scale is a step tighter than the house one.
 - **No capitals and no tracking, anywhere.** An `!important` rule in `minimal.css`: thirty-three module rules ask for uppercase by
   name, and "never, on this look" is a claim about all of them at once.
 - **No radius anywhere, and no ground on a container.** Every radius on the page is

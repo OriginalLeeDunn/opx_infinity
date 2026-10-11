@@ -12,7 +12,7 @@
    look is an instrument -- outlined, chamfered, tilted, in capitals, in mono,
    on dark plates. This one is type on the street:
 
-     the type          Manrope ('OPX Minimal' in fonts.css), in sentence case,
+     the type          Space Grotesk ('OPX Minimal' in fonts.css), in sentence case,
                        untracked, one weight lighter than asked, figures tabular
      the shape         square, everywhere: no chamfer and no radius
      the ground        on things, never on places: a row, a cell, a button, a
@@ -97,17 +97,25 @@
 
   /* --- type ---------------------------------------------------------------
      One family for all three roles. The mono stack included: what it was for
-     is a figure that does not jitter as it changes, and Manrope's tabular
-     figures do that without looking like a terminal. */
+     is a figure that does not jitter as it changes, and Space Grotesk's
+     tabular figures do that without looking like a terminal. */
   --op-font-display: 'OPX Minimal', 'Segoe UI', system-ui, sans-serif;
   --op-font-body:    'OPX Minimal', 'Segoe UI', system-ui, sans-serif;
   --op-font-mono:    'OPX Minimal', 'Segoe UI', system-ui, sans-serif;
 
-  /* The two smallest sizes are a step up: they were sized for capitals in a
-     mono face, and lower-case Manrope at 9px is a smudge over a street. */
+  /* A TIGHTER SCALE. The house scale is read at arm's length in a condensed
+     face; Space Grotesk is wider and opener, and at the house sizes every
+     surface read a size too large. Everything above body comes down a step;
+     the two smallest go UP one, because they were sized for capitals in a mono
+     face and lower-case at 9px is a smudge over a street. */
   --op-fs-micro: 10px;
-  --op-fs-label: 11px;
-  --op-fs-meta:  12px;
+  --op-fs-label: 10.5px;
+  --op-fs-meta:  11.5px;
+  --op-fs-body:  13px;
+  --op-fs-lead:  14px;
+  --op-fs-title: 16px;
+  --op-fs-head:  21px;
+  --op-fs-hero:  32px;
 
   --op-track-micro: 0.02em;
   --op-track-label: 0;

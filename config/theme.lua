@@ -16,7 +16,7 @@ OPX.Config.MODULES.theme = {
 	-- The look, and the only two there are:
 	--   'cyberpunk'  red, outlined, chamfered, tilted toward the screen edge,
 	--                with a scanline over every enclosure. The house look.
-	--   'minimal'    the same surfaces, square and quiet: Manrope, a dark ground
+	--   'minimal'    the same surfaces, square and quiet: Space Grotesk, a dark ground
 	--                under each thing but never a panel around them, grey and
 	--                white only.
 	-- Anything else is refused with a line in the journal and the page keeps
