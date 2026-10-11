@@ -69,3 +69,56 @@
   font-display: block;
   src: url('@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-700-normal.woff2') format('woff2');
 }
+
+/* --- the minimal style's face -------------------------------------------------
+   Manrope, under a family name of its own -- 'OPX Minimal' -- because the name
+   is where the WEIGHT MAP lives. Every surface asks for the weights the
+   cyberpunk look was drawn at (700 labels, 600 eyebrows, 900 marks), and the
+   minimal look wants each of them one step lighter. Mapping a requested range
+   onto a lighter file here moves every surface at once and no component has to
+   restate a weight:
+
+     asked 300        drawn 300
+     asked 400        drawn 400
+     asked 500..600   drawn 500
+     asked 700..800   drawn 600
+     asked 900        drawn 700
+
+   Only `design-system/minimal.css` names this family, so under the cyberpunk
+   look these five faces are inlined and never matched. ~75 KB, the price of a
+   second look that does not share a single glyph with the first. */
+@font-face {
+  font-family: 'OPX Minimal';
+  font-style: normal;
+  font-weight: 300;
+  font-display: block;
+  src: url('@fontsource/manrope/files/manrope-latin-300-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'OPX Minimal';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('@fontsource/manrope/files/manrope-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'OPX Minimal';
+  font-style: normal;
+  font-weight: 500 600;
+  font-display: block;
+  src: url('@fontsource/manrope/files/manrope-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'OPX Minimal';
+  font-style: normal;
+  font-weight: 700 800;
+  font-display: block;
+  src: url('@fontsource/manrope/files/manrope-latin-600-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'OPX Minimal';
+  font-style: normal;
+  font-weight: 900;
+  font-display: block;
+  src: url('@fontsource/manrope/files/manrope-latin-700-normal.woff2') format('woff2');
+}

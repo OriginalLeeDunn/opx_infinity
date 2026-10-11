@@ -1107,4 +1107,185 @@ function focusField(field: Field): void {
      the eye's rows do. A per-row delay read as the rows trickling in. */
   animation-delay: 40ms;
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   A sheet, not a terminal. The three rules above stay true -- the focused field
+   does not leave the plane, a centred form does not tilt, the caret is the one
+   thing the browser fills -- and everything they were written against goes:
+
+     the bay       is one smoked pane, so the interlace and the hard ink over
+                   every glyph are dropped with it
+     the header    is the title alone; the `// FORM` eyebrow is the instrument
+                   naming itself, and a sheet does not need to
+     a field       is a soft filled row; focus lights the row and draws a fine
+                   edge round it, with no step sideways and no bloom
+     an entry      has no underline: the row is already the box it is typed in
+     a choice      steps with two small round buttons
+     a keycap      is a flat rounded key, the way the rest of this look draws one */
+:root[data-op-style="minimal"] .scrim {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+:root[data-op-style="minimal"] .bay {
+  background: var(--op-plate);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), var(--op-shadow);
+}
+
+:root[data-op-style="minimal"] .bay-inner {
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .bay-inner::before {
+  content: none;
+}
+
+:root[data-op-style="minimal"] .head,
+:root[data-op-style="minimal"] .strip.end .head {
+  padding: var(--op-space-5) var(--op-space-5) var(--op-space-1);
+  border-bottom: 0;
+}
+
+:root[data-op-style="minimal"] .eyebrow {
+  display: none;
+}
+
+:root[data-op-style="minimal"] .head h1 {
+  font: 600 var(--op-fs-title) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .note {
+  padding: var(--op-space-1) var(--op-space-5) 0;
+  font-size: var(--op-fs-meta);
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .list {
+  gap: var(--op-space-2);
+  padding: var(--op-space-4) var(--op-space-4) var(--op-space-4);
+}
+
+:root[data-op-style="minimal"] .field {
+  --op-radius: var(--op-radius-md);
+  --aug-border-bg: transparent;
+  padding: 11px var(--op-space-4);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: none;
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .field:hover:not(.on) {
+  --aug-border-bg: transparent;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .field.on {
+  --aug-border-bg: var(--op-edge-on);
+  --aug-border-all: 1px;
+  transform: none;
+  background: rgba(255, 255, 255, 0.10);
+  box-shadow: none;
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .field .label {
+  font-weight: 500;
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .field.on .label {
+  color: var(--op-text);
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .entry,
+:root[data-op-style="minimal"] .field:hover:not(.on) .entry,
+:root[data-op-style="minimal"] .field.on .entry {
+  padding: 0;
+  border-bottom: 0;
+  font: 400 var(--op-fs-body) / 1.2 var(--op-font-body);
+  text-align: right;
+  caret-color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .entry::selection {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+:root[data-op-style="minimal"] .entry::placeholder {
+  font-style: normal;
+}
+
+:root[data-op-style="minimal"] .value {
+  font: 400 var(--op-fs-body) / 1.2 var(--op-font-body);
+  opacity: 1;
+}
+
+:root[data-op-style="minimal"] .count {
+  font: 400 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-faint);
+  opacity: 1;
+}
+
+:root[data-op-style="minimal"] .rule {
+  width: 72px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+:root[data-op-style="minimal"] .rule i,
+:root[data-op-style="minimal"] .field.on .rule i {
+  background: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .marks {
+  gap: var(--op-space-1);
+}
+
+:root[data-op-style="minimal"] .mark {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.10);
+  font: 500 var(--op-fs-body) / 20px var(--op-font-body);
+  text-align: center;
+}
+
+:root[data-op-style="minimal"] .foot {
+  gap: var(--op-space-3);
+  padding: var(--op-space-3) var(--op-space-5) var(--op-space-5);
+  border-top: 1px solid var(--op-line);
+}
+
+:root[data-op-style="minimal"] .status {
+  font-family: var(--op-font-body);
+  font-weight: 400;
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .status.bad {
+  color: var(--op-text);
+  font-weight: 600;
+}
+
+:root[data-op-style="minimal"] .cap {
+  --op-radius: 6px;
+  --aug-border-bg: transparent;
+  height: 22px;
+  padding: 0 8px;
+  background: rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  font: 600 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .cap-label {
+  font: 400 var(--op-fs-meta) / 1 var(--op-font-body);
+}
 </style>

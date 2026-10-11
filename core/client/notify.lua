@@ -12,6 +12,9 @@
 OPX.Toast = OPX.Toast or {}
 
 local NOTIFY = OPX.Event(OPX.Channel.NET, 'runtime', 'notify')
+-- A server toast that is already a sentence: `OPX.Notify` and every
+-- `OPX.NotifyLocale`, rendered on the server. See `core/server/answer.lua`.
+local TOAST = OPX.Event(OPX.Channel.NET, 'runtime', 'toast')
 local ANSWER = OPX.Event(OPX.Channel.NET, 'runtime', 'commandAnswer')
 
 local KINDS = { info = true, success = true, warning = true, error = true }
@@ -369,10 +372,8 @@ function OPX.Toast.Attach()
 
 	-- A GLYPH TRAVELS THIS FAR, and no further. Both of these are tables and
 	-- argument lists this runtime owns on both ends, so `OPX.Refuse` and
-	-- `OPX.CommandNotice` may name one and it reaches the page. What CANNOT carry
-	-- one is `OPX.Notify`: that hands the toast to the platform's own
-	-- `open77_notifications` package, whose `icon` is a short TEXT badge -- a
-	-- glyph name sent there would draw the word "lock" in a box.
+	-- `OPX.CommandNotice` may name one and it reaches the page. `OPX.Notify`
+	-- carries none: its callers pass a sentence and a kind, nothing else.
 	RegisterNetEvent(NOTIFY, function(payload)
 		if type(payload) ~= 'table' then return end
 		-- The code is always a catalogue key: the server guarantees it through
@@ -396,6 +397,22 @@ function OPX.Toast.Attach()
 			icon = wireIcon(payload.icon, 'a refusal'),
 		})
 		if raised == nil then undrawn('a server refusal', why) end
+	end)
+
+	-- A server toast. It reached the platform's own notification package until
+	-- it was routed here, which is why a garage or a key drew a box of another
+	-- style in another corner. The server bounded it; this re-checks the shape
+	-- and the bounds, because any resource on the server can raise the name.
+	RegisterNetEvent(TOAST, function(payload)
+		if type(payload) ~= 'table' then return end
+		local message = payload.message
+		if type(message) ~= 'string' or message == '' then return end
+		local raised, why = OPX.Toast.Show({
+			kind = payload.kind,
+			message = OPX.Text.Bytes(message, 384),
+			durationMs = OPX.Math.Clamp(tonumber(payload.durationMs) or DEFAULT_MS, 1000, 30000),
+		})
+		if raised == nil then undrawn('a server toast', why) end
 	end)
 
 	RegisterNetEvent(ANSWER, function(_, kind, message, toasted, icon)

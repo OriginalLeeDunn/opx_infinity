@@ -1634,4 +1634,174 @@ onUnmounted(() => {
    THE HINT -- the line shown while nothing is picked. A LABEL and not a control,
    so it takes the frame but never the hover.
    ========================================================================== */
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   The cyberpunk cascade is a column of outlined plates, each its own object,
+   leaning toward the screen edge and jumping out at the pointer. Here a column
+   is ONE sheet of glass and the rows are lines on it: no frame around any row,
+   the hovered one lit by a soft pane behind it, nothing moves. A folder that is
+   open keeps that pane while its own sheet stands beside it. That is the shape
+   of a context menu, which is what this is.
+
+   THE DANGER ROW CANNOT BE RED, and the minimal surface has no second colour
+   to spend on it. It is white at the heavier weight with a hairline of its own,
+   so it reads as the one row that is not like the others before it is read. */
+:root[data-op-style="minimal"] .column {
+  width: 236px;
+  perspective: none;
+  --pop: 0px;
+}
+
+:root[data-op-style="minimal"] .plane {
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 45%),
+    rgba(22, 22, 22, 0.86);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge-hover),
+    0 12px 32px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+:root[data-op-style="minimal"] .rows {
+  gap: 1px;
+  padding: 6px;
+}
+
+:root[data-op-style="minimal"] .row {
+  --op-radius: 8px;
+  --aug-border-bg: transparent;
+  gap: 10px;
+  padding: 8px 10px;
+  font: 500 var(--op-fs-body) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+  background: transparent;
+  box-shadow: none;
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .row .label {
+  font: 500 var(--op-fs-body) / 1.2 var(--op-font-body);
+}
+
+:root[data-op-style="minimal"] .glyph {
+  width: 16px;
+  height: 16px;
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .glyph svg {
+  stroke-width: 1.6;
+  filter: none;
+}
+
+:root[data-op-style="minimal"] .value,
+:root[data-op-style="minimal"] .mark {
+  font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .hint {
+  font: 400 var(--op-fs-meta) / 1.35 var(--op-font-body);
+}
+
+:root[data-op-style="minimal"] .check {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+:root[data-op-style="minimal"] .check.ticked {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+:root[data-op-style="minimal"] .check svg {
+  stroke: rgb(var(--op-plate-rgb));
+  stroke-linecap: round;
+}
+
+/* --- the states: the pane behind the row lights up -------------------------- */
+:root[data-op-style="minimal"] .row:hover:not(.off):not(.pending):not(.open),
+:root[data-op-style="minimal"] .plane.keyboard .row:focus:not(.off):not(.pending):not(.open),
+:root[data-op-style="minimal"] .row.danger:hover:not(.off):not(.pending),
+:root[data-op-style="minimal"] .plane.keyboard .row.danger:focus:not(.off):not(.pending) {
+  --aug-border-bg: transparent;
+  color: var(--op-text);
+  background: rgba(255, 255, 255, 0.12);
+  transform: none;
+  filter: none;
+}
+
+:root[data-op-style="minimal"] .row:hover:not(.off):not(.pending):not(.open) .glyph,
+:root[data-op-style="minimal"] .plane.keyboard .row:focus:not(.off):not(.pending):not(.open) .glyph {
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .row:hover:not(.off):not(.pending):not(.open) .label,
+:root[data-op-style="minimal"] .plane.keyboard .row:focus:not(.off):not(.pending):not(.open) .label,
+:root[data-op-style="minimal"] .row.open .label,
+:root[data-op-style="minimal"] .row.pending .label {
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .row.open,
+:root[data-op-style="minimal"] .row.pending {
+  --aug-border-bg: transparent;
+  color: var(--op-text);
+  background: rgba(255, 255, 255, 0.08);
+  transform: none;
+  filter: none;
+}
+
+:root[data-op-style="minimal"] .row.pending .check.ticked {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+:root[data-op-style="minimal"] .row.danger {
+  --aug-border-bg: rgba(255, 255, 255, 0.28);
+  --aug-border-all: 1px;
+  color: var(--op-alarm);
+}
+
+:root[data-op-style="minimal"] .row.danger .glyph {
+  color: var(--op-alarm);
+}
+
+:root[data-op-style="minimal"] .row.danger .label {
+  font-weight: 700;
+}
+
+:root[data-op-style="minimal"] .row.off {
+  --aug-border-bg: transparent;
+  color: var(--op-text-faint);
+}
+
+/* --- waiting and refused ------------------------------------------------------ */
+:root[data-op-style="minimal"] .status {
+  padding: 12px 14px;
+  background: transparent;
+  font: 500 var(--op-fs-meta) / 1.3 var(--op-font-body);
+  color: var(--op-text-dim);
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .status.bad {
+  color: var(--op-text);
+  font-weight: 600;
+}
+
+/* A round spinner that turns smoothly, rather than a square ticking through
+   eight positions like a scanner. */
+:root[data-op-style="minimal"] .spin {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--op-text);
+  border-radius: 50%;
+  animation-timing-function: linear;
+}
 </style>

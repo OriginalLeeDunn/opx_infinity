@@ -366,4 +366,71 @@ onUnmounted(() => {
 .is-info .chat-author {
   color: var(--op-text-dim);
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   A pane of smoked glass, not a ruled column: the red rule down the leading
+   edge is the cyberpunk log's whole identity, so here the lines sit on one
+   rounded pane with an edge you only see against a bright street. The author
+   is the line's weight -- white, set heavier -- and what they said is the
+   grey under it, so a scroll of chat reads as names first.
+
+   THE SYSTEM'S OWN AUTHORS ARE CAPITALS IN THE CATALOGUE (`NETWORK`,
+   `COMMAND`), and the minimal look never sets capitals. A player's name is
+   theirs and is left exactly as typed; only the kinds the server speaks in
+   are lowered and given back their initial. */
+:root[data-op-style="minimal"] .chat-log {
+  gap: 6px;
+  padding: var(--op-space-3) var(--op-space-4);
+  border-left: 0;
+  border-radius: var(--op-radius-md);
+  background: rgba(var(--op-plate-rgb), 0.55);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  text-shadow: var(--op-ink);
+}
+
+:root[data-op-style="minimal"] .chat-line {
+  line-height: 1.45;
+  color: var(--op-red-text);
+}
+
+:root[data-op-style="minimal"] .chat-author {
+  margin-right: var(--op-space-2);
+  font-family: var(--op-font-body);
+  font-size: var(--op-fs-body);
+  font-weight: 700;
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .is-system .chat-author,
+:root[data-op-style="minimal"] .is-info .chat-author,
+:root[data-op-style="minimal"] .is-warning .chat-author,
+:root[data-op-style="minimal"] .is-error .chat-author {
+  display: inline-block;
+  text-transform: lowercase !important;
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .is-system .chat-author::first-letter,
+:root[data-op-style="minimal"] .is-info .chat-author::first-letter,
+:root[data-op-style="minimal"] .is-warning .chat-author::first-letter,
+:root[data-op-style="minimal"] .is-error .chat-author::first-letter {
+  text-transform: uppercase;
+}
+
+:root[data-op-style="minimal"] .is-system .chat-text,
+:root[data-op-style="minimal"] .is-info .chat-text {
+  color: var(--op-text-dim);
+}
+
+/* Something went wrong: the one line on the pane in full white, author and
+   text alike, which on a grey pane is as loud as this look gets. */
+:root[data-op-style="minimal"] .is-error .chat-author,
+:root[data-op-style="minimal"] .is-error .chat-text,
+:root[data-op-style="minimal"] .is-warning .chat-text {
+  color: var(--op-alarm);
+}
 </style>

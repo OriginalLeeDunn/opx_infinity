@@ -7,20 +7,22 @@
    that word changes. With the attribute absent -- or `cyberpunk` -- not one
    rule below matches, and the page is the one the other three sheets draw.
 
-   THE SAME SURFACES, NOT A SECOND SET. Every module keeps its markup, its
-   presets and its states. What changes is the vocabulary they are drawn in:
+   THE SAME MARKUP, A DIFFERENT OBJECT. Every module keeps its template and
+   its states; nothing about what it is drawn as carries over. The cyberpunk
+   look is an instrument -- outlined, chamfered, tilted, in capitals, in mono.
+   This one is smoked glass:
 
-     the chamfer       becomes a rounded corner, at half the cut size, so the
-                       operator's CUT still scales it and a chip, a toast and a
-                       bay stay one shape at three sizes
-     the stroke        becomes a hairline, and a state is a brighter hairline
-                       and a lifted ground rather than a heavier one
-     the plane         is flat: no lean toward the screen edge
-     the scanline      and the bloom are gone, which is also two layers and one
-                       filter fewer for the compositor
-     the type          drops the condensed display face for Saira, lighter and
-                       less tracked
-     the entrance      eases in rather than stuttering
+     the type          Manrope ('OPX Minimal' in fonts.css), in sentence case,
+                       untracked, one weight lighter than asked, figures tabular
+     the shape         rounded panes, pills for anything small, never a cut
+     the edge          barely there at rest; a state is the pane getting lighter,
+                       not the outline getting heavier
+     the plane         flat, no scanline, no glow
+     the colour        grey and white, and nothing else
+     the entrance      a short fade and a 4px rise
+
+   This file is the vocabulary. What one surface does with it is in that
+   surface's own `<style scoped>`, in a block headed THE MINIMAL STYLE.
 
    THE COLOURS ARE NOT HERE. They are the operator's `minimal` block, derived
    from its ACCENT like every other ladder, and they arrive as properties on the
@@ -50,78 +52,110 @@
   --op-plate-quiet-a: 0.52;
   --op-plate-lit-a:   0.84;
 
-  /* No bloom anywhere: a glow is the neon look's, and this one is lit by
-     contrast alone. */
+  /* No glow anywhere: this look is lit by contrast alone. */
   --op-red-glow:   transparent;
-  --op-alarm-glow: rgba(var(--op-alarm-rgb), 0.35);
-
-  /* The one colour this file writes itself: the house "unavailable" frame is
-     the cyan-grey of the old ramp, which is a hue on a surface that has none. */
-  --op-off-line: rgba(255, 255, 255, 0.10);
+  --op-alarm-glow: transparent;
 
   /* GREY AND WHITE, AND NOTHING ELSE. The house ramp is a blue-grey that sits
-     beside red; next to a neutral accent its blue would be the only hue on
-     the screen, so it is restated with no hue at all. */
+     beside red; next to a neutral accent its blue would be the only hue on the
+     screen, so it is restated with none. */
   --op-text:       #f5f5f5;
   --op-text-dim:   #a3a3a3;
   --op-text-faint: rgba(163, 163, 163, 0.70);
-  --op-line:       rgba(255, 255, 255, 0.14);
+  --op-line:       rgba(255, 255, 255, 0.10);
+  --op-off-line:   rgba(255, 255, 255, 0.06);
 
-  /* Lighter ink: the ground and the paler type carry most of the contrast. */
-  --op-ink:
-    0 1px 2px rgba(0, 0, 0, 0.55),
-    0 0 6px rgba(0, 0, 0, 0.35);
-  --op-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+  /* The pane's edge at its three weights, and the wash a hovered thing takes.
+     Written once here so every surface's own block says `var(--op-edge)` and
+     not its own rgba. */
+  --op-edge:       rgba(255, 255, 255, 0.08);
+  --op-edge-hover: rgba(255, 255, 255, 0.16);
+  --op-edge-on:    rgba(255, 255, 255, 0.32);
+  --op-wash:       rgba(255, 255, 255, 0.06);
+  --op-wash-on:    rgba(255, 255, 255, 0.12);
+
+  --op-ink: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --op-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 
   --op-interlace-a: 0;
   --op-tilt: 0deg;
 
   /* --- type ---------------------------------------------------------------
-     Saira for headings as well as copy. Both faces are already bundled at 400
-     and 700, so nothing new is inlined; `Segoe UI` is the fallback a Windows
-     machine always has. */
-  --op-font-display: 'Saira', 'Segoe UI', system-ui, sans-serif;
-  --op-font-body:    'Saira', 'Segoe UI', system-ui, sans-serif;
+     One family for all three roles. The mono stack included: what it was for
+     is a figure that does not jitter as it changes, and Manrope's tabular
+     figures do that without looking like a terminal. */
+  --op-font-display: 'OPX Minimal', 'Segoe UI', system-ui, sans-serif;
+  --op-font-body:    'OPX Minimal', 'Segoe UI', system-ui, sans-serif;
+  --op-font-mono:    'OPX Minimal', 'Segoe UI', system-ui, sans-serif;
 
-  --op-track-micro: 0.14em;
-  --op-track-label: 0.08em;
-  --op-track-lead:  0.06em;
-  --op-track-head:  0.01em;
+  /* The two smallest sizes are a step up: they were sized for capitals in a
+     mono face, and lower-case Manrope at 9px is a smudge over a street. */
+  --op-fs-micro: 10px;
+  --op-fs-label: 11px;
+  --op-fs-meta:  12px;
 
-  /* --- motion -------------------------------------------------------------
-     An ease, not three steps: the stutter is the cyberpunk look's. */
+  --op-track-micro: 0.02em;
+  --op-track-label: 0;
+  --op-track-lead:  0;
+  --op-track-head:  -0.01em;
+
+  /* --- shape ----------------------------------------------------------------
+     A radius per cut size, scaled from the operator's CUT and capped: a bay
+     at the cyberpunk 20px cut would otherwise be a lozenge. */
+  --op-radius-sm: clamp(4px, calc(var(--op-cut-sm) * 1.3), 10px);
+  --op-radius-md: clamp(6px, calc(var(--op-cut-md) * 1.1), 14px);
+  --op-radius-lg: clamp(8px, calc(var(--op-cut-lg) * 0.9), 18px);
+
+  /* --- motion -------------------------------------------------------------- */
   --op-stutter: cubic-bezier(0.2, 0, 0, 1);
-  --op-enter-ms: 240ms;
-
-  /* The corner radius as a fraction of the cut. */
-  --op-round: 0.5;
+  --op-enter-ms: 220ms;
 }
 
-/* --- the geometry: a rounded box instead of a chamfered one ------------------
+/* --- the type, everywhere -----------------------------------------------------
+   CAPITALS AND TRACKING ARE THE CYBERPUNK LOOK'S VOICE, and thirty-three rules
+   across the modules ask for them by name. Overriding each would be thirty-three
+   blocks that drift; this is the one place `!important` is the right tool,
+   because the claim really is "on this look, never". An eyebrow keeps a hair of
+   tracking, which is all small lower-case type wants. */
+:root[data-op-style="minimal"] body,
+:root[data-op-style="minimal"] body * {
+  text-transform: none !important;
+  letter-spacing: normal !important;
+}
+
+:root[data-op-style="minimal"] body .op-eyebrow {
+  letter-spacing: 0.02em !important;
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] body {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the shape: a rounded pane instead of a chamfered frame -------------------
    `inset() round` keeps what the chamfer polygon did besides the corner -- it
-   still clips the element's children to its box -- and only the corner
-   changes. The radius is read from the element's own `--aug-tr`, which every
-   preset sets from the operator's cut, so CUT keeps working as a roundness. */
+   still clips the element's children to its box. The radius follows the cut
+   the element was given: a small cut is a control, a large one an enclosure. */
 :root[data-op-style="minimal"] [data-augmented-ui] {
-  --op-radius: calc(var(--aug-tr, 12px) * var(--op-round));
+  --op-radius: var(--op-radius-md);
   border-radius: var(--op-radius);
   clip-path: inset(0 round var(--op-radius));
 }
 
-/* A preset that is NOT augmented -- the menu's rows are `.op-frame` with a
-   ground and no border layer -- has no `--aug-tr` to read, so it takes its
-   preset's own cut. Without this a row is a square plate inside a rounded bay. */
-:root[data-op-style="minimal"] .op-frame:not([data-augmented-ui]),
-:root[data-op-style="minimal"] .op-cap:not([data-augmented-ui]) {
-  border-radius: calc(var(--op-cut-sm) * var(--op-round));
+:root[data-op-style="minimal"] .op-frame,
+:root[data-op-style="minimal"] .op-cap {
+  --op-radius: var(--op-radius-sm);
+  border-radius: var(--op-radius);
 }
 
-/* The ring, now a rounded one. The polygon could only draw straight edges, so
-   the layer becomes a padded box whose content area is masked out: what is
-   left is a ring exactly `--aug-border-all` wide that follows the radius, and
-   still takes a gradient in `--aug-border-bg`. Both mask spellings, because
-   the engine baseline is unmeasured and the prefixed one is what an older CEF
-   reads. */
+:root[data-op-style="minimal"] .op-bay {
+  --op-radius: var(--op-radius-lg);
+}
+
+/* The ring, now a rounded one: a padded layer whose content box is masked
+   out, which leaves a ring exactly `--aug-border-all` wide that follows the
+   radius. Both mask spellings, because the engine baseline is unmeasured and
+   the prefixed one is what an older CEF reads. */
 :root[data-op-style="minimal"] [data-augmented-ui~="border"]::after {
   box-sizing: border-box;
   padding: var(--aug-border-all);
@@ -132,69 +166,79 @@
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
 }
 
-/* --- the paint: a hairline at rest -------------------------------------------
-   Same weight as the default it replaces, so every state still wins. */
+/* --- the paint: an edge that is barely there ---------------------------------
+   At the weight of the default it replaces, so every state and every module
+   rule still beats it. */
 :where(:root[data-op-style="minimal"]) [data-augmented-ui] {
-  --aug-border-bg: rgba(var(--op-red-idle-rgb), 0.28);
+  --aug-border-bg: var(--op-edge);
+  --aug-border-all: 1px;
 }
 
-/* The lit edge is a chamfer's idea -- light catching a cut. Without the cut it
-   is one even hairline, a little brighter than rest. */
 :where(:root[data-op-style="minimal"]) .op-arete,
 :where(:root[data-op-style="minimal"]) .op-arete.is-end {
-  --aug-border-bg: rgba(var(--op-red-idle-rgb), 0.40);
+  --aug-border-bg: var(--op-edge);
 }
 
-/* States brighten the line and lift the ground; they do not thicken it. */
+/* A state is the pane lighting up, not the outline thickening. */
 :where(:root[data-op-style="minimal"]) .op-frame.is-hover,
 :where(:root[data-op-style="minimal"]) .op-frame:hover:not(.is-off):not(.is-on) {
-  --aug-border-bg: rgba(var(--op-red-hi-rgb), 0.55);
+  --aug-border-bg: var(--op-edge-hover);
   --aug-border-all: 1px;
   color: var(--op-text);
 }
 
 :where(:root[data-op-style="minimal"]) .op-frame.is-on {
-  --aug-border-bg: var(--op-red-hi);
+  --aug-border-bg: var(--op-edge-on);
   --aug-border-all: 1px;
   color: var(--op-text);
 }
 
+:where(:root[data-op-style="minimal"]) .op-frame.is-off {
+  opacity: 0.45;
+}
+
 :where(:root[data-op-style="minimal"]) .op-frame.is-alarm {
+  --aug-border-bg: var(--op-alarm);
   --aug-border-all: 1.5px;
 }
 
-/* --- the detail: light on the ground ------------------------------------------
-   What replaces the chamfer, the tilt and the scanline as the thing that says
-   "made", rather than "a rectangle": the ground is lit from above. A wash of
-   white across the top of every plate, fading out before the middle, and one
-   pixel of highlight on its top edge -- the edge of a pane of smoked glass.
-
-   `background-image` and not `background`, so the plate's own colour, which
-   every module and every state sets, is left exactly where it was. Both are
-   static: one paint for the life of the surface, nothing that moves.
-
-   The geometry weight, because a module's own `background:` shorthand would
-   otherwise reset the image -- the colour it sets still shows through. */
+/* --- the pane: light on the ground -------------------------------------------
+   A wash of white across the top of every pane and one pixel of highlight on
+   its top edge: the edge of smoked glass. `background-image` and not
+   `background`, so the colour each module and state sets stays where it was. */
 :root[data-op-style="minimal"] .op-frame,
 :root[data-op-style="minimal"] .op-bay {
   background-image: linear-gradient(180deg,
-    rgba(255, 255, 255, 0.045) 0%,
-    rgba(255, 255, 255, 0) 55%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0) 60%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-/* A keycap is a mark, not a plate, so it takes no wash -- just a faint fill
-   to read as a key rather than a word in a box. */
+/* A keycap: a small rounded key with a faint fill, the letter in white. */
 :root[data-op-style="minimal"] .op-cap {
-  background: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  color: var(--op-text);
+  --aug-border-bg: transparent;
 }
 
-/* The eyebrow -- a toast's kind, a strip's group -- is the one place the mono
-   face stays, a little quieter. */
-:root[data-op-style="minimal"] .op-eyebrow {
-  letter-spacing: 0.16em;
-  opacity: 0.85;
+/* --- the entrance: a fade and a 4px rise -------------------------------------
+   A keyframe of its own rather than a retune of `op-plate-in`, whose sideways
+   push is the cyberpunk plate sliding into its slot. */
+@keyframes op-min-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+:root[data-op-style="minimal"] .op-enter {
+  animation-name: op-min-in;
 }
 
 /* --- what the minimal look leaves out ---------------------------------------- */
@@ -211,8 +255,14 @@
   filter: none;
 }
 
-/* Headings in the lighter weight, still in capitals: tracked uppercase at 400
-   is the quiet register of the same voice. */
+/* The plane is flat (`--op-tilt: 0deg` above), so it needs no perspective
+   either. The child's own transform is left alone: it is `rotateY(0)` here,
+   and a module may be composing something else onto it. */
+:root[data-op-style="minimal"] .op-plane {
+  perspective: none;
+}
+
+/* Headings in a regular weight, larger and untracked: the quiet register. */
 :root[data-op-style="minimal"] .op-label {
-  font-weight: 400;
+  font-weight: 600;
 }

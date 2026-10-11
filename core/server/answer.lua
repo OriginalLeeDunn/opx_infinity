@@ -9,6 +9,7 @@ local ANSWER_DEDUPE_MS = 2000
 local MAX_TEXTS = 32
 
 local NOTIFY = OPX.Event(OPX.Channel.NET, 'runtime', 'notify')
+local TOAST = OPX.Event(OPX.Channel.NET, 'runtime', 'toast')
 local ANSWER = OPX.Event(OPX.Channel.NET, 'runtime', 'commandAnswer')
 
 -- A command's read-back answer -- a list, a dump, a block of configuration -- for
@@ -20,37 +21,14 @@ local RESULT = OPX.Event(OPX.Channel.NET, 'runtime', 'commandResult')
 local lastAnswer = {}
 local cooldowns = {}
 
--- What `open77_notifications` accepts, from its definition reference: a title of
--- at most 96 UTF-8 bytes, a message of at most 384, and seven positions spelt
--- with an UNDERSCORE. A field past its bound is refused rather than cut, so the
--- cut is made here, on a character boundary.
-local MAX_TITLE_BYTES = 96
+-- How long a message may be, and how long it may stay. The page wraps a long
+-- message rather than cutting it, so the bound is about the wire and the screen,
+-- not a layout: 384 bytes is three toast lines, and a toast that stays longer than
+-- half a minute is a panel, not a notice.
 local MAX_MESSAGE_BYTES = 384
-local POSITIONS = {
-	middle_left = true, top_left = true, top_center = true, top_right = true,
-	bottom_left = true, bottom_center = true, bottom_right = true,
-}
-
---- The configured toast position as the package spells it, or nil for its default.
----
---- THE SHIPPED VALUE WAS `top-right`, WITH A HYPHEN, and the package knows only
---- `top_right`: every server toast was sent with a position the package does not
---- have. A hyphen is accepted and turned round because it is the spelling the
---- rest of this resource's anchors use (`lib/shared/anchors.lua`), so an operator
---- writing it is writing what they see everywhere else; anything else is
---- dropped, which leaves the package's own default, and is said once.
-local warnedPosition = false
-local function positionOf(value)
-	if type(value) ~= 'string' then return nil end
-	local spelt = value:lower():gsub('%-', '_')
-	if POSITIONS[spelt] then return spelt end
-	if not warnedPosition then
-		warnedPosition = true
-		Open77.log.warn(('[answer] NOTIFY_POSITION %q is not a notification position; ' ..
-			'the package default is used'):format(value))
-	end
-	return nil
-end
+local DEFAULT_MS = 5000
+local MIN_MS, MAX_MS = 1000, 30000
+local KINDS = { info = true, success = true, warning = true, error = true }
 
 --- Whether this exact text just went to this player.
 local function repeated(source, text)
@@ -94,62 +72,47 @@ local function remember(bucket, text)
 	bucket[text] = now
 end
 
---- Sends a toast, through whatever the host routes notifications to. An exact
---- repeat inside the dedupe window is swallowed; two different toasts are two
---- things the player has to learn, so only an exact repeat counts.
+--- Sends a toast to one player, drawn by OUR overlay. An exact repeat inside the
+--- dedupe window is swallowed; two different toasts are two things the player
+--- has to learn, so only an exact repeat counts.
 ---
---- NO ICON HERE, and it is not an omission. This one does not reach the runtime's
---- own overlay at all: it hands the toast to the platform's `open77_notifications`
---- package, whose `icon` field is a short TEXT badge of at most 16 bytes rather
---- than a glyph name. The two paths that do reach our page are `OPX.Refuse` and
---- `OPX.CommandNotice`, below, and those take one.
+--- IT USED TO GO TO THE PLATFORM. This handed every server toast -- 47 call
+--- sites, every `NotifyLocale` a garage, a key, a dealership or a refusal makes --
+--- to the `open77_notifications` package, which draws its own box in its own
+--- corner in its own style. So a server running this resource showed two kinds of
+--- notification side by side: ours, from anything raised on the client, and the
+--- platform's, from anything raised here, and neither the theme nor the minimal
+--- style reached the second. It now travels on the runtime's own channel to
+--- `core/client/notify.lua`, which raises it through `OPX.Toast.Show` exactly as
+--- a client-side toast is raised.
+---
+--- NO ICON, still. A glyph is a name from a closed set the client validates;
+--- the two paths that carry one are `OPX.Refuse` and `OPX.CommandNotice`.
 -- @author dop42
 -- @param source Source
 -- @param message string
 -- @param kind string|nil info, success, warning or error
 -- @param durationMs integer|nil
--- @return boolean whether the host took it
--- @return string|nil why it did not, or 'duplicate' for one swallowed here
+-- @return boolean whether it was sent
+-- @return string|nil why it was not, or 'duplicate' for one swallowed here
 function OPX.Notify(source, message, kind, durationMs)
 	source = tonumber(source)
 	if not source or source <= 0 then return false, 'invalid_source' end
+	if type(message) ~= 'string' or message == '' then return false, 'invalid_message' end
 
-	local text = ('%s:%s'):format(tostring(kind), tostring(message))
+	local text = ('%s:%s'):format(tostring(kind), message)
 	local again, bucket = repeated(source, text)
 	if again then return false, 'duplicate' end
 
-	-- THE HOST'S ANSWER IS READ, and at 47 call sites it was not. `send` answers
-	-- an id, or nil plus one of `duplicate_notification_id`, `network_unavailable`
-	-- or `permission_denied:network.events`. It routes to the `open77_notifications`
-	-- package, so on a server whose load list does not carry that package EVERY
-	-- server-side toast is dropped -- and with no read and no log line the only
-	-- symptom is players who are never told anything, which reads as the refusals
-	-- themselves not firing.
-	-- READ AT CALL TIME AND TYPE-CHECKED: an index of a missing
-	-- `Open77.notifications` raised inside whichever net handler was refusing
-	-- somebody, and took the rest of that handler with it.
-	local api = Open77.notifications
-	if type(api) ~= 'table' or type(api.send) ~= 'function' then
-		return false, 'no_notifications'
-	end
+	local duration = tonumber(durationMs)
+	if duration == nil or not OPX.Math.IsFinite(duration) then duration = DEFAULT_MS end
 
-	local called, id, refused = pcall(api.send, source, {
-		type = kind or 'info',
-		title = OPX.Text.Bytes(tostring(OPX.Config.SHARED.SERVER_NAME or ''), MAX_TITLE_BYTES),
-		message = OPX.Text.Bytes(tostring(message), MAX_MESSAGE_BYTES),
-		durationMs = durationMs or 5000,
-		position = positionOf(OPX.Config.SHARED.NOTIFY_POSITION),
+	TriggerClientEvent(TOAST, source, {
+		kind = KINDS[kind] and kind or 'info',
+		message = OPX.Text.Bytes(message, MAX_MESSAGE_BYTES),
+		durationMs = math.floor(OPX.Math.Clamp(duration, MIN_MS, MAX_MS)),
 	})
-	if not called then id, refused = nil, id end
 
-	if id == nil or id == false then
-		Open77.log.warn(('[answer] the toast for %d was not delivered (%s): %s')
-			:format(source, tostring(refused), OPX.Audit.Safe(message)))
-		return false, refused and tostring(refused) or 'notification_refused'
-	end
-
-	-- RECORDED ONLY NOW. Written before the send, a dropped toast was remembered
-	-- as delivered and the caller's retry was swallowed for the whole window.
 	remember(bucket, text)
 	return true
 end

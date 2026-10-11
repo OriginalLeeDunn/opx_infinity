@@ -559,4 +559,91 @@ useBridge('open77:anchors', (payload: Payload) => {
   color: var(--op-alarm);
   opacity: 0.85;
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   A name over a head is a small pill of smoked glass: the player id in a disc
+   at its leading end, the name beside it, and the account and citizen id as a
+   quieter second line. The pill is the tag's ground, so the heavy two-pass ink
+   it needed over open street is gone.
+
+   STAFF INVERTS THE DISC -- white with dark figures -- and the staff word is a
+   small white pill of its own. On a grey surface that is the only mark that
+   can stand apart, and it is the one this tag exists to show. The word comes
+   in capitals and is lowered, first letter back; a player's name is theirs and
+   is left exactly as written. */
+:root[data-op-style="minimal"] .tag {
+  padding: 4px var(--op-space-3) 4px 4px;
+  border-radius: 999px;
+  background: rgba(var(--op-plate-rgb), 0.58);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .id {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  font: 600 var(--op-fs-label) / 1 var(--op-font-body);
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .plate {
+  gap: 1px;
+  padding-left: var(--op-space-2);
+}
+
+/* No id disc (`TECHNICAL` off): the name takes the inset the disc gave it. */
+:root[data-op-style="minimal"] .plate.bare {
+  padding-left: 6px;
+}
+
+:root[data-op-style="minimal"] .name {
+  font: 600 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .user,
+:root[data-op-style="minimal"] .cid {
+  font: 400 var(--op-fs-micro) / 1.2 var(--op-font-body);
+  color: var(--op-text-dim);
+  opacity: 1;
+}
+
+:root[data-op-style="minimal"] .id.staff {
+  background: var(--op-alarm);
+  color: rgb(var(--op-plate-rgb));
+}
+
+:root[data-op-style="minimal"] .plate.staff .name {
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .plate.staff .user,
+:root[data-op-style="minimal"] .plate.staff .cid {
+  color: var(--op-text-dim);
+  opacity: 1;
+}
+
+:root[data-op-style="minimal"] .badge {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
+  background: var(--op-alarm);
+  color: rgb(var(--op-plate-rgb));
+  opacity: 1;
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .badge::first-letter {
+  text-transform: uppercase !important;
+}
 </style>

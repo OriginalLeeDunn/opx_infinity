@@ -785,8 +785,9 @@ next to the volume, and they ship in this resource — `ui/public/audio/` in the
 **The announcement is drawn on this runtime's own overlay**, not by the platform's
 `open77_notifications` package, and that move is what makes the stingers possible at
 all: only the page that owns a toast's clock can hold a message back until the first
-clip has finished. `OPX.Notify` hands the sentence to a surface this runtime does not
-draw, so it could be told when to appear and never when to wait. The chat line still
+clip has finished. Every other server toast now reaches the same overlay too --
+`OPX.Notify` raises it on the runtime's own channel -- but as a sentence and a kind,
+with no stinger: holding a message back is the announcement's alone. The chat line still
 goes out on core's own result channel, exactly as before.
 
 **Nothing about the presentation crosses the wire.** The server sends the sentence and
@@ -821,11 +822,9 @@ received, and the run that chose this format reported `packets 335, frames 34304
 peak 0.66` with no user gesture anywhere — so the clips play, and they play without a
 click.
 
-The order itself is proven in a browser rather than argued: `ui/harness/
-notify-stinger.html` mounts the real page on a fake bridge and a stubbed decoder and
-asserts the sequence — the message is not in the document while the opening clip plays,
-it appears when that clip ends, it goes when its lifetime ends, and only then does the
-closing clip start, with a refused playback still drawing the message.
+The order is: the message is not drawn while the opening clip plays, it appears when
+that clip ends, it goes when its lifetime ends, and only then does the closing clip
+start -- with a refused playback still drawing the message.
 
 ---
 

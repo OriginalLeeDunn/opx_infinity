@@ -2362,4 +2362,378 @@ function filter(value: string): void {
 .field-entry::placeholder {
   color: var(--op-text-faint);
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   The same room drawn as a settings sheet instead of an instrument panel.
+
+   THE PANES ARE THE GLASS. The cyberpunk column is an outline with framed
+   plates inside it; here the column, the rail, the tool strip and the dialog
+   are each one smoked pane, and what sits on them has no frame at all:
+
+     tabs        a segmented control -- one track, the chosen segment lit
+     search      a pill of faint fill; its eyebrow goes, the placeholder says it
+     a range     a 2px line and a round white thumb, never the angled blade
+     an item     a soft tile with the detail UNDER the name, not beside it, so
+                 a two-column grid stops cutting both in half
+     a button    a quiet pill; the primary one is solid white with dark type,
+                 which is the one filled control on the sheet
+     a tile      a soft square that lights up, never an outline that thickens
+
+   The dial's thumb and the slider's thumb are pseudo-elements, so they take
+   their shape here and not from `shapes.css`. */
+:root[data-op-style="minimal"] .column .bay,
+:root[data-op-style="minimal"] .rail-bay,
+:root[data-op-style="minimal"] .tool-row,
+:root[data-op-style="minimal"] .dialog .bay {
+  background: var(--op-plate);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), var(--op-shadow);
+}
+
+:root[data-op-style="minimal"] .bay-inner,
+:root[data-op-style="minimal"] .rail-inner {
+  gap: var(--op-space-4);
+  padding: var(--op-space-5) var(--op-space-5) var(--op-space-4);
+}
+
+:root[data-op-style="minimal"] .tool-row {
+  padding: var(--op-space-2);
+}
+
+:root[data-op-style="minimal"] .foot {
+  gap: var(--op-space-2);
+  padding: var(--op-space-4) var(--op-space-5) var(--op-space-5);
+  border-top: 1px solid var(--op-line);
+}
+
+/* Every control on the sheet is a native <button>. The chamfer's clip used to
+   shave the browser's own 2px outset border down to nothing; a rounded clip
+   keeps it, so it is taken off here. */
+:root[data-op-style="minimal"] .row,
+:root[data-op-style="minimal"] .tab,
+:root[data-op-style="minimal"] .tile,
+:root[data-op-style="minimal"] .view-btn {
+  border: 0;
+}
+
+/* --- the segmented control ---------------------------------------------------- */
+:root[data-op-style="minimal"] .tabs {
+  gap: 2px;
+  align-self: flex-start;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-op-style="minimal"] .tab {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  padding: 6px var(--op-space-4);
+  background: transparent;
+  box-shadow: none;
+  font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .tab:hover:not(.is-off):not(.is-on) {
+  --aug-border-bg: transparent;
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .tab.is-on {
+  --aug-border-bg: transparent;
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .mark {
+  color: var(--op-text);
+}
+
+/* --- the search pill ------------------------------------------------------------ */
+:root[data-op-style="minimal"] .field {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  padding: 9px var(--op-space-4);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .field:focus-within {
+  --aug-border-bg: var(--op-edge-on);
+  --aug-border-all: 1px;
+}
+
+:root[data-op-style="minimal"] .field-label {
+  display: none;
+}
+
+:root[data-op-style="minimal"] .field-entry {
+  caret-color: var(--op-text);
+}
+
+/* --- a range ---------------------------------------------------------------------- */
+:root[data-op-style="minimal"] .dial {
+  --aug-border-bg: transparent;
+  padding: 0 var(--op-space-1);
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .dial-track::-webkit-slider-runnable-track,
+:root[data-op-style="minimal"] .slot-track::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.20);
+}
+
+:root[data-op-style="minimal"] .dial-track::-webkit-slider-thumb,
+:root[data-op-style="minimal"] .slot-track::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -6px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--op-text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  clip-path: none;
+}
+
+:root[data-op-style="minimal"] .dial-track:disabled::-webkit-slider-thumb,
+:root[data-op-style="minimal"] .slot-track:disabled::-webkit-slider-thumb {
+  background: var(--op-text-faint);
+}
+
+/* --- the items --------------------------------------------------------------------- */
+:root[data-op-style="minimal"] .grid {
+  gap: var(--op-space-2);
+}
+
+:root[data-op-style="minimal"] .grid .row {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  --aug-border-bg: transparent;
+  padding: 10px var(--op-space-3);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: none;
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .grid .row-label {
+  max-width: 100%;
+  font-weight: 500;
+}
+
+:root[data-op-style="minimal"] .grid .row-hint {
+  flex: none;
+  max-width: 100%;
+  font: 400 var(--op-fs-meta) / 1.3 var(--op-font-body);
+  color: var(--op-text-dim);
+  opacity: 1;
+}
+
+:root[data-op-style="minimal"] .grid .row.is-hover,
+:root[data-op-style="minimal"] .grid .row:hover:not(.is-off):not(.is-on) {
+  --aug-border-bg: transparent;
+  background: var(--op-wash-on);
+}
+
+:root[data-op-style="minimal"] .grid .row.is-on {
+  --aug-border-bg: var(--op-edge-on);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+:root[data-op-style="minimal"] .empty,
+:root[data-op-style="minimal"] .count,
+:root[data-op-style="minimal"] .status {
+  font-family: var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .status.error {
+  color: var(--op-text);
+  font-weight: 600;
+}
+
+:root[data-op-style="minimal"] .spinner {
+  border-color: rgba(255, 255, 255, 0.16);
+  border-top-color: var(--op-text);
+}
+
+/* --- the summary: a price, said plainly -------------------------------------------- */
+:root[data-op-style="minimal"] .summary {
+  align-items: center;
+  gap: var(--op-space-3);
+  padding-top: var(--op-space-4);
+  border-top: 1px solid var(--op-line);
+}
+
+:root[data-op-style="minimal"] .plate-label {
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .plate-value {
+  font: 600 var(--op-fs-title) / 1.1 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .summary .button {
+  flex: none;
+  width: auto;
+  min-width: 8rem;
+}
+
+/* --- buttons ------------------------------------------------------------------------ */
+:root[data-op-style="minimal"] .button {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  padding: 10px var(--op-space-4);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .button .row-label {
+  font-weight: 500;
+}
+
+:root[data-op-style="minimal"] .button:hover:not(.is-off):not(.is-on) {
+  --aug-border-bg: transparent;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+:root[data-op-style="minimal"] .button.is-on {
+  --aug-border-bg: transparent;
+  background: var(--op-text);
+  color: rgb(var(--op-plate-rgb));
+}
+
+:root[data-op-style="minimal"] .button.is-on .row-label {
+  font-weight: 600;
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .tool {
+  min-width: 0;
+  padding: 8px var(--op-space-4);
+}
+
+:root[data-op-style="minimal"] .row-icon {
+  stroke-width: 1.5;
+}
+
+/* --- the rail: view buttons, categories, tiles, the slot ---------------------------- */
+:root[data-op-style="minimal"] .views {
+  gap: var(--op-space-1);
+}
+
+:root[data-op-style="minimal"] .view-btn {
+  --op-radius: var(--op-radius-md);
+  --aug-border-bg: transparent;
+  padding: var(--op-space-3) var(--op-space-2) var(--op-space-2);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .view-icon {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.5;
+}
+
+:root[data-op-style="minimal"] .view-btn:hover:not(:disabled),
+:root[data-op-style="minimal"] .view-btn:focus-visible {
+  --aug-border-bg: transparent;
+  background: var(--op-wash);
+}
+
+:root[data-op-style="minimal"] .view-label {
+  color: inherit;
+  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+}
+
+:root[data-op-style="minimal"] .cats .cat {
+  min-width: 0;
+  padding: 8px var(--op-space-4);
+}
+
+:root[data-op-style="minimal"] .tiles {
+  gap: var(--op-space-2);
+}
+
+:root[data-op-style="minimal"] .tile {
+  --op-radius: var(--op-radius-md);
+  --aug-border-bg: transparent;
+  padding: var(--op-space-2);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .tile:hover:not(:disabled):not(.is-on),
+:root[data-op-style="minimal"] .tile:focus-visible:not(.is-on) {
+  --aug-border-bg: transparent;
+  background: var(--op-wash-on);
+}
+
+:root[data-op-style="minimal"] .tile.is-on {
+  --aug-border-bg: var(--op-edge-on);
+  --aug-border-all: 1px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+:root[data-op-style="minimal"] .tile-mono {
+  font: 300 var(--op-fs-title) / 1 var(--op-font-body);
+}
+
+:root[data-op-style="minimal"] .tile-name {
+  font: 500 var(--op-fs-label) / 1.3 var(--op-font-body);
+  text-align: center;
+}
+
+:root[data-op-style="minimal"] .slot {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  padding: var(--op-space-1) var(--op-space-1) var(--op-space-1) var(--op-space-4);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .slot.is-on {
+  --aug-border-bg: transparent;
+}
+
+:root[data-op-style="minimal"] .slot-value {
+  font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .slot-step {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  padding: 5px var(--op-space-3);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .slot-step:focus-within {
+  --aug-border-bg: var(--op-edge-on);
+  --aug-border-all: 1px;
+}
+
+:root[data-op-style="minimal"] .slot-number {
+  caret-color: var(--op-text);
+}
+
+/* --- the confirm --------------------------------------------------------------------- */
+:root[data-op-style="minimal"] .scrim {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+:root[data-op-style="minimal"] .dialog h2 {
+  font: 600 var(--op-fs-title) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+}
 </style>

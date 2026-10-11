@@ -638,4 +638,99 @@ function giveKey(): void {
   --aug-border-bg: var(--op-alarm);
   color: var(--op-alarm);
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   The editor's shell as a window rather than a console: one smoked pane, the
+   title alone in the header -- the `OPX // 77` kicker is the instrument's
+   serial plate -- a round close button, and a delete confirm that is a small
+   sheet over a dimmed window. The destructive answer is the solid white pill:
+   this look has no red to spend on danger, so it marks the one answer that
+   acts with the one filled control. */
+:root[data-op-style="minimal"] .bay {
+  background: var(--op-plate);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), var(--op-shadow);
+}
+
+:root[data-op-style="minimal"] .bay-inner {
+  padding: var(--op-space-5);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .head {
+  padding: 0 var(--op-space-7) var(--op-space-4) 0;
+  margin-bottom: var(--op-space-4);
+  border-bottom: 1px solid var(--op-line);
+}
+
+:root[data-op-style="minimal"] .head-kicker {
+  display: none;
+}
+
+:root[data-op-style="minimal"] .head-title {
+  font: 600 var(--op-fs-title) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .head-mode {
+  font-family: var(--op-font-body);
+}
+
+:root[data-op-style="minimal"] .close {
+  --op-radius: 50%;
+  --aug-border-bg: transparent;
+  top: var(--op-space-4);
+  right: var(--op-space-4);
+  width: 28px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+  font: 400 15px / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .close:hover {
+  --aug-border-bg: transparent;
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .notice.bad {
+  color: var(--op-text);
+  font-weight: 600;
+}
+
+:root[data-op-style="minimal"] .veil {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+:root[data-op-style="minimal"] .ask {
+  background: var(--op-plate-lit);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), var(--op-shadow);
+}
+
+:root[data-op-style="minimal"] .ask-inner {
+  gap: var(--op-space-4);
+  padding: var(--op-space-5);
+}
+
+:root[data-op-style="minimal"] .btn {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  padding: 9px var(--op-space-5);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .btn.danger {
+  --aug-border-bg: transparent;
+  background: var(--op-text);
+  color: rgb(var(--op-plate-rgb));
+}
+
+:root[data-op-style="minimal"] .btn .op-label {
+  font-weight: 500;
+}
 </style>

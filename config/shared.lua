@@ -6,11 +6,6 @@ OPX.Config.SHARED = {
 	LOCALE = 'en',
 
 	SERVER_NAME = 'OPEN//77',
-	-- Where a server toast is drawn by `open77_notifications`: middle_left,
-	-- top_left, top_center, top_right, bottom_left, bottom_center or
-	-- bottom_right. A hyphen is accepted for an underscore; anything else is
-	-- named once in the log and the package's own default is used.
-	NOTIFY_POSITION = 'top_right',
 
 	MONEY = {
 		DEFAULT = 'EDDIES',

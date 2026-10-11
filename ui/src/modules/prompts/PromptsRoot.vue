@@ -529,23 +529,69 @@ onBeforeUnmount(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The key is the detail here: a small rounded cap with a faint fill and the
-   letter in white, so `[E] Open` reads as a key and a word rather than two
-   boxed words. The action is in the body face at its regular weight, in
-   sentence case, which is how a quiet surface gives an instruction. */
-:root[data-op-style="minimal"] .cap {
-  padding: 0 7px;
-  color: var(--op-text);
-  --aug-border-bg: rgba(255, 255, 255, 0.22);
+   The strip is a pane per group with the keys drawn as keys: small rounded
+   caps with a faint fill and a shadow along their foot, the letter in white.
+   The action beside a key is in the body face, regular weight, in sentence
+   case -- the catalogue writes `OPEN`, the player reads "Open". A key name
+   stays as the key is printed (`SHIFT`): a keycap is a picture of a key, and
+   a cap is an inline-flex box, which `::first-letter` does not reach. */
+:root[data-op-style="minimal"] .strip {
+  text-shadow: none;
 }
 
+:root[data-op-style="minimal"] .group {
+  gap: var(--op-space-2) var(--op-space-4);
+  padding: var(--op-space-2) var(--op-space-3);
+  border-radius: var(--op-radius-md);
+  background: rgba(var(--op-plate-rgb), 0.62);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+:root[data-op-style="minimal"] .title,
 :root[data-op-style="minimal"] .label {
-  font: 400 var(--op-fs-body) / 1.2 var(--op-font-body);
-  letter-spacing: 0.02em;
-  text-transform: none;
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .title::first-letter,
+:root[data-op-style="minimal"] .label::first-letter {
+  text-transform: uppercase !important;
 }
 
 :root[data-op-style="minimal"] .title {
+  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-faint);
+}
+
+:root[data-op-style="minimal"] .cap {
+  --op-radius: 6px;
+  text-transform: none;
+  --aug-border-bg: transparent;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  font: 600 var(--op-fs-meta) / 1 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .join {
+  font: 400 var(--op-fs-meta) / 1 var(--op-font-body);
+  color: var(--op-text-faint);
+}
+
+:root[data-op-style="minimal"] .label {
+  font: 500 var(--op-fs-body) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .value {
+  font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
   color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .dim .cap {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--op-text-faint);
 }
 </style>

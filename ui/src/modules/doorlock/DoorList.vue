@@ -390,4 +390,74 @@ svg {
   gap: var(--op-space-3);
   color: var(--op-text-dim);
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   The door list is a table in the doorlock window, and on the minimal surface
+   a table is rows without boxes: each row is a pane only on hover, the header
+   is a quiet line of grey, the search is a pill and the add and page steps are
+   round buttons. An unlocked door says so in white, the one loud word here. */
+:root[data-op-style="minimal"] .list .search,
+:root[data-op-style="minimal"] .list .add,
+:root[data-op-style="minimal"] .list .step {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  background: var(--op-wash);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .list .search:focus-within {
+  --aug-border-bg: var(--op-edge-on);
+  background: var(--op-wash-on);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .list .add,
+:root[data-op-style="minimal"] .list .step {
+  width: 30px;
+}
+
+:root[data-op-style="minimal"] .list .thead {
+  color: var(--op-text-faint);
+}
+
+:root[data-op-style="minimal"] .list .th:hover {
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .list .row {
+  --aug-border-bg: transparent;
+  background: transparent;
+  box-shadow: none;
+  transition: background-color var(--op-dur-fast) linear;
+}
+
+:root[data-op-style="minimal"] .list .row:hover {
+  background: var(--op-wash);
+}
+
+:root[data-op-style="minimal"] .list .c-name {
+  font-weight: 500;
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .list .c-state {
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .list .c-state.unlocked {
+  color: var(--op-alarm);
+  font-weight: 600;
+}
+
+:root[data-op-style="minimal"] .list .icon {
+  border-radius: 50%;
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .list .icon:hover:not(.off) {
+  background: var(--op-wash);
+  color: var(--op-text);
+}
 </style>

@@ -233,4 +233,65 @@ const cells = computed(() =>
   line-height: 1;
   color: var(--op-text);
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   A dock, not a row of sockets: the five tiles sit on one rounded sheet of
+   glass, so the peek reads as one object rising at the bottom of the screen
+   and going again. A tile is lighter glass with the item's picture in it, the
+   key a quiet figure in its corner and the count a small pill. An empty slot is
+   a recessed tile that says so in a word. */
+:root[data-op-style="minimal"] .slotbar {
+  gap: 6px;
+  padding: 6px;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 50%),
+    rgba(var(--op-plate-rgb), 0.62);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    var(--op-shadow);
+}
+
+:root[data-op-style="minimal"] .cell {
+  --op-radius: 14px;
+  --aug-border-bg: transparent;
+  width: 64px;
+  height: 64px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+:root[data-op-style="minimal"] .art {
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.45));
+}
+
+:root[data-op-style="minimal"] .mark {
+  font: 600 var(--op-fs-body) / 1 var(--op-font-display);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .mark.faint {
+  font: 500 var(--op-fs-micro) / 1 var(--op-font-body);
+  color: var(--op-text-faint);
+}
+
+:root[data-op-style="minimal"] .cap {
+  top: 5px;
+  left: 7px;
+  font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .count {
+  right: 4px;
+  bottom: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font: 600 var(--op-fs-micro) / 1.2 var(--op-font-body);
+  background: rgba(0, 0, 0, 0.5);
+}
 </style>

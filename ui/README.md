@@ -151,9 +151,11 @@ written into three separate gradients.
 - **The wire carries numbers, never CSS.** A colour is three integers; `theme.ts` is the
   only thing that produces `rgb()`, `px` or `deg`. Adding a themeable value means an
   entry in `KNOBS` and a bound in `palette.lua`, and the entry is the allowlist.
-- **What is not themed:** border weights (thirty-nine component-local declarations at six
-  values, with no token behind them), type scale (fixed pixel layouts are configured
-  elsewhere), and the neutral ramp, which is neutral on purpose.
+- **What the operator's knobs do not reach:** border weights (thirty-nine
+  component-local declarations at six values, with no token behind them), type scale
+  (fixed pixel layouts are configured elsewhere), and the neutral ramp, which is
+  neutral on purpose. The minimal STYLE does move all three -- it is a stylesheet, not
+  a knob -- but no number on the wire does.
 
 ### The two styles
 
@@ -162,13 +164,26 @@ of the same name holds that look's knobs, so switching is one word and each look
 its own colours. The style is the one word on the wire: `palette.lua` and `theme.ts` each
 hold the same two-word allowlist, and the page writes it as `data-op-style` on `<html>`.
 
-`design-system/minimal.css` is everything the minimal style changes, and every rule in it
-is scoped to `:root[data-op-style="minimal"]` -- with the attribute absent or `cyberpunk`,
-the page is exactly what the other sheets draw. It rounds every augmented shape at half
-its cut (so `CUT` becomes a roundness), turns the stroke into a hairline, flattens the
-plane, drops the interlace and the bloom, sets the headings in Saira and eases the
-entrance instead of stuttering it. Geometry there outranks every module; paint is wrapped
-in `:where()` so states and module rules still beat it.
+**The minimal style is a different object, not a quieter cyberpunk.** The cyberpunk look
+is an instrument -- outlined, chamfered, tilted, in capitals and mono. The minimal look is
+smoked glass: Manrope in sentence case, rounded panes and pills, an edge that is barely
+there, and a state that is the pane lighting up rather than the outline thickening.
+
+`design-system/minimal.css` is its vocabulary, every rule scoped to
+`:root[data-op-style="minimal"]` -- with the attribute absent or `cyberpunk`, the page is
+exactly what the other sheets draw. Geometry there outranks every module; paint is
+wrapped in `:where()` so states and module rules still beat it.
+
+- **The face is Manrope, as `'OPX Minimal'`** (`fonts.css`). The family name is where
+  the weight map lives: every weight a surface asks for is drawn one step lighter
+  (700 → 600, 600 → 500, 900 → 700), so no surface restates a weight. All three font
+  tokens point at it, mono included; figures are tabular page-wide.
+- **No capitals and no tracking, anywhere.** One `!important` rule in `minimal.css` and
+  the only one in the design system: thirty-three module rules ask for uppercase by
+  name, and "never, on this look" is a claim about all of them at once.
+- **The edge and the wash are tokens**: `--op-edge`, `--op-edge-hover`, `--op-edge-on`,
+  `--op-wash`, `--op-wash-on`, and `--op-radius-sm/md/lg` scaled from `CUT`. A
+  surface's minimal block speaks in these, not in its own rgba.
 
 - **Grey and white, and nothing else.** The shipped `minimal` block is a neutral grey
   accent and a white alarm, and `minimal.css` restates the neutral ramp without the
@@ -184,8 +199,6 @@ in `:where()` so states and module rules still beat it.
 - **The fallback ladder in `minimal.css` is held equal** to what the shipped `minimal`
   block derives, by `tests/run.lua`. Change the block's `ACCENT` and the suite names the
   rungs to update.
-- `/harness/theme-styles.html?style=minimal` (dev server) draws the HUD, a menu and a
-  toast in either style over a game still.
 
 ### The join screen is outside all of this
 

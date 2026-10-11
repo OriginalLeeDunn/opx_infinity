@@ -1026,4 +1026,313 @@ const shown = computed<Row[]>(() => contacts.value)
     animation: none;
   }
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   NOT A HOLOGRAM. The projector -- the disc, its rings, the sweep, the beam,
+   the panel leaning back on its own perspective -- is the cyberpunk look's
+   idea of a phone, and none of it survives here. What is left is the phone's
+   actual content on one flat pane of glass, anchored where the projection
+   was: a card with a header, a segmented control for its two lists, contact
+   rows, and pill buttons. The rings and the sweep are not hidden by opacity:
+   they are taken out of the render, so the sweep's infinite rotation stops
+   costing anything at all.
+
+   THE CATALOGUE SPEAKS THIS SURFACE IN CAPITALS (`HOLOCALL`, `ANSWER`,
+   `CONTACTS`), and the minimal look never sets capitals. The strings are
+   lowered and given back their initial here rather than rewritten in Lua,
+   because the cyberpunk look still wants them as they are. Only the words
+   that come from the catalogue are touched; a contact's name never is. */
+:root[data-op-style="minimal"] .holo {
+  perspective: none;
+}
+
+:root[data-op-style="minimal"] .stage {
+  width: min(400px, calc(100vw - var(--op-inset-x) * 2));
+  height: auto;
+  max-height: min(560px, calc(100vh - var(--op-inset-y) * 2));
+  transform-style: flat;
+  animation: op-min-in var(--op-enter-ms) var(--op-ease) both;
+}
+
+:root[data-op-style="minimal"] .holo[class*='anchor-bottom'] .stage {
+  margin-bottom: var(--op-inset-y);
+}
+
+:root[data-op-style="minimal"] .disc,
+:root[data-op-style="minimal"] .beam {
+  display: none;
+}
+
+/* --- the card --------------------------------------------------------------- */
+:root[data-op-style="minimal"] .panel-frame {
+  max-height: none;
+  margin-bottom: 0;
+  transform: none;
+}
+
+:root[data-op-style="minimal"] .panel {
+  padding: var(--op-space-4) var(--op-space-4) var(--op-space-3);
+  border: 0;
+  border-radius: var(--op-radius-lg);
+  background: rgba(var(--op-plate-rgb), 0.84);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 40%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    var(--op-shadow);
+}
+
+/* The two red side edges become the card's own rounded edge, and a ringing
+   call still breathes on it -- white and slow, the one thing on the card that
+   moves. */
+:root[data-op-style="minimal"] .panel-edges {
+  border: 1px solid var(--op-edge-on);
+  border-radius: var(--op-radius-lg);
+  opacity: 0.35;
+}
+
+/* --- the header -------------------------------------------------------------- */
+:root[data-op-style="minimal"] .head {
+  gap: 2px var(--op-space-2);
+  margin-bottom: var(--op-space-3);
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+:root[data-op-style="minimal"] .title {
+  font-size: var(--op-fs-title);
+  color: var(--op-text);
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .eyebrow {
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .shut {
+  align-self: center;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--op-wash);
+  color: var(--op-text-dim);
+  font-size: var(--op-fs-label);
+}
+
+:root[data-op-style="minimal"] .shut:hover {
+  background: var(--op-wash-on);
+  color: var(--op-text);
+}
+
+/* --- a call ringing in, a call running ---------------------------------------
+   A tinted inset block inside the card rather than a row between two rules,
+   with the answer as the one solid white button on the surface. */
+:root[data-op-style="minimal"] .ring-row,
+:root[data-op-style="minimal"] .live-row {
+  gap: var(--op-space-3);
+  margin-bottom: var(--op-space-3);
+  padding: 10px 10px 10px var(--op-space-3);
+  border-bottom: 0;
+  border-radius: var(--op-radius-md);
+  background: var(--op-wash);
+}
+
+:root[data-op-style="minimal"] .ring-who,
+:root[data-op-style="minimal"] .live-who {
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .acts {
+  gap: 6px;
+}
+
+:root[data-op-style="minimal"] .act,
+:root[data-op-style="minimal"] .pill {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--op-wash-on);
+  color: var(--op-text);
+  font-size: var(--op-fs-label);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .act:hover,
+:root[data-op-style="minimal"] .pill:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--op-text);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .act.yes {
+  background: var(--op-text);
+  color: rgb(var(--op-plate-rgb));
+}
+
+:root[data-op-style="minimal"] .act.yes:hover {
+  background: #fff;
+  color: rgb(var(--op-plate-rgb));
+}
+
+:root[data-op-style="minimal"] .act.no {
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .waiting {
+  margin: 0;
+  color: var(--op-text-dim);
+}
+
+/* --- the two lists, as a segmented control ----------------------------------- */
+:root[data-op-style="minimal"] .tabs {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: var(--op-space-2);
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--op-wash);
+}
+
+:root[data-op-style="minimal"] .tab {
+  padding: 4px 14px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--op-text-dim);
+  font-size: var(--op-fs-label);
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .tab:hover:not(.on) {
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .tab.on {
+  background: var(--op-wash-on);
+  color: var(--op-text);
+  text-shadow: none;
+}
+
+/* --- the rows ---------------------------------------------------------------- */
+:root[data-op-style="minimal"] .row {
+  gap: var(--op-space-3);
+  padding: 9px 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+:root[data-op-style="minimal"] .row:last-child {
+  border-bottom: 0;
+}
+
+:root[data-op-style="minimal"] .who {
+  color: var(--op-text);
+}
+
+/* Presence, as a status light and not a bead of neon: a solid white dot for
+   someone reachable, a hollow one for someone who is not. */
+:root[data-op-style="minimal"] .dot {
+  width: 7px;
+  height: 7px;
+  background: var(--op-text);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .row.off {
+  color: var(--op-text-faint);
+}
+
+:root[data-op-style="minimal"] .row.off .who {
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .row.off .dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--op-text-faint);
+}
+
+:root[data-op-style="minimal"] .why {
+  font-size: var(--op-fs-label);
+  color: var(--op-text-faint);
+}
+
+:root[data-op-style="minimal"] .empty {
+  color: var(--op-text-dim);
+}
+
+/* --- the sphere, passive: a call arriving with nothing open ------------------
+   A small glass capsule where the projection would rise: who, what, and the
+   two keys. */
+:root[data-op-style="minimal"] .passive {
+  margin-bottom: 0;
+  padding: var(--op-space-3) var(--op-space-5);
+  border-radius: var(--op-radius-lg);
+  background: rgba(var(--op-plate-rgb), 0.8);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 50%);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    var(--op-shadow);
+}
+
+:root[data-op-style="minimal"] .passive-who {
+  font-size: var(--op-fs-title);
+  color: var(--op-text);
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .passive-what {
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .prompts {
+  gap: var(--op-space-4);
+  margin-top: var(--op-space-3);
+  color: var(--op-text-dim);
+  font-size: var(--op-fs-meta);
+}
+
+:root[data-op-style="minimal"] .prompt {
+  gap: 6px;
+}
+
+:root[data-op-style="minimal"] .cap {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--op-radius-sm);
+  background: rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  color: var(--op-text);
+  font-size: var(--op-fs-label);
+}
+
+/* --- the catalogue's capitals ------------------------------------------------
+   The passive prompts are a key and a word in one element, so there is no
+   first letter to give back: the word stays lower-case beside its key, which
+   is how a quiet hint reads anyway, and the key is held in capitals. */
+:root[data-op-style="minimal"] .prompt {
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .prompt .cap {
+  text-transform: uppercase !important;
+}
+
+:root[data-op-style="minimal"] .title,
+:root[data-op-style="minimal"] .eyebrow,
+:root[data-op-style="minimal"] .shut,
+:root[data-op-style="minimal"] .act,
+:root[data-op-style="minimal"] .pill,
+:root[data-op-style="minimal"] .tab {
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .title::first-letter,
+:root[data-op-style="minimal"] .eyebrow::first-letter,
+:root[data-op-style="minimal"] .shut::first-letter,
+:root[data-op-style="minimal"] .act::first-letter,
+:root[data-op-style="minimal"] .pill::first-letter,
+:root[data-op-style="minimal"] .tab::first-letter {
+  text-transform: uppercase;
+}
 </style>

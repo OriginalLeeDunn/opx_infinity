@@ -643,4 +643,157 @@ function share(value: number): number {
   font-weight: 900;
   color: var(--op-red-hi);
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   One small pane in the corner. The level is a slim rounded column that fills
+   smoothly -- the segmented ladder is a VU meter, an instrument -- and the
+   channels are dots, not boxes. The keys are soft keycaps; the receive count is
+   a pill. The state still sets the tone, now from the grey ramp: resting is
+   faint, talking is white, muted keeps its slash.
+
+   The captions (`TX`, `NORMAL`, `15 M`) arrive in capitals; they are lowered,
+   and the two that are words get their first letter back. */
+:root[data-op-style="minimal"] .voice {
+  --voice-tone: var(--op-text-faint);
+  --voice-unlit: rgba(255, 255, 255, 0.10);
+}
+
+:root[data-op-style="minimal"] .voice.detected {
+  --voice-tone: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .voice.talking {
+  --voice-tone: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .voice.muted {
+  --voice-tone: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .voice .inner {
+  gap: var(--op-space-2);
+  padding: var(--op-space-3);
+  border-radius: var(--op-radius-md);
+  background: rgba(var(--op-plate-rgb), 0.62);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+:root[data-op-style="minimal"] .voice .mic {
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .voice .mic svg {
+  width: 14px;
+  height: 14px;
+  filter: none;
+}
+
+:root[data-op-style="minimal"] .voice.talking .mic {
+  background: var(--op-text);
+  color: rgb(var(--op-plate-rgb));
+}
+
+:root[data-op-style="minimal"] .voice .slash {
+  width: 18px;
+  height: 1.5px;
+  border-radius: 1px;
+}
+
+:root[data-op-style="minimal"] .voice .caption,
+:root[data-op-style="minimal"] .voice .mode {
+  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  text-transform: lowercase !important;
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .voice .caption::first-letter,
+:root[data-op-style="minimal"] .voice .mode::first-letter {
+  text-transform: uppercase !important;
+}
+
+:root[data-op-style="minimal"] .voice .mode {
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .voice .distance {
+  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .voice .track {
+  width: 6px;
+  height: 40px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--voice-unlit);
+}
+
+:root[data-op-style="minimal"] .voice .track::after {
+  content: none;
+}
+
+:root[data-op-style="minimal"] .voice .meter {
+  border-radius: 999px;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+:root[data-op-style="minimal"] .voice .pips {
+  gap: 5px;
+}
+
+:root[data-op-style="minimal"] .voice .pip {
+  width: 6px;
+  height: 6px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .voice .pip.on {
+  background: var(--op-text);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .voice .cap {
+  --op-radius: var(--op-radius-sm);
+  --aug-border-bg: transparent;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  font: 600 var(--op-fs-meta) / 1 var(--op-font-body);
+  background: rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .voice .cap.quiet {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .voice .rx {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  gap: 6px;
+  padding: 3px var(--op-space-3);
+  font: 600 var(--op-fs-label) / 1 var(--op-font-body);
+  background: rgba(255, 255, 255, 0.10);
+  color: var(--op-text);
+  filter: none;
+}
+
+:root[data-op-style="minimal"] .voice .rx-icon {
+  font-weight: 500;
+  color: var(--op-text-dim);
+}
 </style>

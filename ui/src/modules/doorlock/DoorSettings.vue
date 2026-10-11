@@ -644,4 +644,212 @@ select.input option {
   align-items: center;
   gap: var(--op-space-2);
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   A settings form, drawn the way the rest of this look draws one:
+
+     the tabs      a sidebar list -- a row lights up, it does not slide out
+     an input      a soft filled field with no outline; focus draws a fine one
+     a flag        a switch, the same one the menu draws, not a ticked box
+     a button      a quiet pill; saving is the solid white one
+     an icon       a round button that lights up on hover
+
+   The section rules above the door list and the submit row are hairlines in
+   the pane's own line colour. */
+:root[data-op-style="minimal"] svg {
+  stroke-width: 1.5;
+}
+
+:root[data-op-style="minimal"] .tab {
+  --aug-border-bg: transparent;
+  padding: 8px var(--op-space-3);
+  background: transparent;
+  box-shadow: none;
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .tab:hover:not(.is-off):not(.is-on) {
+  --aug-border-bg: transparent;
+  background: var(--op-wash);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .tab.is-on {
+  --aug-border-bg: transparent;
+  transform: none;
+  background: var(--op-wash-on);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .tab .op-label {
+  font-size: var(--op-fs-meta);
+  font-weight: 500;
+}
+
+:root[data-op-style="minimal"] .field {
+  gap: 6px;
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .input {
+  box-sizing: border-box;
+  height: 34px;
+  padding: 0 var(--op-space-3);
+  border: 0;
+  border-radius: var(--op-radius-sm);
+  background: rgba(255, 255, 255, 0.06);
+  font: 400 var(--op-fs-body) / 1 var(--op-font-body);
+  transition: background var(--op-dur-fast) linear, box-shadow var(--op-dur-fast) linear;
+}
+
+/* Inside a field the column is the flex axis, and `flex: 1` there sizes the
+   input by its line rather than by the height above; on a `.line` it is the
+   width it should grow. */
+:root[data-op-style="minimal"] .field > .input,
+:root[data-op-style="minimal"] .field .line > .input {
+  flex-basis: auto;
+  box-sizing: border-box;
+}
+
+:root[data-op-style="minimal"] .field > .input {
+  flex: none;
+}
+
+:root[data-op-style="minimal"] .input:focus {
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: 0 0 0 1px var(--op-edge-on);
+}
+
+:root[data-op-style="minimal"] .input:disabled {
+  opacity: 0.5;
+}
+
+:root[data-op-style="minimal"] .switches {
+  gap: var(--op-space-2) var(--op-space-5);
+}
+
+:root[data-op-style="minimal"] .switch,
+:root[data-op-style="minimal"] .mini {
+  gap: var(--op-space-3);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .switch.on,
+:root[data-op-style="minimal"] .mini.on {
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .switch .op-label {
+  font-size: var(--op-fs-meta);
+  font-weight: 500;
+}
+
+/* The box becomes a switch: a track, and a knob that crosses it. */
+:root[data-op-style="minimal"] .box {
+  position: relative;
+  width: 26px;
+  height: 15px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  transition: background var(--op-dur) var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .box svg {
+  display: none;
+}
+
+:root[data-op-style="minimal"] .box::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--op-text-dim);
+  transition: transform var(--op-dur) var(--op-ease), background var(--op-dur) var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .box.ticked {
+  background: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .box.ticked::after {
+  transform: translateX(11px);
+  background: rgb(var(--op-plate-rgb));
+}
+
+:root[data-op-style="minimal"] .doors,
+:root[data-op-style="minimal"] .submit {
+  border-top: 1px solid var(--op-line);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .doors {
+  padding-top: var(--op-space-3);
+}
+
+:root[data-op-style="minimal"] .warn,
+:root[data-op-style="minimal"] .notice.bad {
+  color: var(--op-text);
+  font-weight: 600;
+}
+
+:root[data-op-style="minimal"] .btn {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  padding: 9px var(--op-space-4);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .btn:hover:not(.is-off):not(.is-on) {
+  --aug-border-bg: transparent;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+:root[data-op-style="minimal"] .btn.is-on {
+  --aug-border-bg: transparent;
+  background: var(--op-text);
+  color: rgb(var(--op-plate-rgb));
+}
+
+:root[data-op-style="minimal"] .btn .op-label {
+  font-size: var(--op-fs-body);
+  font-weight: 500;
+}
+
+:root[data-op-style="minimal"] .add {
+  --op-radius: var(--op-radius-sm);
+  --aug-border-bg: transparent;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: none;
+  font: 400 18px / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .add:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.10);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .icon {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--op-text-dim);
+  transition: background var(--op-dur-fast) linear, color var(--op-dur-fast) linear;
+}
+
+:root[data-op-style="minimal"] .icon:hover:not(.off):not(:disabled),
+:root[data-op-style="minimal"] .icon.danger:hover:not(.off):not(:disabled) {
+  background: rgba(255, 255, 255, 0.10);
+  color: var(--op-text);
+}
 </style>

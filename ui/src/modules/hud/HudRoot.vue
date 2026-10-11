@@ -282,4 +282,17 @@ onMounted(() => {
 .top-center {
   top: calc(var(--op-inset-y) + var(--block-offset, 0px) - var(--hud-bleed));
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   The HUD's two-pass ink is sized for red capitals over a blown-out plaza. On
+   the minimal look every block sits on a pane of its own, so the type needs
+   only the light shadow the design system gives it; and it arrives on the
+   ease, not the stutter. */
+:root[data-op-style="minimal"] .hud {
+  --hud-shadow: none;
+  text-shadow: var(--op-ink);
+  transition-timing-function: var(--op-ease);
+}
 </style>

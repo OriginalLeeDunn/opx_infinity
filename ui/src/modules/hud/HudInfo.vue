@@ -250,4 +250,72 @@ useBridge('opx:hud:info', (payload: Payload) => {
     transform: translate3d(0, 0, 0);
   }
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   A small pane in the corner: each line is a dim caption over its value, the
+   value the larger of the two, in the body face with tabular figures. The
+   captions arrive from the catalogue in capitals, so they are lowered and the
+   first letter put back -- a caption here is a word, not a stencil. */
+:root[data-op-style="minimal"] .info .inner {
+  gap: var(--op-space-2);
+  padding: var(--op-space-3) var(--op-space-4);
+  border-radius: var(--op-radius-md);
+  background: rgba(var(--op-plate-rgb), 0.62);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+:root[data-op-style="minimal"] .info .line {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  font: 400 var(--op-fs-meta) / 1.25 var(--op-font-body);
+  animation-name: line-min-in;
+}
+
+:root[data-op-style="minimal"] .info.to-end .line {
+  align-items: flex-end;
+}
+
+:root[data-op-style="minimal"] .info .label {
+  font-size: var(--op-fs-label);
+  color: var(--op-text-dim);
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .info .label::first-letter {
+  text-transform: uppercase !important;
+}
+
+:root[data-op-style="minimal"] .info .value {
+  margin-left: 0;
+  font-size: var(--op-fs-body);
+  font-weight: 600;
+  color: var(--op-text);
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .info .warn .value {
+  color: var(--op-red-hi);
+}
+
+:root[data-op-style="minimal"] .info .bad .value {
+  color: var(--op-alarm);
+  font-weight: 900;
+}
+
+@keyframes line-min-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 3px, 0);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
 </style>

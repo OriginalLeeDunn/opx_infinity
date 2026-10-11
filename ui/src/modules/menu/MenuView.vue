@@ -750,33 +750,126 @@ function choose(row: Slot): void {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The chosen row does not step out of the column: the pop is a plane being
-   pushed toward the player, and on a flat surface it is only a row out of
-   line. It is marked where a reader's eye already is instead -- a 2px rule
-   inside its leading edge -- and its label goes from the voice's grey to
-   white. No bloom: there is no glow on this surface. */
+   ONE PANE, NOT A STACK OF PLATES. The cyberpunk menu is a column of framed
+   rows on a bay that is itself only an outline; here the bay is the glass and
+   the rows have no box of their own. A row is a line of type until it is
+   pointed at (a faint wash) or chosen (a lighter pill, the label in white), so
+   the list reads as a list and not as a rack of buttons.
+
+   The chosen row does not step out of the column: the pop is a plane pushed
+   toward the player, and on a flat pane it is only a row out of line. A check
+   becomes a switch -- the one control on this surface whose state is a
+   position -- and a separator is a quiet label with no rule under it. */
+:root[data-op-style="minimal"] .bay {
+  background: var(--op-plate);
+}
+
+:root[data-op-style="minimal"] .list {
+  gap: 2px;
+  padding: var(--op-space-2);
+}
+
+:root[data-op-style="minimal"] .row {
+  padding: 9px var(--op-space-3);
+  background: transparent;
+  background-image: none;
+  box-shadow: none;
+  color: var(--op-text);
+  transition: background var(--op-dur-fast) linear;
+}
+
+:root[data-op-style="minimal"] .row.is-hover,
+:root[data-op-style="minimal"] .row:hover:not(.is-off):not(.is-on) {
+  background: var(--op-wash);
+}
+
 :root[data-op-style="minimal"] .row.on {
   transform: none;
-  box-shadow:
-    inset 2px 0 0 var(--op-red-hi),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  background: var(--op-wash-on);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+:root[data-op-style="minimal"] .row .label {
+  font-weight: 500;
 }
 
 :root[data-op-style="minimal"] .row.on .label {
-  letter-spacing: var(--op-track-lead);
   color: var(--op-text);
   text-shadow: var(--op-ink);
 }
 
-:root[data-op-style="minimal"] .row .label {
+:root[data-op-style="minimal"] .row .value,
+:root[data-op-style="minimal"] .row .mark {
+  color: var(--op-text-dim);
   font-weight: 400;
 }
 
-:root[data-op-style="minimal"] .row .value {
-  color: var(--op-text-dim);
+:root[data-op-style="minimal"] .row.on .value {
+  opacity: 1;
+  color: var(--op-text);
 }
 
-:root[data-op-style="minimal"] .row .check {
-  border-radius: 3px;
+:root[data-op-style="minimal"] .glyph svg {
+  stroke-width: 1.5;
+}
+
+/* The switch. The box's tick is hidden rather than removed: its stroke-dash
+   transition is the cyberpunk tick drawing itself, and this look has no tick. */
+:root[data-op-style="minimal"] .check {
+  position: relative;
+  width: 26px;
+  height: 15px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  transition: background var(--op-dur) var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .check svg {
+  display: none;
+}
+
+:root[data-op-style="minimal"] .check::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--op-text-dim);
+  transition: transform var(--op-dur) var(--op-ease), background var(--op-dur) var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .check.ticked,
+:root[data-op-style="minimal"] .row.on .check.ticked {
+  background: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .check.ticked::after {
+  transform: translateX(11px);
+  background: rgb(var(--op-plate-rgb));
+}
+
+:root[data-op-style="minimal"] .sep {
+  /* On the labels' x: the row's inset, the glyph column it holds open, the gap. */
+  padding: var(--op-space-3) var(--op-space-3) var(--op-space-1)
+    calc(var(--op-space-3) * 2 + 16px);
+  color: var(--op-text-dim);
+  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+}
+
+:root[data-op-style="minimal"] .sep::after {
+  content: none;
+}
+
+:root[data-op-style="minimal"] .foot {
+  padding: var(--op-space-2) var(--op-space-4) var(--op-space-3);
+  border-top: 1px solid var(--op-line);
+}
+
+:root[data-op-style="minimal"] .hint {
+  color: var(--op-text-dim);
+  opacity: 1;
 }
 </style>

@@ -4678,31 +4678,41 @@ do
 	end
 end
 
--- `open77_notifications` spells its positions with an underscore and refuses a
--- field past its byte bound; the shipped `top-right` was neither. And the two
--- doors that reach our own page check what they carry on the sending side.
+-- A server toast is drawn by OUR overlay, on the runtime's own channel: it went to
+-- the platform's `open77_notifications` package, which drew a box of its own style
+-- in its own corner beside ours. And the two doors that reach our own page check
+-- what they carry on the sending side.
 section('server toasts and command answers')
 do
 	local env, control, why = boot('server')
 	check('the server boots', why == nil, why)
 	if why == nil then
-		local sent = {}
+		local platform = 0
 		local notifications = env.Open77.notifications
-		env.Open77.notifications = { send = function(_, definition)
-			sent[#sent + 1] = definition
-			return 1
-		end }
-		env.OPX.Notify(3, ('x'):rep(1000), 'info')
-		local first = sent[1]
-		check('a server toast names a position the package has',
-			first ~= nil and first.position == 'top_right', first and tostring(first.position))
-		check('and its message fits the 384 bytes the package accepts',
-			first ~= nil and #first.message == 384, first and #first.message)
+		env.Open77.notifications = { send = function() platform = platform + 1; return 1 end }
+		local before = #control.clientEvents
+		env.OPX.Notify(3, ('x'):rep(1000), 'info', 999999)
+		local toast = control.clientEvents[#control.clientEvents]
+		check('a server toast is raised on the runtime channel, not the platform package',
+			#control.clientEvents == before + 1 and toast.name == 'opx:net:runtime:toast'
+				and toast.source == 3 and platform == 0,
+			toast and tostring(toast.name))
+		local payload = toast and toast[1] or {}
+		check('and its message is bounded to 384 bytes',
+			type(payload.message) == 'string' and #payload.message == 384,
+			tostring(payload.message and #payload.message))
+		check('and its lifetime to 30 seconds', payload.durationMs == 30000,
+			tostring(payload.durationMs))
+
+		env.OPX.Notify(3, 'a kind nobody named', 'shouting')
+		local odd = control.clientEvents[#control.clientEvents]
+		check('a kind outside the four is drawn as info',
+			odd ~= nil and odd[1] ~= nil and odd[1].kind == 'info')
 
 		env.Open77.notifications = nil
-		local ran, delivered, reason = pcall(env.OPX.Notify, 4, 'hello', 'info')
-		check('a host without notifications answers a refusal instead of raising',
-			ran and delivered == false and reason == 'no_notifications', tostring(reason))
+		local ran, delivered = pcall(env.OPX.Notify, 4, 'hello', 'info')
+		check('a host without the notifications package still toasts',
+			ran and delivered == true, tostring(delivered))
 		env.Open77.notifications = notifications
 
 		env.OPX.Refuse(4, 'error.tooFast', 'test', 'not-a-glyph')
@@ -22569,13 +22579,35 @@ do
 	end
 end
 
--- ── a toast the host dropped is not recorded as delivered ────────────────────
--- `Open77.notifications.send` answers an id, or nil plus a reason. Neither was
--- read at 47 call sites, and `repeated()` wrote `bucket[text] = now` BEFORE the
--- send -- so a toast the host dropped was remembered as delivered and the
--- identical retry, which is the one a caller makes when it learns the send
--- failed, was swallowed for the whole 2000 ms window.
-section('a toast the host dropped')
+-- ── a server toast reaches our page ──────────────────────────────────────────
+section('a server toast reaches our page')
+do
+	local env, control, why = boot('client')
+	check('the client half loads', why == nil, why)
+	if why == nil then
+		local page = control.pages[#control.pages]
+		local handler = control.netEvents['opx:net:runtime:toast']
+		check('the client listens for server toasts', type(handler) == 'function')
+		if type(handler) == 'function' then
+			handler({ kind = 'success', message = 'Vehicle stored', durationMs = 4000 })
+			handler({ kind = 'info', message = '' })
+			handler('not a table')
+			local shown = {}
+			for _, message in ipairs(page and page.sent or {}) do
+				if message.channel == 'opx:notify:show' then shown[#shown + 1] = message.payload end
+			end
+			check('and draws one as a toast on the overlay, with its kind and lifetime',
+				#shown == 1 and shown[1].message == 'Vehicle stored'
+					and shown[1].kind == 'success' and shown[1].durationMs == 4000,
+				('%d shown'):format(#shown))
+		end
+	end
+end
+
+-- ── a server toast and its dedupe window ─────────────────────────────────────
+-- An exact repeat inside 2000 ms is swallowed; anything else is two things the
+-- player has to learn. `NotifyLocale` relays the answer rather than eating it.
+section('a server toast and its dedupe window')
 do
 	local env, control, why = boot('server')
 	check('the server boots', why == nil, why)
@@ -22585,19 +22617,12 @@ do
 		control.Admit(31, 'account-notify')
 		OPX.EnsureSession(31)
 
-		env.Open77.notifications.send = function() return nil, 'network_unavailable' end
-		local delivered, code = OPX.Notify(31, 'the bank is closed', 'error')
-		check('a dropped toast is reported as dropped', delivered == false)
-		check('and it carries the host reason', code == 'network_unavailable', tostring(code))
-		check('and the operator is told',
-			table.concat(control.log.warn, ' | '):find('was not delivered', 1, true) ~= nil,
-			table.concat(control.log.warn, ' | '))
-
-		env.Open77.notifications.send = function() return 'n1' end
-		check('and the identical retry is NOT swallowed',
-			OPX.Notify(31, 'the bank is closed', 'error') == true)
-		check('while a second identical toast still is',
+		check('a toast is reported as sent', OPX.Notify(31, 'the bank is closed', 'error') == true)
+		check('an identical one inside the window is swallowed',
 			select(2, OPX.Notify(31, 'the bank is closed', 'error')) == 'duplicate')
+		check('a different one is not', OPX.Notify(31, 'the bank is open', 'info') == true)
+		check('an empty message is refused, not sent',
+			select(2, OPX.Notify(31, '', 'info')) == 'invalid_message')
 		check('and NotifyLocale relays the answer rather than eating it',
 			OPX.NotifyLocale(31, 'error.unavailable', nil, 'error') == true)
 	end

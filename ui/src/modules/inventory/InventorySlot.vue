@@ -525,4 +525,138 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   A cell is a tile of glass, not a framed socket. An empty one is barely there
+   -- a faint pane, no edge -- so a forty-slot bag reads as the few things in
+   it rather than as forty boxes. A filled one is a step brighter with a
+   hairline, and the item's picture sits in the middle of it with its name
+   under it in sentence case. The pointer and the pick light the tile up; the
+   drag leaves a dashed outline where the stack came from.
+
+   The count is a small pill in the corner and the hotbar number a quiet figure
+   opposite it: both are labels on the tile, not stencils on a crate. */
+:root[data-op-style="minimal"] .cell {
+  --op-radius: 12px;
+  --aug-border-bg: transparent;
+  padding: 6px 8px;
+  color: var(--op-text-dim);
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .cell.filled {
+  --aug-border-bg: var(--op-edge);
+  color: var(--op-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 70%),
+    rgba(255, 255, 255, 0.05);
+}
+
+:root[data-op-style="minimal"] .cell.filled:hover:not(.over):not(.dragging) {
+  --aug-border-bg: var(--op-edge-hover);
+  color: var(--op-text);
+  background: rgba(255, 255, 255, 0.10);
+}
+
+:root[data-op-style="minimal"] .cell.over,
+:root[data-op-style="minimal"] .cell.selected {
+  --aug-border-bg: var(--op-edge-on);
+  --aug-border-all: 1px;
+  color: var(--op-text);
+  background: rgba(255, 255, 255, 0.15);
+  filter: none;
+}
+
+/* The slot the stack left: a dashed well, the shape a reader takes for "this
+   came from here", instead of the cyberpunk sprite's four corner brackets. */
+:root[data-op-style="minimal"] .cell.dragging,
+:root[data-op-style="minimal"] .cell.dragging:hover {
+  border: 1px dashed rgba(255, 255, 255, 0.35);
+  border-image: none;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+:root[data-op-style="minimal"] .key {
+  top: 6px;
+  left: 8px;
+  font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
+  opacity: 0.5;
+}
+
+:root[data-op-style="minimal"] .cell.filled .key {
+  opacity: 0.7;
+}
+
+:root[data-op-style="minimal"] .art {
+  inset: 14px 10px 24px;
+}
+
+/* A soft shadow under the picture lifts it off the glass. A filter, but on an
+   image that changes when the player moves a stack and never on a clock. */
+:root[data-op-style="minimal"] .art img {
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
+}
+
+:root[data-op-style="minimal"] .initials {
+  font: 600 var(--op-fs-title) / 1 var(--op-font-display);
+  color: var(--op-text-dim);
+  opacity: 1;
+}
+
+:root[data-op-style="minimal"] .count {
+  top: 5px;
+  right: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font: 600 var(--op-fs-micro) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+  background: rgba(0, 0, 0, 0.45);
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .rounds {
+  right: 8px;
+  bottom: 24px;
+  font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .wear {
+  left: 8px;
+  right: 8px;
+  bottom: 21px;
+  height: 2px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .wear i {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+:root[data-op-style="minimal"] .wear.worn i {
+  background: rgba(255, 255, 255, 0.8);
+}
+
+:root[data-op-style="minimal"] .wear.spent i {
+  background: var(--op-alarm);
+}
+
+:root[data-op-style="minimal"] .name {
+  font: 500 var(--op-fs-micro) / 1.25 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .mass {
+  font: 400 var(--op-fs-micro) / 1.25 var(--op-font-body);
+  color: var(--op-text-dim);
+  opacity: 1;
+}
 </style>

@@ -603,4 +603,92 @@ onUnmounted(() => {
   font-family: var(--op-font-mono);
   white-space: normal;
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   The three rules above hold -- a grid, no step out of the column, no tilt --
+   and the sheet is the one the form draws: a smoked pane, a plain title, no
+   eyebrow. A place is a soft tile with its district under its name. The
+   ordinal goes: `01 02 03` is the instrument counting its own rows, and the
+   choice here is a place, not a position in a list. */
+:root[data-op-style="minimal"] .scrim {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+:root[data-op-style="minimal"] .bay {
+  background: var(--op-plate);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), var(--op-shadow);
+}
+
+:root[data-op-style="minimal"] .head {
+  padding: var(--op-space-6) var(--op-space-6) var(--op-space-1);
+  border-bottom: 0;
+}
+
+:root[data-op-style="minimal"] .eyebrow,
+:root[data-op-style="minimal"] .index {
+  display: none;
+}
+
+:root[data-op-style="minimal"] .head h1 {
+  font: 600 var(--op-fs-head) / 1.15 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .note {
+  padding: var(--op-space-1) var(--op-space-6) 0;
+}
+
+:root[data-op-style="minimal"] .grid {
+  gap: var(--op-space-2);
+  padding: var(--op-space-5) var(--op-space-6);
+}
+
+:root[data-op-style="minimal"] .card {
+  --op-radius: var(--op-radius-md);
+  --aug-border-bg: transparent;
+  min-height: 60px;
+  padding: var(--op-space-3) var(--op-space-4);
+  border: 0;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: none;
+  color: var(--op-text);
+  transition: background var(--op-dur-fast) linear;
+}
+
+:root[data-op-style="minimal"] .card:hover:not(.is-on) {
+  --aug-border-bg: transparent;
+  background: var(--op-wash-on);
+}
+
+:root[data-op-style="minimal"] .card.is-on {
+  --aug-border-bg: var(--op-edge-on);
+  --aug-border-all: 1px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+:root[data-op-style="minimal"] .card .label {
+  font-weight: 500;
+}
+
+:root[data-op-style="minimal"] .card.is-on .label {
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .district,
+:root[data-op-style="minimal"] .card.is-on .district {
+  font: 400 var(--op-fs-meta) / 1.3 var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .foot {
+  padding: var(--op-space-4) var(--op-space-6) var(--op-space-5);
+  border-top: 1px solid var(--op-line);
+}
+
+:root[data-op-style="minimal"] .hint {
+  font-family: var(--op-font-body);
+  color: var(--op-text-dim);
+}
 </style>

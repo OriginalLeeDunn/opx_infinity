@@ -2046,4 +2046,335 @@ try {
     opacity: 1;
   }
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   The cyberpunk bag is two tilted columns of outlined cells hanging in the air,
+   held together by red rules. Here each side is a PANE: one rounded sheet of
+   smoked glass holding its title, its tabs, its load and its grid, so the
+   eye reads two objects on the table rather than a wireframe. Inside a pane
+   nothing is outlined -- the cells, the buttons and the tabs are lighter or
+   darker glass, and a state is the glass lighting up.
+
+   The two-column arrangement, the fit-to-screen scale and every interaction
+   are untouched; the pane's padding is inside the frame the fit measures. */
+:root[data-op-style="minimal"] .room {
+  --ink: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --ink-tight: none;
+  --red-track: rgba(255, 255, 255, 0.10);
+  --bloom: none;
+}
+
+:root[data-op-style="minimal"] .frame {
+  gap: var(--op-space-5);
+  perspective: none;
+}
+
+:root[data-op-style="minimal"] .panel {
+  padding: var(--op-space-5);
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 40%),
+    rgba(var(--op-plate-rgb), 0.62);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    var(--op-shadow);
+}
+
+/* A fade and a rise instead of a plate swinging into its slot. */
+:root[data-op-style="minimal"] .room.open .panel {
+  animation-name: op-min-in;
+}
+
+/* --- the head ----------------------------------------------------------------- */
+:root[data-op-style="minimal"] .head {
+  min-height: 0;
+  padding-bottom: var(--op-space-3);
+  border-bottom: 0;
+}
+
+:root[data-op-style="minimal"] .eyebrow {
+  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+/* The `//` is a terminal's comment marker, and this is not a terminal. */
+:root[data-op-style="minimal"] .eyebrow::before {
+  content: none;
+}
+
+:root[data-op-style="minimal"] .head h1 {
+  font: 600 22px / 1.15 var(--op-font-display);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .head h2 {
+  font: 600 var(--op-fs-title) / 1.2 var(--op-font-display);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .cap {
+  padding: 4px 8px;
+  font: 600 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+  --aug-border-bg: transparent;
+  background: var(--op-wash);
+}
+
+/* --- the tabs: one segmented control ------------------------------------------
+   A row of pills inside one recessed track, the chosen one lifted out of it.
+   That is the shape a reader already knows as "one of these", which is what a
+   tab set is. */
+:root[data-op-style="minimal"] .tabs {
+  gap: 2px;
+  align-self: flex-start;
+  margin: 0 0 var(--op-space-3);
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: inset 0 0 0 1px var(--op-edge);
+}
+
+:root[data-op-style="minimal"] .tab {
+  --op-radius: 999px;
+  border: 0;
+  --aug-border-bg: transparent;
+  padding: 6px 14px;
+  font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .tab:hover:not(.on) {
+  --aug-border-bg: transparent;
+  color: var(--op-text);
+  background: var(--op-wash);
+}
+
+:root[data-op-style="minimal"] .tab.on {
+  --aug-border-bg: transparent;
+  color: var(--op-text);
+  background: rgba(255, 255, 255, 0.16);
+  filter: none;
+}
+
+/* --- the load: a line, not a ruler ------------------------------------------- */
+:root[data-op-style="minimal"] .meter {
+  padding-bottom: var(--op-space-4);
+}
+
+:root[data-op-style="minimal"] .rule {
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  box-shadow: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+:root[data-op-style="minimal"] .rule i {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+:root[data-op-style="minimal"] .rule.high i {
+  background: rgba(255, 255, 255, 0.8);
+}
+
+:root[data-op-style="minimal"] .rule.full i {
+  background: var(--op-alarm);
+}
+
+:root[data-op-style="minimal"] .cap-mono {
+  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .figure {
+  font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .figure.quiet {
+  color: var(--op-text-dim);
+}
+
+/* --- the buttons: pills of glass ---------------------------------------------- */
+:root[data-op-style="minimal"] .foot {
+  padding-top: var(--op-space-4);
+  border-top: 1px solid var(--op-edge);
+}
+
+:root[data-op-style="minimal"] .row {
+  --op-radius: 999px;
+  /* Said outright as well as through `--op-radius`: the dialog's and the card's
+     buttons are not augmented, so nothing else would round them. */
+  border-radius: var(--op-radius);
+  border: 0;
+  --aug-border-bg: transparent;
+  padding: 9px var(--op-space-4);
+  font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+  background: var(--op-wash);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+:root[data-op-style="minimal"] .row:hover:not(.off):not(.on) {
+  --aug-border-bg: transparent;
+  color: var(--op-text);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* The one confirming button in a dialog is the only filled-white thing in the
+   bag: the answer the dialog is waiting for. */
+:root[data-op-style="minimal"] .row.on {
+  --aug-border-bg: transparent;
+  color: rgb(var(--op-plate-rgb));
+  background: rgba(255, 255, 255, 0.92);
+  text-shadow: none;
+  filter: none;
+}
+
+:root[data-op-style="minimal"] .row.off {
+  --aug-border-bg: transparent;
+  color: var(--op-text-faint);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* --- the ground: a dashed well to drop into ----------------------------------- */
+:root[data-op-style="minimal"] .ground {
+  --op-radius: 14px;
+  --aug-border-bg: transparent;
+  color: var(--op-text-dim);
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px dashed rgba(255, 255, 255, 0.28);
+  opacity: 0.6;
+}
+
+:root[data-op-style="minimal"] .ground.over {
+  --aug-border-bg: transparent;
+  color: var(--op-text);
+  background: var(--op-wash-on);
+  border-color: rgba(255, 255, 255, 0.5);
+  filter: none;
+}
+
+:root[data-op-style="minimal"] .ground-word {
+  font: 600 var(--op-fs-lead) / 1.2 var(--op-font-display);
+}
+
+:root[data-op-style="minimal"] .ground-hint {
+  font-family: var(--op-font-body);
+}
+
+/* --- the card and the count dialog: floating sheets --------------------------- */
+:root[data-op-style="minimal"] .menu,
+:root[data-op-style="minimal"] .dialog {
+  border-left: 0;
+  border-radius: 16px;
+  padding: var(--op-space-4);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 45%),
+    rgba(24, 24, 24, 0.92);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge-hover),
+    0 12px 32px rgba(0, 0, 0, 0.45);
+  animation-name: op-min-in;
+  animation-timing-function: var(--op-stutter);
+}
+
+:root[data-op-style="minimal"] .menu {
+  width: 220px;
+}
+
+:root[data-op-style="minimal"] .menu .row,
+:root[data-op-style="minimal"] .dialog .row {
+  --op-radius: 8px;
+  padding: 8px 10px;
+  font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .menu .row:hover:not(.off),
+:root[data-op-style="minimal"] .dialog .row:hover:not(.off):not(.on) {
+  background: var(--op-wash-on);
+}
+
+:root[data-op-style="minimal"] .dialog .row {
+  justify-content: center;
+  background: var(--op-wash);
+}
+
+:root[data-op-style="minimal"] .dialog .row.on {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+:root[data-op-style="minimal"] .told {
+  gap: var(--op-space-2);
+  padding-bottom: var(--op-space-3);
+  border-bottom: 1px solid var(--op-edge);
+}
+
+:root[data-op-style="minimal"] .told-name {
+  font: 600 var(--op-fs-lead) / 1.2 var(--op-font-display);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .told-times {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font: 600 var(--op-fs-label) / 1.2 var(--op-font-body);
+  background: var(--op-wash-on);
+}
+
+:root[data-op-style="minimal"] .fact {
+  border-bottom: 1px solid var(--op-edge);
+}
+
+:root[data-op-style="minimal"] .fact .value {
+  font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
+}
+
+:root[data-op-style="minimal"] .sep {
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .sep::after {
+  background: var(--op-edge);
+}
+
+:root[data-op-style="minimal"] .stepper .row {
+  --op-radius: 999px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  font-size: var(--op-fs-title);
+}
+
+:root[data-op-style="minimal"] .stepper .count {
+  font: 300 36px / 1 var(--op-font-display);
+}
+
+:root[data-op-style="minimal"] .hint {
+  font-family: var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+/* A refusal is said once, quietly, on a pill of its own under the panes. */
+:root[data-op-style="minimal"] .status {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 999px;
+  font: 500 var(--op-fs-meta) / 1.4 var(--op-font-body);
+  color: var(--op-text);
+  background: rgba(24, 24, 24, 0.9);
+  box-shadow: inset 0 0 0 1px var(--op-edge-on);
+  text-shadow: none;
+}
 </style>

@@ -731,4 +731,165 @@ onUnmounted(() => {
   font-family: var(--op-font-mono);
   letter-spacing: var(--op-track-label);
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   Not a biomonitor readout: a quiet card in the middle of a darkened screen,
+   saying what has happened in a large light word and offering the two things
+   that can be done about it as two soft buttons.
+
+   The screen behind is dimmed toward its edges -- the cyberpunk surface has
+   its own red to carry the moment, this one has only the street going dark.
+   Every caption here comes from the catalogue in capitals (`FLATLINE`, `DOWN
+   FOR`, `CALL FOR HELP`) and is lowered with its first letter put back; the
+   figures are tabular so the clock does not shuffle as it counts. */
+:root[data-op-style="minimal"] .room {
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.30) 0%, rgba(0, 0, 0, 0.62) 100%);
+}
+
+:root[data-op-style="minimal"] .bay {
+  --aug-border-bg: transparent;
+  background-color: rgba(var(--op-plate-rgb), 0.74);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+:root[data-op-style="minimal"] .eyebrow,
+:root[data-op-style="minimal"] .head h1,
+:root[data-op-style="minimal"] .read dt,
+:root[data-op-style="minimal"] .read .figure,
+:root[data-op-style="minimal"] .choice-label {
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .eyebrow::first-letter,
+:root[data-op-style="minimal"] .head h1::first-letter,
+:root[data-op-style="minimal"] .read dt::first-letter,
+:root[data-op-style="minimal"] .read .figure::first-letter,
+:root[data-op-style="minimal"] .choice-label::first-letter {
+  text-transform: uppercase !important;
+}
+
+:root[data-op-style="minimal"] .head {
+  gap: 6px;
+  padding: var(--op-space-6) var(--op-space-6) var(--op-space-5);
+  border-bottom: 1px solid var(--op-edge);
+}
+
+:root[data-op-style="minimal"] .eyebrow {
+  font: 500 var(--op-fs-label) / 1.2 var(--op-font-body);
+  color: var(--op-text-faint);
+}
+
+:root[data-op-style="minimal"] .head h1 {
+  font: 300 44px / 1.05 var(--op-font-display);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .subtitle {
+  font: 400 var(--op-fs-body) / 1.4 var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .vitals {
+  gap: var(--op-space-5);
+  padding: var(--op-space-4) var(--op-space-6);
+  border-bottom: 1px solid var(--op-edge);
+}
+
+:root[data-op-style="minimal"] .read {
+  gap: 6px;
+}
+
+:root[data-op-style="minimal"] .read dt {
+  font: 500 var(--op-fs-label) / 1.2 var(--op-font-body);
+  color: var(--op-text-faint);
+}
+
+:root[data-op-style="minimal"] .read dd {
+  gap: var(--op-space-2);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .read dd.live {
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .glyph {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.6;
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .read .figure {
+  font: 500 var(--op-fs-lead) / 1.2 var(--op-font-body);
+}
+
+:root[data-op-style="minimal"] .read .unit {
+  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-faint);
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .choices {
+  gap: var(--op-space-3);
+  padding: var(--op-space-5) var(--op-space-6) var(--op-space-5);
+}
+
+:root[data-op-style="minimal"] .choice {
+  --op-radius: var(--op-radius-md);
+  --aug-border-bg: transparent;
+  gap: var(--op-space-3);
+  padding: var(--op-space-4);
+  background-color: var(--op-wash);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: background-color var(--op-dur-fast) var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .choice:hover:not(.is-off) {
+  background-color: rgba(255, 255, 255, 0.10);
+}
+
+:root[data-op-style="minimal"] .choice.is-on {
+  background-color: var(--op-wash-on);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge-on),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+:root[data-op-style="minimal"] .mark {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.6;
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .choice.is-on .mark {
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .choice-label {
+  font: 600 var(--op-fs-lead) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .choice-hint {
+  font: 400 var(--op-fs-meta) / 1.35 var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .charge {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+:root[data-op-style="minimal"] .notice {
+  padding: 0 var(--op-space-6) var(--op-space-4);
+  font: 500 var(--op-fs-meta) / 1.4 var(--op-font-body);
+  color: var(--op-text);
+}
 </style>

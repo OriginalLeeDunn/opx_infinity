@@ -285,46 +285,78 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
    THE MINIMAL STYLE
    =============================================================================
    The four rules above still hold, in other words. Tone is not available --
-   the minimal surface is grey and white -- so the KIND is a rule down the
-   leading edge instead of a frame: a hairline box for all four, and a 2px
-   stroke standing just inside its left edge that is dim for info, lit for
-   success, and white for the two that are wrong. It is a background layer
-   rather than an inset shadow, so it can stop short of the rounded corners
-   and stand off the hairline -- against the edge it read as the border. The title is set in sentence case: a
-   capitalised headline is the cyberpunk look's voice, and here it reads as
-   shouting. */
+   the minimal surface is grey and white -- so the KIND is a short rule standing
+   just inside the left edge: faint for info, lit for success, white for the two
+   that are wrong. It is a background layer rather than an inset shadow, so it
+   stops short of the rounded corners and stands off the edge; against the
+   edge it read as the border.
+
+   The kind's own word arrives in capitals (`CONFIRMED`) and is lowered with
+   its first letter back. The title is the caller's text and is left as they
+   wrote it. The lifetime is a thin rounded line along the foot. */
 :root[data-op-style="minimal"] .toast {
-  --rule: rgba(var(--op-red-idle-rgb), 0.45);
-  --aug-border-bg: var(--op-line);
-  --aug-border-all: 1px;
-  padding-left: calc(var(--op-space-4) + 6px);
+  --rule: rgba(255, 255, 255, 0.28);
+  --aug-border-bg: transparent;
+  --op-radius: var(--op-radius-md);
+  gap: var(--op-space-3);
+  padding: var(--op-space-3) var(--op-space-4) var(--op-space-3) calc(var(--op-space-4) + 8px);
   color: var(--op-text);
+  background-color: rgba(var(--op-plate-rgb), 0.66);
   background-image:
     linear-gradient(var(--rule), var(--rule)),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0) 55%);
-  background-size: 2px calc(100% - 2 * var(--op-space-3)), auto;
-  background-position: 8px var(--op-space-3), 0 0;
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 60%);
+  background-size: 2px calc(100% - 2 * var(--op-space-3) - 4px), auto;
+  background-position: 11px calc(var(--op-space-3) + 2px), 0 0;
   background-repeat: no-repeat;
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-:root[data-op-style="minimal"] .toast .tag {
+:root[data-op-style="minimal"] .toast .glyph {
+  width: 16px;
+  height: 16px;
   color: var(--op-text-dim);
 }
 
+:root[data-op-style="minimal"] .toast .glyph svg {
+  stroke-width: 1.6;
+}
+
+:root[data-op-style="minimal"] .toast .body {
+  gap: 2px;
+}
+
+:root[data-op-style="minimal"] .toast .tag {
+  font: 500 var(--op-fs-label) / 1.2 var(--op-font-body);
+  color: var(--op-text-faint);
+  opacity: 1;
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .toast .tag::first-letter {
+  text-transform: uppercase !important;
+}
+
 :root[data-op-style="minimal"] .toast .title {
-  font-size: var(--op-fs-lead);
-  letter-spacing: 0.01em;
-  text-transform: none;
+  font: 600 var(--op-fs-lead) / 1.25 var(--op-font-display);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .toast .message {
+  font: 400 var(--op-fs-body) / 1.4 var(--op-font-body);
   color: var(--op-text-dim);
   opacity: 1;
 }
 
 :root[data-op-style="minimal"] .toast .bar {
-  height: 1px;
+  left: var(--op-space-4);
+  bottom: 5px;
+  width: calc(100% - 2 * var(--op-space-4));
+  height: 1.5px;
+  border-radius: 999px;
   background: var(--rule);
+  opacity: 0.4;
 }
 
 :root[data-op-style="minimal"] .toast.success {
@@ -341,9 +373,16 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
   color: var(--op-alarm);
 }
 
-/* The error alone keeps a frame of its own -- one step heavier, still a
-   hairline -- because it is the one kind that must be seen without reading. */
+:root[data-op-style="minimal"] .toast.warning .message,
+:root[data-op-style="minimal"] .toast.error .message {
+  color: var(--op-text);
+}
+
+/* The error alone keeps an edge you can see -- still 1px, still grey-white --
+   because it is the one kind that must be noticed without being read. */
 :root[data-op-style="minimal"] .toast.error {
-  --aug-border-bg: rgba(var(--op-alarm-rgb), 0.55);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 </style>

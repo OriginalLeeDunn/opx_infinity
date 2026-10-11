@@ -298,4 +298,92 @@ const percent = computed(() => Math.floor(fraction.value * 100))
     transform: scaleX(0.34);
   }
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   A title card, not a terminal booting: the film still plays behind a deeper,
+   neutral scrim, and the bay becomes a flat card of smoked glass with the
+   wordmark in Manrope, the phase and the percentage on one line, and a 3px
+   line for the progress with its ends rounded. The `//` in the wordmark keeps
+   its place and loses its red: it is set in the dim grey, which is the only
+   accent this look has. */
+:root[data-op-style="minimal"] .scrim {
+  background:
+    linear-gradient(to top, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.45) 30%, rgba(0, 0, 0, 0) 65%),
+    linear-gradient(to right, rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0) 55%);
+}
+
+:root[data-op-style="minimal"] .dock {
+  width: min(420px, 44vw);
+}
+
+:root[data-op-style="minimal"] .bay {
+  --op-radius: var(--op-radius-lg);
+  background: rgba(var(--op-plate-rgb), 0.62);
+}
+
+:root[data-op-style="minimal"] .bay-inner {
+  gap: var(--op-space-5);
+  padding: var(--op-space-5) var(--op-space-5) var(--op-space-4);
+}
+
+:root[data-op-style="minimal"] .brand {
+  gap: 2px;
+}
+
+:root[data-op-style="minimal"] .mark {
+  font: 700 clamp(var(--op-fs-head), 2.6vw, 34px) / 1 var(--op-font-display);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .mark b {
+  margin: 0 1px;
+  font-weight: 400;
+  color: var(--op-text-faint);
+}
+
+:root[data-op-style="minimal"] .mode {
+  font-size: var(--op-fs-meta);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .progress {
+  gap: var(--op-space-2);
+}
+
+:root[data-op-style="minimal"] .bar-phase {
+  font-size: var(--op-fs-meta);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .bar-pct {
+  font-size: var(--op-fs-meta);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .track {
+  --op-radius: 999px;
+  height: 3px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+:root[data-op-style="minimal"] .track::after {
+  content: none;
+}
+
+:root[data-op-style="minimal"] .bar {
+  clip-path: none;
+  border-radius: 999px;
+}
+
+:root[data-op-style="minimal"] .fill {
+  background: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .detail {
+  font-size: var(--op-fs-meta);
+  color: var(--op-text-dim);
+}
 </style>

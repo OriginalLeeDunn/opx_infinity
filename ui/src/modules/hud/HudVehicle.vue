@@ -562,4 +562,169 @@ const gearClass = computed(() => {
   flex: none;
   font: 900 var(--op-fs-meta) / 1 var(--op-font-mono);
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   The dial becomes a disc of smoked glass with two fine arcs on it: the outer
+   one is speed-in-the-band (the rpm), the inner one the car's condition. Both
+   have rounded ends and run over a faint track drawn on the same path, so the
+   empty part of the arc is still legible as "room left". The rails, the
+   redline tick and the black shading are the instrument cluster's, and go.
+
+   The figure is the dial's whole voice: large, light, white. Redline is the
+   rpm arc going white rather than a red band -- there is no red here. */
+:root[data-op-style="minimal"] .vehicle .dial::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: rgba(var(--op-plate-rgb), 0.55);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+:root[data-op-style="minimal"] .vehicle .rings {
+  stroke-linecap: round;
+}
+
+:root[data-op-style="minimal"] .vehicle .shade {
+  stroke: rgba(255, 255, 255, 0.10);
+  stroke-width: 3;
+}
+
+:root[data-op-style="minimal"] .vehicle .shade-in {
+  stroke: rgba(255, 255, 255, 0.07);
+  stroke-width: 2;
+}
+
+:root[data-op-style="minimal"] .vehicle .rail,
+:root[data-op-style="minimal"] .vehicle .inner-track,
+:root[data-op-style="minimal"] .vehicle .redline {
+  display: none;
+}
+
+:root[data-op-style="minimal"] .vehicle .rpm {
+  stroke: var(--op-red-hi);
+  stroke-width: 3;
+}
+
+:root[data-op-style="minimal"] .vehicle.hot .rpm {
+  stroke: var(--op-alarm);
+}
+
+:root[data-op-style="minimal"] .vehicle .integrity {
+  stroke: rgba(var(--op-red-idle-rgb), 0.7);
+  stroke-width: 2;
+}
+
+:root[data-op-style="minimal"] .vehicle .integrity.warn {
+  stroke: var(--op-red-hi);
+}
+
+:root[data-op-style="minimal"] .vehicle .integrity.bad {
+  stroke: var(--op-alarm);
+}
+
+:root[data-op-style="minimal"] .vehicle .core {
+  gap: 0;
+  margin-top: -6px;
+}
+
+:root[data-op-style="minimal"] .vehicle .speed {
+  font: 300 32px / 1 var(--op-font-display);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .vehicle.hot .speed {
+  font-weight: 500;
+}
+
+/* `KM/H` arrives in capitals and a unit is the one caption that wants no
+   capital at all. */
+:root[data-op-style="minimal"] .vehicle .unit {
+  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .vehicle .gear {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  bottom: 12px;
+  min-width: 22px;
+  padding: 3px 8px;
+  font: 600 var(--op-fs-label) / 1 var(--op-font-body);
+  background: rgba(255, 255, 255, 0.10);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .vehicle .gear.idle {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .vehicle .gear.reverse {
+  background: var(--op-alarm);
+  color: rgb(var(--op-plate-rgb));
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .vehicle .meta {
+  gap: var(--op-space-3);
+  margin-top: 2px;
+}
+
+:root[data-op-style="minimal"] .vehicle .integrity-row .label,
+:root[data-op-style="minimal"] .vehicle .fuel-row .label {
+  font: 400 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .vehicle .integrity-row .label::first-letter,
+:root[data-op-style="minimal"] .vehicle .fuel-row .label::first-letter {
+  text-transform: uppercase !important;
+}
+
+:root[data-op-style="minimal"] .vehicle .integrity-row b,
+:root[data-op-style="minimal"] .vehicle .fuel-row b {
+  font: 600 var(--op-fs-meta) / 1 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .vehicle .integrity-row.bad b,
+:root[data-op-style="minimal"] .vehicle .fuel-row.bad b {
+  color: var(--op-alarm);
+  font-weight: 900;
+}
+
+:root[data-op-style="minimal"] .vehicle .fuel-track {
+  width: 40px;
+  height: 4px;
+  overflow: hidden;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+:root[data-op-style="minimal"] .vehicle .fuel-fill {
+  border-radius: 999px;
+  background: var(--op-red-hi);
+}
+
+:root[data-op-style="minimal"] .vehicle .fuel-row.bad .fuel-fill {
+  background: var(--op-alarm);
+}
+
+:root[data-op-style="minimal"] .vehicle .chip {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  padding: 4px var(--op-space-3);
+  font: 600 var(--op-fs-label) / 1 var(--op-font-body);
+  background: var(--op-alarm);
+  color: rgb(var(--op-plate-rgb));
+  text-shadow: none;
+}
 </style>

@@ -2260,6 +2260,16 @@ function Host.Environment(side, database)
 	if side == 'server' then
 		env.TriggerClientEvent = function(name, source, ...)
 			clientEvents[#clientEvents + 1] = { name = name, source = source, ... }
+			-- A SERVER TOAST IS A NOTICE, whichever door it left by. `OPX.Notify`
+			-- used to hand every one to `Open77.notifications` and now raises it on
+			-- the runtime's own channel; the suite asks "what was this player
+			-- told?" through `notices` in fifty-odd places, and that question did
+			-- not change when the route did.
+			local payload = ...
+			if name == 'opx:net:runtime:toast' and type(payload) == 'table' then
+				notices[#notices + 1] = { playerId = tonumber(source) or source,
+					type = payload.kind, message = payload.message }
+			end
 		end
 	else
 		-- RECORDED, NOT SWALLOWED. This used to be an empty function, which made

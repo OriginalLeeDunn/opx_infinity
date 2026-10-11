@@ -334,49 +334,85 @@ onUnmounted(stop)
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A chip is a pill: fully rounded, a hairline at rest, the label in the body
-   face. The letter that names it sits in a small disc of its own, which is
-   the detail that keeps a row of pills from reading as a row of buttons. The
-   tone still climbs -- idle, lit, white -- and a bad chip takes the one
-   heavier stroke on the strip. */
-:root[data-op-style="minimal"] .strip .chip {
-  --op-radius: 999px;
-  --aug-border-all: 1px;
-  padding: 3px var(--op-space-3);
-  font: 400 var(--op-fs-meta) / 1 var(--op-font-body);
-  letter-spacing: 0.04em;
-  text-transform: none;
+   A chip is a pill of smoked glass with its letter in a small disc. The tone
+   still climbs -- resting, lit, white -- but on the fill and the type rather
+   than on a stroke, and a BAD chip inverts: a white pill with dark type. That
+   is the one filled thing on the HUD, which is what makes it read first.
+
+   Labels arrive in capitals from whoever raised the chip; they are lowered and
+   the first letter put back. The countdown is a fine line along the pill's
+   foot, inset so it never runs into the rounded ends. */
+:root[data-op-style="minimal"] .strip {
+  gap: 6px;
 }
 
+:root[data-op-style="minimal"] .strip .chip {
+  --op-radius: 999px;
+  --aug-border-bg: transparent;
+  padding: 4px var(--op-space-3) 4px var(--op-space-3);
+  font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
+  background: rgba(var(--op-plate-rgb), 0.62);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .strip .chip .label {
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .strip .chip .label::first-letter {
+  text-transform: uppercase !important;
+}
+
+/* Pulled into the pill's own padding, so a chip with no letter keeps an even
+   inset and one with a letter sits its disc 3px from the edge. */
 :root[data-op-style="minimal"] .strip .chip .icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  /* Pulled into the pill's own padding, so a chip with no letter keeps an
-     even inset and one with a letter sits its disc 3px from the edge. */
-  margin-left: calc(3px - var(--op-space-3));
+  width: 18px;
+  height: 18px;
+  margin-left: calc(4px - var(--op-space-3));
   border-radius: 50%;
-  background: rgba(var(--op-red-idle-rgb), 0.16);
-  font: 700 var(--op-fs-micro) / 1 var(--op-font-mono);
+  background: rgba(255, 255, 255, 0.10);
+  font: 900 var(--op-fs-micro) / 1 var(--op-font-body);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .strip .chip .time {
-  height: 1px;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  width: auto;
+  height: 1.5px;
+  border-radius: 999px;
+  background: currentcolor;
+  opacity: 0.45;
+}
+
+:root[data-op-style="minimal"] .strip .chip.accent,
+:root[data-op-style="minimal"] .strip .chip.warn,
+:root[data-op-style="minimal"] .strip .chip.shock {
+  color: var(--op-text);
+  background: rgba(var(--op-plate-lit-rgb), 0.78);
 }
 
 :root[data-op-style="minimal"] .strip .chip.bad {
-  --aug-border-all: 1.5px;
+  background: var(--op-alarm);
+  box-shadow: none;
+  color: rgb(var(--op-plate-rgb));
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .strip .chip.bad .icon {
-  background: var(--op-alarm);
+  background: rgba(0, 0, 0, 0.12);
   color: rgb(var(--op-plate-rgb));
 }
 
 :root[data-op-style="minimal"] .strip .chip.overflow {
-  padding: 3px var(--op-space-3);
-  border-radius: 999px;
+  border: none;
+  color: var(--op-text-faint);
 }
 </style>

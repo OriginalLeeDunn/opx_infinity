@@ -618,4 +618,41 @@ onUnmounted(stop)
     transform: translate3d(0, 0, 0) rotateY(var(--tilt, 0deg));
   }
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   A toast fades in on a short rise and leaves the same way -- no three-step
+   cut, no sideways push off the plane. The stack breathes a little more. */
+:root[data-op-style="minimal"] .stack {
+  gap: var(--op-space-2);
+  perspective: none;
+}
+
+:root[data-op-style="minimal"] .entry {
+  animation-name: toast-min-in;
+  animation-timing-function: var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .entry.out {
+  transform: translate3d(0, -4px, 0);
+}
+
+:root[data-op-style="minimal"] .bottom_left .entry.out,
+:root[data-op-style="minimal"] .bottom_center .entry.out,
+:root[data-op-style="minimal"] .bottom_right .entry.out {
+  transform: translate3d(0, 4px, 0);
+}
+
+@keyframes toast-min-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
 </style>

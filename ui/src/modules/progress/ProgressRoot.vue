@@ -190,26 +190,60 @@ onUnmounted(clearRaise)
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A hairline, not a bar in a frame: a 3px track rounded at the ends with the
-   fill running along it, and the label above in the body face. The frame's
-   job -- "this is a thing in progress" -- is the label's on this surface. */
-:root[data-op-style="minimal"] .plate .track {
+   A small pane with the action written above a hairline that fills: no frame
+   around the bar, no chamfered fill. The action arrives in capitals and is
+   lowered, first letter back; the cancel hint sits below it, quieter. */
+/* Clear of the vehicle dial. The block sat 96px up, which put the thin
+   cyberpunk bar across the top of the dial's ring where it was hard to see;
+   a pane there covers the speed. */
+:root[data-op-style="minimal"] .progress {
+  bottom: calc(var(--op-inset-y) + 172px);
+}
+
+:root[data-op-style="minimal"] .progress .plate {
+  box-sizing: border-box;
+  gap: 6px;
+  padding: var(--op-space-3) var(--op-space-4);
+  border-radius: var(--op-radius-md);
+  background: rgba(var(--op-plate-rgb), 0.62);
+  box-shadow:
+    inset 0 0 0 1px var(--op-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+:root[data-op-style="minimal"] .progress .label,
+:root[data-op-style="minimal"] .progress .hint {
+  font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .progress .label::first-letter,
+:root[data-op-style="minimal"] .progress .hint::first-letter {
+  text-transform: uppercase !important;
+}
+
+:root[data-op-style="minimal"] .progress .label {
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .progress .hint {
+  font-size: var(--op-fs-label);
+  color: var(--op-text-faint);
+}
+
+:root[data-op-style="minimal"] .progress .track {
   --op-radius: 999px;
-  --aug-border-all: 0px;
+  --aug-border-bg: transparent;
   height: 3px;
   padding: 0;
   background: rgba(255, 255, 255, 0.14);
+  background-image: none;
   box-shadow: none;
 }
 
-:root[data-op-style="minimal"] .plate .bar {
-  background: var(--op-red-hi);
+:root[data-op-style="minimal"] .progress .bar {
+  border-radius: 999px;
+  background: var(--op-text);
   clip-path: none;
-}
-
-:root[data-op-style="minimal"] .plate .label {
-  font: 400 var(--op-fs-meta) / 1.2 var(--op-font-body);
-  letter-spacing: 0.08em;
-  color: var(--op-text);
 }
 </style>
