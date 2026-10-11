@@ -330,4 +330,53 @@ onUnmounted(stop)
   /* NO STAGGER, on the owner's word: rows land together, as the menu's buttons and
      the eye's rows do. A per-row delay read as the rows trickling in. */
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   A chip is a pill: fully rounded, a hairline at rest, the label in the body
+   face. The letter that names it sits in a small disc of its own, which is
+   the detail that keeps a row of pills from reading as a row of buttons. The
+   tone still climbs -- idle, lit, white -- and a bad chip takes the one
+   heavier stroke on the strip. */
+:root[data-op-style="minimal"] .strip .chip {
+  --op-radius: 999px;
+  --aug-border-all: 1px;
+  padding: 3px var(--op-space-3);
+  font: 400 var(--op-fs-meta) / 1 var(--op-font-body);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+:root[data-op-style="minimal"] .strip .chip .icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  /* Pulled into the pill's own padding, so a chip with no letter keeps an
+     even inset and one with a letter sits its disc 3px from the edge. */
+  margin-left: calc(3px - var(--op-space-3));
+  border-radius: 50%;
+  background: rgba(var(--op-red-idle-rgb), 0.16);
+  font: 700 var(--op-fs-micro) / 1 var(--op-font-mono);
+}
+
+:root[data-op-style="minimal"] .strip .chip .time {
+  height: 1px;
+}
+
+:root[data-op-style="minimal"] .strip .chip.bad {
+  --aug-border-all: 1.5px;
+}
+
+:root[data-op-style="minimal"] .strip .chip.bad .icon {
+  background: var(--op-alarm);
+  color: rgb(var(--op-plate-rgb));
+}
+
+:root[data-op-style="minimal"] .strip .chip.overflow {
+  padding: 3px var(--op-space-3);
+  border-radius: 999px;
+}
 </style>

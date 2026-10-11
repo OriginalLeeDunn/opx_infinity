@@ -486,7 +486,7 @@ onBeforeUnmount(() => {
    row that is still there and cannot be used, which is the truth. */
 .dim .cap {
   color: var(--op-text-faint);
-  --aug-border-bg: rgba(174, 211, 224, 0.14);
+  --aug-border-bg: var(--op-off-line);
 }
 
 .dim .label,
@@ -524,5 +524,28 @@ onBeforeUnmount(() => {
   /* NO STAGGER, on the owner's word: rows land together, as the menu's buttons and
      the eye's rows do. A per-row delay read as the rows trickling in. */
   animation-delay: 40ms;
+}
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   The key is the detail here: a small rounded cap with a faint fill and the
+   letter in white, so `[E] Open` reads as a key and a word rather than two
+   boxed words. The action is in the body face at its regular weight, in
+   sentence case, which is how a quiet surface gives an instruction. */
+:root[data-op-style="minimal"] .cap {
+  padding: 0 7px;
+  color: var(--op-text);
+  --aug-border-bg: rgba(255, 255, 255, 0.22);
+}
+
+:root[data-op-style="minimal"] .label {
+  font: 400 var(--op-fs-body) / 1.2 var(--op-font-body);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+:root[data-op-style="minimal"] .title {
+  color: var(--op-text-dim);
 }
 </style>

@@ -170,8 +170,17 @@ plane, drops the interlace and the bloom, sets the headings in Saira and eases t
 entrance instead of stuttering it. Geometry there outranks every module; paint is wrapped
 in `:where()` so states and module rules still beat it.
 
+- **Grey and white, and nothing else.** The shipped `minimal` block is a neutral grey
+  accent and a white alarm, and `minimal.css` restates the neutral ramp without the
+  house blue. A colour written as a literal anywhere escapes that -- which is why the
+  unavailable frame is now a token too, `--op-off-line`.
 - **A new surface needs nothing for the minimal style** if it is built from the presets
   and the tokens. A literal chamfer (`clip-path: polygon(...)`) stays a chamfer in both.
+- **What is true of one surface lives in that surface.** The toast's kind rule, the
+  gauge as a rounded line, the chip as a pill, the menu's chosen-row rule, the thin
+  progress line and the prompt's keycaps are each a `THE MINIMAL STYLE` block at the end
+  of their own `<style scoped>`, under `:root[data-op-style="minimal"]`. Scoping adds the
+  component attribute, so those rules outrank `minimal.css` whatever the bundle order.
 - **The fallback ladder in `minimal.css` is held equal** to what the shipped `minimal`
   block derives, by `tests/run.lua`. Change the block's `ACCENT` and the suite names the
   rungs to update.

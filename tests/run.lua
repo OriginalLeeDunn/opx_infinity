@@ -6486,8 +6486,8 @@ do
 			minimal.style == 'minimal' and #minimalNotes == 0,
 			table.concat(minimalNotes, ' | '))
 		check('and reads the minimal block, not the red one',
-			type(minimal.accent) == 'table' and minimal.accent[1] == 207
-				and minimal.accent[2] == 200 and minimal.accent[3] == 188
+			type(minimal.accent) == 'table' and minimal.accent[1] == 198
+				and minimal.accent[2] == 198 and minimal.accent[3] == 198
 				and minimal.interlaceAlpha == 0 and minimal.tiltDeg == 0,
 			minimal.accent and table.concat(minimal.accent, ',') or 'no accent')
 

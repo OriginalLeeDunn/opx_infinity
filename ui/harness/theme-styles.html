@@ -25,7 +25,7 @@
      `tokens.css` keeps <body> transparent and would win over a background here. */
   #street { position: fixed; inset: 0; z-index: -1;
             background: #080e19 url('/loading-poster.jpg') center / cover no-repeat; }
-  #result { position: fixed; right: 0; bottom: 0; margin: 0; padding: 8px 12px; z-index: 9999;
+  #result { position: fixed; left: 50%; top: 0; transform: translateX(-50%); margin: 0; padding: 8px 12px; z-index: 9999;
             font: 11px/1.4 Consolas, monospace; color: #f2f6f8;
             background: rgba(8, 14, 25, 0.82); white-space: pre-wrap; }
 </style>
@@ -81,39 +81,60 @@ async function run() {
         String(root.getAttribute('data-op-style')))
 
   // ── the surfaces ─────────────────────────────────────────────────────────
+  // A catalogue first: until one arrives `t()` draws nothing, which is the page waiting
+  // for its strings and not the style. With one, an unknown key is drawn as itself, so
+  // the labels below can be plain words.
+  window.__deliver('opx:locale:set', { strings: {
+    'notify.kind.info': 'INFO', 'notify.kind.success': 'DONE',
+    'notify.kind.warning': 'WARNING', 'notify.kind.error': 'FAILED',
+    'progress.cancel': 'Cancel'
+  } })
   window.__deliver('opx:hud:config', {
     anchor: 'bottom-left', infoAnchor: 'top-right', statusAnchor: 'bottom-left',
     statusOffset: 120, vehicleAnchor: 'bottom-center', width: 210,
     segments: 10, voiceSegments: 8
   })
   window.__deliver('opx:hud:vitals', { gauges: [
-    { id: 'health', icon: 'health', label: 'hud.gauge.health', pct: 84, tone: 'health' },
-    { id: 'armor', icon: 'armor', label: 'hud.gauge.armor', pct: 51 },
-    { id: 'stamina', icon: 'stamina', label: 'hud.gauge.stamina', pct: 100 },
-    { id: 'hunger', icon: 'hunger', label: 'hud.gauge.hunger', pct: 22 },
-    { id: 'thirst', icon: 'thirst', label: 'hud.gauge.thirst', pct: 63 }
+    { id: 'health', icon: 'health', label: 'Health', pct: 84, tone: 'health' },
+    { id: 'armor', icon: 'armor', label: 'Armor', pct: 51 },
+    { id: 'stamina', icon: 'stamina', label: 'Stamina', pct: 100 },
+    { id: 'hunger', icon: 'hunger', label: 'Hunger', pct: 22 },
+    { id: 'thirst', icon: 'thirst', label: 'Thirst', pct: 63 }
   ] })
   window.__deliver('opx:hud:status', { chips: [
-    { id: 'phone', icon: 'P', label: 'hud.status.phone', tone: 'neutral', progress: 1 },
-    { id: 'wanted', icon: 'W', label: 'hud.status.wanted', tone: 'bad',
+    { id: 'phone', icon: 'P', label: 'Phone', tone: 'neutral', progress: 1 },
+    { id: 'wanted', icon: 'W', label: 'Wanted', tone: 'bad',
       remainingMs: 20000, totalMs: 30000 }
   ] })
   window.__deliver('opx:hud:info', { lines: [
-    { id: 'name', label: 'hud.info.name', value: 'V' },
-    { id: 'eddies', label: 'hud.info.eddies', value: '12,480 $' }
+    { id: 'name', label: 'Name', value: 'V' },
+    { id: 'eddies', label: 'Eddies', value: '12,480 $' }
   ] })
   window.__deliver('opx:hud:vehicle', {
     active: true, speed: 68, unit: 'KMH', gear: 'D', rpm: 42, integrity: 91,
-    integrityLabel: 'hud.vehicle.integrity', tone: 'neutral'
+    integrityLabel: 'Integrity', tone: 'neutral'
   })
   window.__deliver('opx:hud:voice', {
-    active: true, state: 'talking', caption: 'hud.voice.state.talking',
-    mode: 'hud.voice.mode.normal', distance: '15 M', level: 62,
+    active: true, state: 'talking', caption: 'Talking',
+    mode: 'Normal', distance: '15 M', level: 62,
     count: 3, index: 2, key: 'Z', activation: 'B', heard: 2
   })
   window.__deliver('opx:notify:show', {
     id: 'h1', kind: 'success', title: 'Delivery', message: 'Package dropped at Kabuki market.',
     durationMs: 600000
+  })
+  window.__deliver('opx:notify:show', {
+    id: 'h2', kind: 'error', title: 'Transfer refused', message: 'Not enough eddies on hand.',
+    durationMs: 600000
+  })
+  window.__deliver('opx:prompts:frame', { groups: [
+    { key: 'door', title: 'Door', rows: [
+      { key: 'open', caps: ['E'], label: 'Open' },
+      { key: 'lock', caps: ['Shift', 'E'], combo: true, label: 'Lock' }
+    ] }
+  ] })
+  window.__deliver('opx:progress:show', {
+    label: 'Refuelling', durationMs: 600000, cancelable: true, cancelKey: 'X'
   })
   window.__deliver('opx:menu:open', {
     handle: 1, anchor: 'top-left', focus: 'none', hint: 'Garage',

@@ -186,4 +186,30 @@ onUnmounted(clearRaise)
   margin: 0;
   color: var(--op-text-faint);
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   A hairline, not a bar in a frame: a 3px track rounded at the ends with the
+   fill running along it, and the label above in the body face. The frame's
+   job -- "this is a thing in progress" -- is the label's on this surface. */
+:root[data-op-style="minimal"] .plate .track {
+  --op-radius: 999px;
+  --aug-border-all: 0px;
+  height: 3px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .plate .bar {
+  background: var(--op-red-hi);
+  clip-path: none;
+}
+
+:root[data-op-style="minimal"] .plate .label {
+  font: 400 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  letter-spacing: 0.08em;
+  color: var(--op-text);
+}
 </style>

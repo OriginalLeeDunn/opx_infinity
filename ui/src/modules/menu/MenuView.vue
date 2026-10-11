@@ -746,4 +746,37 @@ function choose(row: Slot): void {
   /* The one place the strip wraps: a description is a sentence. */
   opacity: 0.78;
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   The chosen row does not step out of the column: the pop is a plane being
+   pushed toward the player, and on a flat surface it is only a row out of
+   line. It is marked where a reader's eye already is instead -- a 2px rule
+   inside its leading edge -- and its label goes from the voice's grey to
+   white. No bloom: there is no glow on this surface. */
+:root[data-op-style="minimal"] .row.on {
+  transform: none;
+  box-shadow:
+    inset 2px 0 0 var(--op-red-hi),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+:root[data-op-style="minimal"] .row.on .label {
+  letter-spacing: var(--op-track-lead);
+  color: var(--op-text);
+  text-shadow: var(--op-ink);
+}
+
+:root[data-op-style="minimal"] .row .label {
+  font-weight: 400;
+}
+
+:root[data-op-style="minimal"] .row .value {
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .row .check {
+  border-radius: 3px;
+}
 </style>

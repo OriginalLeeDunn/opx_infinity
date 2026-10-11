@@ -358,4 +358,49 @@ useBridge('opx:hud:vitals', (payload: Payload) => {
   /* NO STAGGER, on the owner's word: rows land together, as the menu's buttons and
      the eye's rows do. A per-row delay read as the rows trickling in. */
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   A gauge is a line, not a frame: a 4px track rounded at both ends, the fill
+   rounded with it, and no segment ticks. The ticks are what made the bar read
+   as hardware, and their job -- "how many tenths" -- is the readout's.
+
+   THE STATE MOVES TO THE FILL AND THE NUMBER. The frame that carried it
+   (health's 2px, bad's 2.6px alarm stroke) is gone with the frame, so the fill
+   takes the tone, and a bad gauge's readout goes white -- which on a grey HUD
+   is the loudest thing it can do. */
+:root[data-op-style="minimal"] .gauge .track {
+  --op-radius: 999px;
+  align-self: center;
+  height: 4px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+:root[data-op-style="minimal"] .gauge .track::after {
+  content: none;
+}
+
+:root[data-op-style="minimal"] .gauge .bar {
+  clip-path: inset(0 round 999px);
+}
+
+:root[data-op-style="minimal"] .gauge .glyph {
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .gauge .readout {
+  font-weight: 400;
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .gauge.health .readout {
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .gauge.bad .glyph,
+:root[data-op-style="minimal"] .gauge.bad .readout {
+  color: var(--op-alarm);
+}
 </style>

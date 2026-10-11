@@ -280,4 +280,70 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
 .error .bar {
   background: var(--op-red);
 }
+
+/* =============================================================================
+   THE MINIMAL STYLE
+   =============================================================================
+   The four rules above still hold, in other words. Tone is not available --
+   the minimal surface is grey and white -- so the KIND is a rule down the
+   leading edge instead of a frame: a hairline box for all four, and a 2px
+   stroke standing just inside its left edge that is dim for info, lit for
+   success, and white for the two that are wrong. It is a background layer
+   rather than an inset shadow, so it can stop short of the rounded corners
+   and stand off the hairline -- against the edge it read as the border. The title is set in sentence case: a
+   capitalised headline is the cyberpunk look's voice, and here it reads as
+   shouting. */
+:root[data-op-style="minimal"] .toast {
+  --rule: rgba(var(--op-red-idle-rgb), 0.45);
+  --aug-border-bg: var(--op-line);
+  --aug-border-all: 1px;
+  padding-left: calc(var(--op-space-4) + 6px);
+  color: var(--op-text);
+  background-image:
+    linear-gradient(var(--rule), var(--rule)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0) 55%);
+  background-size: 2px calc(100% - 2 * var(--op-space-3)), auto;
+  background-position: 8px var(--op-space-3), 0 0;
+  background-repeat: no-repeat;
+}
+
+:root[data-op-style="minimal"] .toast .tag {
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .toast .title {
+  font-size: var(--op-fs-lead);
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+
+:root[data-op-style="minimal"] .toast .message {
+  color: var(--op-text-dim);
+  opacity: 1;
+}
+
+:root[data-op-style="minimal"] .toast .bar {
+  height: 1px;
+  background: var(--rule);
+}
+
+:root[data-op-style="minimal"] .toast.success {
+  --rule: var(--op-red-hi);
+}
+
+:root[data-op-style="minimal"] .toast.warning,
+:root[data-op-style="minimal"] .toast.error {
+  --rule: var(--op-alarm);
+}
+
+:root[data-op-style="minimal"] .toast.warning .tag,
+:root[data-op-style="minimal"] .toast.error .tag {
+  color: var(--op-alarm);
+}
+
+/* The error alone keeps a frame of its own -- one step heavier, still a
+   hairline -- because it is the one kind that must be seen without reading. */
+:root[data-op-style="minimal"] .toast.error {
+  --aug-border-bg: rgba(var(--op-alarm-rgb), 0.55);
+}
 </style>

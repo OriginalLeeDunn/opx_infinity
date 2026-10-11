@@ -17,7 +17,7 @@ OPX.Config.MODULES.theme = {
 	--   'cyberpunk'  red, outlined, chamfered, tilted toward the screen edge,
 	--                with a scanline over every enclosure. The house look.
 	--   'minimal'    the same surfaces, quiet: thin rounded hairlines, flat
-	--                planes, no scanline, no bloom, a warm ivory on near-black.
+	--                planes, no scanline, no bloom, grey and white on black.
 	-- Anything else is refused with a line in the journal and the page keeps
 	-- the cyberpunk look its stylesheet ships with.
 	STYLE = 'cyberpunk',
@@ -61,17 +61,18 @@ OPX.Config.MODULES.theme = {
 	-- The same knobs. What is not a knob -- the type, the radius, the hairline
 	-- weight -- is `ui/src/design-system/minimal.css`.
 	minimal = {
-		-- A warm ivory rather than a white: it reads as a colour on the frames
-		-- without becoming a voice, and it sits just inside the band where the
-		-- lit state still has room above it.
-		ACCENT = '#cfc8bc',
+		-- A neutral light grey, and nothing but grey and white on this surface: no
+		-- saturation anywhere, so every rung derived from it is a grey too. It
+		-- sits just inside the band where the lit state still has room above it.
+		ACCENT = '#c6c6c6',
 
-		-- A soft coral. The voice is close to white here, so the alarm cannot be
-		-- white-hot the way the cyberpunk one is: it has to change hue to be seen.
-		ALARM = '#ff7a6b',
+		-- Pure white. The voice is a grey here, so the alarm escalates in
+		-- luminance alone -- the one step left above the lit rung -- and the
+		-- surfaces give it a heavier stroke to carry the rest.
+		ALARM = '#ffffff',
 
-		-- A little lighter than the house ground. The type on it is a pale
-		-- ivory, which holds against the street at a lower opacity than red does.
+		-- A little lighter than the house ground. The type on it is a pale grey,
+		-- which holds against the street at a lower opacity than red does.
 		PLATE_OPACITY = 0.72,
 
 		-- No scanline and no lean: both are the cyberpunk look's, not this one's.
