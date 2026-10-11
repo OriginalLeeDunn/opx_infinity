@@ -754,7 +754,7 @@ function choose(row: Slot): void {
    ground -- it is a thing to press -- but the bay that held them in the
    cyberpunk look has neither a frame nor a ground: the rows stand on the
    street as a column. Pointed at, a row's ground lifts; chosen, it lifts
-   further, its words go white and a 2px rule runs down its leading edge.
+   further and its words go white.
 
    The chosen row does not step out of the column: the pop is a plane pushed
    toward the player, and on a flat surface it is only a row out of line. A
@@ -791,7 +791,7 @@ function choose(row: Slot): void {
   transform: none;
   background: var(--op-plate-lit);
   color: var(--op-text);
-  box-shadow: inset 2px 0 0 var(--op-text);
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .row .label {

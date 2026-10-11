@@ -651,8 +651,7 @@ select.input option {
    A settings form, drawn the way the rest of this look draws one -- each
    control a thing on its own dark plate, nothing behind the form itself:
 
-     the tabs      a sidebar of plates; the chosen one lifted and white with a
-                   2px rule down its leading edge
+     the tabs      a sidebar of plates; the chosen one lifted and white
      an input      a plate with a 1px line under its text, white with focus
      a flag        the square switch the menu draws, not a ticked box
      a button      a plate around a word; saving is a white plate, dark words
@@ -687,7 +686,7 @@ select.input option {
   --aug-border-bg: transparent;
   transform: none;
   background: var(--op-plate-lit);
-  box-shadow: inset 2px 0 0 var(--op-text);
+  box-shadow: none;
   color: var(--op-text);
 }
 

@@ -1642,9 +1642,8 @@ onUnmounted(() => {
    leaning toward the screen edge and jumping out at the pointer. Here a column
    is a stack of rows standing next to what the eye is on: each row is a thing
    on its own dark square, the column that holds them has no sheet, and nothing
-   moves. The pointed row's ground lights up, its words go white and it takes a
-   2px rule down its leading edge; a folder that is open keeps the lit ground
-   and the rule while its own list stands beside it.
+   moves. The pointed row's ground lights up and its words go white; a folder
+   that is open keeps the lit ground while its own list stands beside it.
 
    THE DANGER ROW CANNOT BE RED, and the minimal surface has no second colour
    to spend on it. It is white at the heavier weight, so it reads as the one
@@ -1726,7 +1725,7 @@ onUnmounted(() => {
   --aug-border-bg: transparent;
   color: var(--op-text);
   background: var(--op-plate-lit);
-  box-shadow: inset 2px 0 0 var(--op-text);
+  box-shadow: none;
   transform: none;
   filter: none;
 }
@@ -1749,7 +1748,7 @@ onUnmounted(() => {
   --aug-border-bg: transparent;
   color: var(--op-text);
   background: var(--op-plate-lit);
-  box-shadow: inset 2px 0 0 var(--op-edge-on);
+  box-shadow: none;
   transform: none;
   filter: none;
 }

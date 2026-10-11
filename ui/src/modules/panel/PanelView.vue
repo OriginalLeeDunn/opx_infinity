@@ -2378,7 +2378,7 @@ function filter(value: string): void {
      a range     a 1px line and a square white thumb on a plate
      an item     a plate with the detail UNDER the name, so a two-column grid
                  stops cutting both in half; pointed at it lifts, chosen it
-                 lifts and takes a 2px rule down its leading edge
+                 lifts further and its words go white
      a button    a plate around a word; the primary one is a white plate with
                  dark words, the one solid thing on the sheet
      a tile      a plate that lifts on hover and goes white-edged when chosen
@@ -2551,7 +2551,7 @@ function filter(value: string): void {
   --aug-border-bg: transparent;
   background: var(--op-plate-lit);
   color: var(--op-text);
-  box-shadow: inset 2px 0 0 var(--op-text);
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .empty,
@@ -2708,7 +2708,7 @@ function filter(value: string): void {
 :root[data-op-style="minimal"] .slot.is-on {
   --aug-border-bg: transparent;
   background: var(--op-plate-lit);
-  box-shadow: inset 2px 0 0 var(--op-text);
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .slot-value {

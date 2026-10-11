@@ -517,131 +517,106 @@ useBridge('open77:anchors', (payload: Payload) => {
 }
 
 /* =============================================================================
-   STAFF -- WHITE-HOT, AND NOT A REDDER RED. Rule 4 of the contract, the same
-   call the gauges and the chat's refusals make: red is this runtime's voice, so
-   it cannot also be its one thing that must stand out. A staff tag changes
-   FAMILY, which is legible across a street in a way that a second shade of red
-   is not.
-
-   IT MOVED ONTO THE SQUARE when the name plate came off. The family change used
-   to be carried by the plate going to a lit ground behind a white outline, with
-   the lettering following it; with no plate, colour on type would have been all
-   that was left, and three white words at distance are three red words that
-   happen to be pale. The square is the one box still drawn and the heaviest mark
-   on the tag, so it is what goes white-hot -- an outlined white box over a head
-   reads as "staff" from further away than any lettering does, and the names
-   change with it exactly as they did before.
-   ========================================================================== */
-.id.staff {
-  --aug-border-bg: var(--op-alarm);
-  --aug-border-all: 2.4px;
-  color: var(--op-alarm);
-}
-
-.plate.staff .name {
-  color: var(--op-alarm);
-}
-
-/* The whole column changes family with the square, or a white marker would sit
-   beside two runs still wearing the other palette. */
-.plate.staff .user,
-.plate.staff .cid {
-  color: var(--op-alarm);
-  opacity: 0.72;
-}
-
-/* The word itself, after the name and quieter than it: what is being said is
-   that this person is staff, and the name is still the part being read. */
-.badge {
-  font: 700 var(--op-fs-micro) / 1 var(--op-font-mono);
-  letter-spacing: var(--op-track-micro);
-  text-transform: uppercase;
-  color: var(--op-alarm);
-  opacity: 0.85;
-}
-
-/* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A name over a head is one THING, so it sits on one small dark square: the
-   player id in a hairline box at the leading end, the name beside it, and the
-   account and citizen id as a quieter second line. The ink stays as well --
-   the square is small and the street around it is not.
+   A tag is a caption floating over a head, and on this look it is drawn as
+   one: no box, no ground, no frame around the id. Boxes over every head in a
+   crowd are a wall of stickers; a caption is read and then forgotten.
 
-   STAFF IS SAID IN WHITE: the id box and the staff word go white and heavy,
-   each in a white hairline. On a grey surface that is the only mark that can
-   stand apart, and it is the one this tag exists to show. The word comes in
-   capitals and is lowered, first letter back; a player's name is theirs and
-   is left exactly as written. */
+     12 | Valerie Kaine
+          valerie_k  4821
+
+   The id leads in a quiet grey, cut off from the name by a 1px rule -- the
+   one line in the tag, and enough to say "this number is not part of the
+   name". The name is the only white on it, at a weight that holds at a
+   distance. The account and the citizen id sit under it, small and grey, on
+   one line. All of it is held off the street by the page's ink alone, a
+   little heavier here because a tag is the text most often read against sky.
+
+   STAFF IS SAID, NOT SHOUTED: the id and the rule go white, and a small white
+   square marks the word beside the name. */
 :root[data-op-style="minimal"] .tag {
-  padding: 4px var(--op-space-2);
-  background: var(--op-plate);
-  box-shadow: none;
-  text-shadow: var(--op-ink);
+  align-items: center;
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 12px rgba(0, 0, 0, 0.6);
 }
 
 :root[data-op-style="minimal"] .id {
-  --aug-border-bg: var(--op-edge-hover);
-  --aug-border-all: 1px;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 6px;
-  font: 600 var(--op-fs-label) / 1 var(--op-font-body);
+  --aug-border-bg: transparent;
+  --aug-border-all: 0px;
+  align-self: stretch;
+  min-width: 0;
+  height: auto;
+  padding: 0 var(--op-space-2) 0 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.35);
   background: none;
-  color: var(--op-text);
+  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .plate {
-  gap: 1px;
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  column-gap: var(--op-space-2);
+  row-gap: 3px;
+  align-items: baseline;
   padding-left: var(--op-space-2);
 }
 
-/* No id box (`TECHNICAL` off): nothing to stand off from. */
 :root[data-op-style="minimal"] .plate.bare {
   padding-left: 0;
 }
 
+/* The name spans the row; the badge, when there is one, takes the second cell
+   of the first row instead. */
 :root[data-op-style="minimal"] .name {
-  font: 600 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  grid-column: 1 / -1;
+  font: 600 13px / 1.1 var(--op-font-body);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .user,
 :root[data-op-style="minimal"] .cid {
-  font: 400 var(--op-fs-micro) / 1.2 var(--op-font-body);
+  font: 400 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text-dim);
-  opacity: 1;
+  opacity: 0.9;
 }
 
 :root[data-op-style="minimal"] .id.staff {
-  --aug-border-bg: var(--op-alarm);
-  font-weight: 900;
+  --aug-border-bg: transparent;
+  border-right-color: var(--op-alarm);
+  font-weight: 600;
   color: var(--op-alarm);
 }
 
 :root[data-op-style="minimal"] .plate.staff .name {
+  grid-column: 1;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .plate.staff .user,
 :root[data-op-style="minimal"] .plate.staff .cid {
   color: var(--op-text-dim);
-  opacity: 1;
+  opacity: 0.9;
 }
 
 :root[data-op-style="minimal"] .badge {
-  align-self: flex-start;
-  margin-top: 2px;
-  padding: 1px 5px;
-  border: 1px solid var(--op-alarm);
-  font: 700 var(--op-fs-micro) / 1 var(--op-font-body);
-  background: none;
+  grid-row: 1;
+  grid-column: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 500 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-alarm);
   opacity: 1;
   text-transform: lowercase !important;
 }
 
-:root[data-op-style="minimal"] .badge::first-letter {
-  text-transform: uppercase !important;
+:root[data-op-style="minimal"] .badge::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  background: var(--op-alarm);
 }
 </style>

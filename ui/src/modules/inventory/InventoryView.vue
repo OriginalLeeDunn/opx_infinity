@@ -2286,7 +2286,7 @@ try {
 }
 
 /* A row of the card is a thing on its own ground; the pointed one lights up,
-   goes white and takes a 2px rule down its leading edge. */
+   and goes white. */
 :root[data-op-style="minimal"] .menu .row {
   padding: 8px 10px;
   font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
@@ -2297,7 +2297,7 @@ try {
 :root[data-op-style="minimal"] .menu .row:hover:not(.off) {
   color: var(--op-text);
   background: var(--op-plate-lit);
-  box-shadow: inset 2px 0 0 var(--op-text);
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .dialog .row {

@@ -865,8 +865,8 @@ onUnmounted(() => {
    what to do. The keys at its end are the house keycaps.
 
    The completion LIST is a place and has no ground; each ROW is a thing and
-   has its own. The row Tab will take is the lit ground with white type and a
-   2px rule down its leading edge, and the argument being typed is the white
+   has its own. The row Tab will take is the lit ground with white type, and
+   the argument being typed is the white
    word among grey ones, underlined, where the others are not. */
 :root[data-op-style="minimal"] .chat-input {
   gap: 8px;
@@ -928,13 +928,11 @@ onUnmounted(() => {
 
 :root[data-op-style="minimal"] .chat-suggestion {
   gap: var(--op-space-3);
-  padding: 5px var(--op-space-3) 5px 10px;
-  border-left: 2px solid transparent;
+  padding: 5px var(--op-space-3);
   background: var(--op-plate);
 }
 
 :root[data-op-style="minimal"] .chat-suggestion.is-selected {
-  border-left-color: var(--op-text);
   background: var(--op-plate-lit);
 }
 

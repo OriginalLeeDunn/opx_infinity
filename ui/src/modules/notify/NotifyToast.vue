@@ -286,9 +286,9 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
    =============================================================================
    The four rules above still hold, in other words. Tone is not available --
    the minimal surface is grey and white -- and neither is a pane, so a toast
-   is its words on its own dark square and a 2px rule down its leading edge,
-   which carries the KIND: faint for info, lit for success, white for the two
-   that are wrong. A toast is a THING, so it has a ground; the column that
+   is its words on its own dark square. The KIND is its tag and the tone of
+   its lifetime line: faint for info, lit for success, white for the two that
+   are wrong. A toast is a THING, so it has a ground; the column that
    stacks them has none.
 
    The kind's own word arrives in capitals (`CONFIRMED`) and is lowered with
@@ -301,7 +301,7 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
   padding: var(--op-space-2) var(--op-space-4) var(--op-space-3) calc(var(--op-space-3) + 2px);
   color: var(--op-text);
   background: var(--op-plate);
-  box-shadow: inset 2px 0 0 var(--rule);
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .toast .glyph {
