@@ -237,36 +237,28 @@ const cells = computed(() =>
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A dock, not a row of sockets: the five tiles sit on one rounded sheet of
-   glass, so the peek reads as one object rising at the bottom of the screen
-   and going again. A tile is lighter glass with the item's picture in it, the
-   key a quiet figure in its corner and the count a small pill. An empty slot is
-   a recessed tile that says so in a word. */
+   Five squares in a row at the bottom of the screen, nothing under them: each
+   a hairline around the item's picture, the key a quiet figure in one corner
+   and the count a plain figure in the other. The inventory's cells are the
+   same line, so the peek reads as five cells of the bag lifted out of it. */
 :root[data-op-style="minimal"] .slotbar {
-  gap: 6px;
-  padding: 6px;
-  border-radius: 20px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 50%),
-    rgba(var(--op-plate-rgb), 0.62);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    var(--op-shadow);
+  gap: var(--op-space-2);
+  padding: 0;
+  background: none;
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .cell {
-  --op-radius: 14px;
-  --aug-border-bg: transparent;
+  --aug-border-bg: rgba(255, 255, 255, 0.22);
   width: 64px;
   height: 64px;
   padding: 10px;
-  background: rgba(255, 255, 255, 0.07);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: none;
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .art {
-  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.45));
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.55));
 }
 
 :root[data-op-style="minimal"] .mark {
@@ -287,11 +279,12 @@ const cells = computed(() =>
 }
 
 :root[data-op-style="minimal"] .count {
-  right: 4px;
-  bottom: 4px;
-  padding: 2px 6px;
-  border-radius: 999px;
-  font: 600 var(--op-fs-micro) / 1.2 var(--op-font-body);
-  background: rgba(0, 0, 0, 0.5);
+  right: 6px;
+  bottom: 5px;
+  padding: 0;
+  font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
+  color: var(--op-text);
+  background: none;
+  text-shadow: var(--op-ink);
 }
 </style>

@@ -362,39 +362,20 @@ useBridge('opx:hud:vitals', (payload: Payload) => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The five gauges sit on one pane, and each is a line: a 4px track rounded at
-   both ends, the fill rounded with it, no frame and no segment ticks. The
-   ticks made the bar a piece of hardware, and "how many tenths" is the
-   readout's job.
+   Five lines of type and five rules, and nothing behind them. Each gauge is
+   its icon, a 2px track -- a faint line, the one ground this block keeps,
+   because an empty bar has to show where full would be -- the fill along it,
+   and the figure. No frame, no segment ticks: "how many tenths" is the
+   figure's job.
 
-   THE STATE MOVES TO THE FILL AND THE FIGURE. The frame that carried it --
-   health's 2px, bad's 2.6px alarm stroke -- went with the frame. A healthy bar
-   is the brightest grey, a resting one a step down, and a bad one is white
-   with its figure white beside it: on a grey HUD, the loudest thing it can do.
-
-   `.fill` is rounded as well as the track. It is scaled, so its right-hand
-   radius is squeezed with it; at 4px tall that is still a soft end rather than
-   a cut one, and it costs nothing -- the scale stays on the compositor. */
+   THE STATE MOVES TO THE FILL AND THE FIGURE. The frame that carried it went
+   with the frame. A healthy bar is the brightest grey, a resting one a step
+   down, and a bad one is white with its figure white and heavy beside it: on
+   a grey HUD, the loudest thing it can do. */
 :root[data-op-style="minimal"] .vitals {
-  box-sizing: border-box;
-  /* 6px and 8px, not more: five rows of 14px have to fit the ~110px the
-     status strip's `statusOffset` leaves above the block, or the chips sit on
-     the pane. */
+  /* 6px, not more: five rows have to fit the ~110px the status strip's
+     `statusOffset` leaves above the block. */
   gap: 6px;
-  padding: var(--op-space-2) var(--op-space-4);
-  border-radius: var(--op-radius-md);
-  background: rgba(var(--op-plate-rgb), 0.62);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-
-/* No gauges, no pane: an empty block of glass in the corner is a surface
-   saying nothing. `:empty` ignores the comment anchors a v-for leaves. */
-:root[data-op-style="minimal"] .vitals:empty {
-  padding: 0;
-  background: none;
-  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .gauge {
@@ -403,12 +384,10 @@ useBridge('opx:hud:vitals', (payload: Payload) => {
 }
 
 :root[data-op-style="minimal"] .gauge .track {
-  --op-radius: 999px;
   align-self: center;
-  height: 4px;
+  height: 2px;
   padding: 0;
-  background: rgba(255, 255, 255, 0.10);
-  box-shadow: none;
+  background: rgba(255, 255, 255, 0.14);
 }
 
 :root[data-op-style="minimal"] .gauge .track::after {
@@ -416,11 +395,7 @@ useBridge('opx:hud:vitals', (payload: Payload) => {
 }
 
 :root[data-op-style="minimal"] .gauge .bar {
-  clip-path: inset(0 round 999px);
-}
-
-:root[data-op-style="minimal"] .gauge .fill {
-  border-radius: 999px;
+  clip-path: none;
 }
 
 :root[data-op-style="minimal"] .gauge .glyph {

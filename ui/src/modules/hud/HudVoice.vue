@@ -647,17 +647,19 @@ function share(value: number): number {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   One small pane in the corner. The level is a slim rounded column that fills
-   smoothly -- the segmented ladder is a VU meter, an instrument -- and the
-   channels are dots, not boxes. The keys are soft keycaps; the receive count is
-   a pill. The state still sets the tone, now from the grey ramp: resting is
-   faint, talking is white, muted keeps its slash.
+   Type, one thin column and a row of marks in the corner, and nothing behind
+   them. The level is a 3px column that fills smoothly -- the segmented ladder
+   is a VU meter, an instrument -- over a faint track, the one ground kept,
+   because an empty meter has to show its height. The channels are small
+   square marks; the keys and the receive count are hairline boxes. The state
+   sets the tone from the grey ramp: resting is faint, talking is white, muted
+   keeps its slash.
 
    The captions (`TX`, `NORMAL`, `15 M`) arrive in capitals; they are lowered,
    and the two that are words get their first letter back. */
 :root[data-op-style="minimal"] .voice {
   --voice-tone: var(--op-text-faint);
-  --voice-unlit: rgba(255, 255, 255, 0.10);
+  --voice-unlit: rgba(255, 255, 255, 0.14);
 }
 
 :root[data-op-style="minimal"] .voice.detected {
@@ -674,18 +676,13 @@ function share(value: number): number {
 
 :root[data-op-style="minimal"] .voice .inner {
   gap: var(--op-space-2);
-  padding: var(--op-space-3);
-  border-radius: var(--op-radius-md);
-  background: rgba(var(--op-plate-rgb), 0.62);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
+/* The mic is its glyph and nothing around it; talking is the glyph going white. */
 :root[data-op-style="minimal"] .voice .mic {
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
+  background: none;
   box-shadow: none;
+  color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .voice .mic svg {
@@ -695,21 +692,18 @@ function share(value: number): number {
 }
 
 :root[data-op-style="minimal"] .voice.talking .mic {
-  background: var(--op-text);
-  color: rgb(var(--op-plate-rgb));
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .voice .slash {
   width: 18px;
   height: 1.5px;
-  border-radius: 1px;
 }
 
 :root[data-op-style="minimal"] .voice .caption,
 :root[data-op-style="minimal"] .voice .mode {
   font: 500 var(--op-fs-label) / 1 var(--op-font-body);
   text-transform: lowercase !important;
-  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .voice .caption::first-letter,
@@ -728,11 +722,10 @@ function share(value: number): number {
 }
 
 :root[data-op-style="minimal"] .voice .track {
-  width: 6px;
+  width: 3px;
   height: 40px;
   padding: 0;
   overflow: hidden;
-  border-radius: 999px;
   background: var(--voice-unlit);
 }
 
@@ -741,7 +734,6 @@ function share(value: number): number {
 }
 
 :root[data-op-style="minimal"] .voice .meter {
-  border-radius: 999px;
   -webkit-mask-image: none;
   mask-image: none;
 }
@@ -751,43 +743,41 @@ function share(value: number): number {
 }
 
 :root[data-op-style="minimal"] .voice .pip {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.22);
   box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .voice .pip.on {
   background: var(--op-text);
-  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .voice .cap {
-  --op-radius: var(--op-radius-sm);
-  --aug-border-bg: transparent;
+  --aug-border-bg: var(--op-edge-on);
+  --aug-border-all: 1px;
   min-width: 22px;
   height: 22px;
   padding: 0 7px;
   font: 600 var(--op-fs-meta) / 1 var(--op-font-body);
-  background: rgba(255, 255, 255, 0.10);
-  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  background: none;
+  box-shadow: none;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .voice .cap.quiet {
-  background: rgba(255, 255, 255, 0.04);
+  --aug-border-bg: var(--op-edge);
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .voice .rx {
-  --op-radius: 999px;
-  --aug-border-bg: transparent;
+  --aug-border-bg: var(--op-edge-hover);
+  --aug-border-all: 1px;
   gap: 6px;
   padding: 3px var(--op-space-3);
   font: 600 var(--op-fs-label) / 1 var(--op-font-body);
-  background: rgba(255, 255, 255, 0.10);
+  background: none;
   color: var(--op-text);
   filter: none;
 }

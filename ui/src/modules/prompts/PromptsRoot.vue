@@ -529,24 +529,14 @@ onBeforeUnmount(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The strip is a pane per group with the keys drawn as keys: small rounded
-   caps with a faint fill and a shadow along their foot, the letter in white.
-   The action beside a key is in the body face, regular weight, in sentence
-   case -- the catalogue writes `OPEN`, the player reads "Open". A key name
-   stays as the key is printed (`SHIFT`): a keycap is a picture of a key, and
-   a cap is an inline-flex box, which `::first-letter` does not reach. */
-:root[data-op-style="minimal"] .strip {
-  text-shadow: none;
-}
-
+   Keys and words, and nothing behind them. A key is a letter in a hairline box
+   (the design system's `.op-cap`), the action beside it is in the body face,
+   regular weight, in sentence case -- the catalogue writes `OPEN`, the player
+   reads "Open". A key name stays as the key is printed (`SHIFT`): a keycap is
+   a picture of a key, and a cap is an inline-flex box, which `::first-letter`
+   does not reach. Groups are set apart by space, not by a pane. */
 :root[data-op-style="minimal"] .group {
   gap: var(--op-space-2) var(--op-space-4);
-  padding: var(--op-space-2) var(--op-space-3);
-  border-radius: var(--op-radius-md);
-  background: rgba(var(--op-plate-rgb), 0.62);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
 :root[data-op-style="minimal"] .title,
@@ -561,13 +551,11 @@ onBeforeUnmount(() => {
 
 :root[data-op-style="minimal"] .title {
   font: 500 var(--op-fs-label) / 1 var(--op-font-body);
-  color: var(--op-text-faint);
+  color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .cap {
-  --op-radius: 6px;
   text-transform: none;
-  --aug-border-bg: transparent;
   min-width: 22px;
   height: 22px;
   padding: 0 7px;
@@ -591,7 +579,7 @@ onBeforeUnmount(() => {
 }
 
 :root[data-op-style="minimal"] .dim .cap {
-  background: rgba(255, 255, 255, 0.04);
+  --aug-border-bg: var(--op-edge);
   color: var(--op-text-faint);
 }
 </style>

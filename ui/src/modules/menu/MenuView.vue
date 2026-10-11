@@ -750,47 +750,46 @@ function choose(row: Slot): void {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   ONE PANE, NOT A STACK OF PLATES. The cyberpunk menu is a column of framed
-   rows on a bay that is itself only an outline; here the bay is the glass and
-   the rows have no box of their own. A row is a line of type until it is
-   pointed at (a faint wash) or chosen (a lighter pill, the label in white), so
-   the list reads as a list and not as a rack of buttons.
+   A LIST OF WORDS, NOT A RACK OF PLATES. The cyberpunk menu is a column of
+   framed rows on a bay; here neither the bay nor a row has a box or a ground.
+   A row is a line of type in the voice's grey until it is pointed at (it goes
+   white) or chosen (white, and a 2px rule down its leading edge), so the list
+   reads as a list and the state is where the eye already is.
 
    The chosen row does not step out of the column: the pop is a plane pushed
-   toward the player, and on a flat pane it is only a row out of line. A check
-   becomes a switch -- the one control on this surface whose state is a
+   toward the player, and on a flat surface it is only a row out of line. A
+   check becomes a square switch -- the one control here whose state is a
    position -- and a separator is a quiet label with no rule under it. */
 :root[data-op-style="minimal"] .bay {
-  background: var(--op-plate);
+  --aug-border-bg: transparent;
 }
 
 :root[data-op-style="minimal"] .list {
-  gap: 2px;
-  padding: var(--op-space-2);
+  gap: 0;
+  padding: var(--op-space-2) 0;
 }
 
 :root[data-op-style="minimal"] .row {
-  padding: 9px var(--op-space-3);
-  background: transparent;
-  background-image: none;
-  box-shadow: none;
-  color: var(--op-text);
-  transition: background var(--op-dur-fast) linear;
+  --aug-border-bg: transparent;
+  padding: 8px var(--op-space-3);
+  color: var(--op-red-text);
+  transition: color var(--op-dur-fast) linear, box-shadow var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .row.is-hover,
 :root[data-op-style="minimal"] .row:hover:not(.is-off):not(.is-on) {
-  background: var(--op-wash);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .row.on {
   transform: none;
-  background: var(--op-wash-on);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  color: var(--op-text);
+  box-shadow: inset 2px 0 0 var(--op-text);
 }
 
 :root[data-op-style="minimal"] .row .label {
   font-weight: 500;
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .row.on .label {
@@ -802,6 +801,7 @@ function choose(row: Slot): void {
 :root[data-op-style="minimal"] .row .mark {
   color: var(--op-text-dim);
   font-weight: 400;
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .row.on .value {
@@ -813,16 +813,17 @@ function choose(row: Slot): void {
   stroke-width: 1.5;
 }
 
-/* The switch. The box's tick is hidden rather than removed: its stroke-dash
-   transition is the cyberpunk tick drawing itself, and this look has no tick. */
+/* The switch: a hairline track and a square knob that crosses it. The knob is
+   the one fill on the menu, and it is a state mark, not a ground. The box's
+   tick is hidden rather than removed: its stroke-dash transition is the
+   cyberpunk tick drawing itself, and this look has no tick. */
 :root[data-op-style="minimal"] .check {
   position: relative;
   width: 26px;
-  height: 15px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.16);
-  transition: background var(--op-dur) var(--op-ease);
+  height: 14px;
+  border: 1px solid var(--op-edge-hover);
+  background: none;
+  transition: border-color var(--op-dur) var(--op-ease);
 }
 
 :root[data-op-style="minimal"] .check svg {
@@ -834,21 +835,21 @@ function choose(row: Slot): void {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
+  width: 8px;
+  height: 8px;
   background: var(--op-text-dim);
   transition: transform var(--op-dur) var(--op-ease), background var(--op-dur) var(--op-ease);
 }
 
 :root[data-op-style="minimal"] .check.ticked,
 :root[data-op-style="minimal"] .row.on .check.ticked {
-  background: var(--op-text);
+  background: none;
+  border-color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .check.ticked::after {
-  transform: translateX(11px);
-  background: rgb(var(--op-plate-rgb));
+  transform: translateX(12px);
+  background: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .sep {
@@ -857,6 +858,7 @@ function choose(row: Slot): void {
     calc(var(--op-space-3) * 2 + 16px);
   color: var(--op-text-dim);
   font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .sep::after {
@@ -864,12 +866,13 @@ function choose(row: Slot): void {
 }
 
 :root[data-op-style="minimal"] .foot {
-  padding: var(--op-space-2) var(--op-space-4) var(--op-space-3);
-  border-top: 1px solid var(--op-line);
+  padding: var(--op-space-2) var(--op-space-3) var(--op-space-1);
+  border-top: 1px solid var(--op-edge);
 }
 
 :root[data-op-style="minimal"] .hint {
   color: var(--op-text-dim);
   opacity: 1;
+  text-shadow: var(--op-ink);
 }
 </style>

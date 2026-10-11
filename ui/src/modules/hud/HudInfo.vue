@@ -254,18 +254,12 @@ useBridge('opx:hud:info', (payload: Payload) => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A small pane in the corner: each line is a dim caption over its value, the
-   value the larger of the two, in the body face with tabular figures. The
-   captions arrive from the catalogue in capitals, so they are lowered and the
-   first letter put back -- a caption here is a word, not a stencil. */
+   Two lines of type in the corner and nothing around them: each is a dim
+   caption over its value, the value the larger of the two, figures tabular.
+   The captions arrive from the catalogue in capitals, so they are lowered and
+   the first letter put back -- a caption here is a word, not a stencil. */
 :root[data-op-style="minimal"] .info .inner {
-  gap: var(--op-space-2);
-  padding: var(--op-space-3) var(--op-space-4);
-  border-radius: var(--op-radius-md);
-  background: rgba(var(--op-plate-rgb), 0.62);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  gap: var(--op-space-3);
 }
 
 :root[data-op-style="minimal"] .info .line {
@@ -292,10 +286,9 @@ useBridge('opx:hud:info', (payload: Payload) => {
 
 :root[data-op-style="minimal"] .info .value {
   margin-left: 0;
-  font-size: var(--op-fs-body);
+  font-size: var(--op-fs-lead);
   font-weight: 600;
   color: var(--op-text);
-  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .info .warn .value {

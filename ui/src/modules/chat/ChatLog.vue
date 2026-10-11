@@ -370,25 +370,23 @@ onUnmounted(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A pane of smoked glass, not a ruled column: the red rule down the leading
-   edge is the cyberpunk log's whole identity, so here the lines sit on one
-   rounded pane with an edge you only see against a bright street. The author
-   is the line's weight -- white, set heavier -- and what they said is the
-   grey under it, so a scroll of chat reads as names first.
+   Lines of type on the street and nothing behind them: no pane, no edge, and
+   not the red rule down the leading edge that is the cyberpunk log's whole
+   identity. The ink is what holds each line off a bright plaza, so it is set
+   here on the column and every line inherits it. The author is the line's
+   weight -- white, set heavier -- and what they said is the grey after it, so a
+   scroll of chat reads as names first.
 
    THE SYSTEM'S OWN AUTHORS ARE CAPITALS IN THE CATALOGUE (`NETWORK`,
    `COMMAND`), and the minimal look never sets capitals. A player's name is
    theirs and is left exactly as typed; only the kinds the server speaks in
    are lowered and given back their initial. */
 :root[data-op-style="minimal"] .chat-log {
-  gap: 6px;
-  padding: var(--op-space-3) var(--op-space-4);
+  gap: 4px;
+  padding: 0;
   border-left: 0;
-  border-radius: var(--op-radius-md);
-  background: rgba(var(--op-plate-rgb), 0.55);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  background: none;
+  box-shadow: none;
   text-shadow: var(--op-ink);
 }
 
@@ -426,8 +424,8 @@ onUnmounted(() => {
   color: var(--op-text-dim);
 }
 
-/* Something went wrong: the one line on the pane in full white, author and
-   text alike, which on a grey pane is as loud as this look gets. */
+/* Something went wrong: the one line in full white, author and text alike,
+   which among grey lines is as loud as this look gets. */
 :root[data-op-style="minimal"] .is-error .chat-author,
 :root[data-op-style="minimal"] .is-error .chat-text,
 :root[data-op-style="minimal"] .is-warning .chat-text {

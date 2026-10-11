@@ -9,14 +9,17 @@
 
    THE SAME MARKUP, A DIFFERENT OBJECT. Every module keeps its template and
    its states; nothing about what it is drawn as carries over. The cyberpunk
-   look is an instrument -- outlined, chamfered, tilted, in capitals, in mono.
-   This one is smoked glass:
+   look is an instrument -- outlined, chamfered, tilted, in capitals, in mono,
+   on dark plates. This one is type on the street:
 
      the type          Manrope ('OPX Minimal' in fonts.css), in sentence case,
                        untracked, one weight lighter than asked, figures tabular
-     the shape         rounded panes, pills for anything small, never a cut
-     the edge          barely there at rest; a state is the pane getting lighter,
-                       not the outline getting heavier
+     the shape         square, everywhere: no chamfer and no radius
+     the ground        none -- no plate, no pane, no wash; the ink holds the
+                       letters off the street
+     the edge          a hairline where a box must be read as one, barely there
+                       at rest; a state is the words going white and the line
+                       coming up, never a fill
      the plane         flat, no scanline, no glow
      the colour        grey and white, and nothing else
      the entrance      a short fade and a 4px rise
@@ -52,6 +55,15 @@
   --op-plate-quiet-a: 0.52;
   --op-plate-lit-a:   0.84;
 
+  /* NO GROUND. This look puts nothing behind its type: no pane, no wash, no
+     plate -- the words and their hairlines stand on the street, held off it
+     by the ink below. The COMPOSITIONS are what is cleared, not the alphas:
+     the alphas are operator knobs and arrive inline on the root, where they
+     would beat this sheet, while nothing on the wire writes these three. */
+  --op-plate:       transparent;
+  --op-plate-quiet: transparent;
+  --op-plate-lit:   transparent;
+
   /* No glow anywhere: this look is lit by contrast alone. */
   --op-red-glow:   transparent;
   --op-alarm-glow: transparent;
@@ -71,10 +83,14 @@
   --op-edge:       rgba(255, 255, 255, 0.08);
   --op-edge-hover: rgba(255, 255, 255, 0.16);
   --op-edge-on:    rgba(255, 255, 255, 0.32);
-  --op-wash:       rgba(255, 255, 255, 0.06);
-  --op-wash-on:    rgba(255, 255, 255, 0.12);
+  --op-wash:       transparent;
+  --op-wash-on:    transparent;
 
-  --op-ink: 0 1px 2px rgba(0, 0, 0, 0.45);
+  /* With no ground, the ink is all that holds a letter off a bright street:
+     a tight dark pass for the edge and a wide soft one under it. */
+  --op-ink:
+    0 1px 2px rgba(0, 0, 0, 0.85),
+    0 0 10px rgba(0, 0, 0, 0.55);
   --op-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 
   --op-interlace-a: 0;
@@ -102,9 +118,9 @@
   /* --- shape ----------------------------------------------------------------
      A radius per cut size, scaled from the operator's CUT and capped: a bay
      at the cyberpunk 20px cut would otherwise be a lozenge. */
-  --op-radius-sm: clamp(4px, calc(var(--op-cut-sm) * 1.3), 10px);
-  --op-radius-md: clamp(6px, calc(var(--op-cut-md) * 1.1), 14px);
-  --op-radius-lg: clamp(8px, calc(var(--op-cut-lg) * 0.9), 18px);
+  --op-radius-sm: 0px;
+  --op-radius-md: 0px;
+  --op-radius-lg: 0px;
 
   /* --- motion -------------------------------------------------------------- */
   --op-stutter: cubic-bezier(0.2, 0, 0, 1);
@@ -132,34 +148,31 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* --- the shape: a rounded pane instead of a chamfered frame -------------------
-   `inset() round` keeps what the chamfer polygon did besides the corner -- it
-   still clips the element's children to its box. The radius follows the cut
-   the element was given: a small cut is a control, a large one an enclosure. */
+/* --- the shape: a square box, and nothing rounded anywhere -------------------
+   No chamfer and no radius. The augmented clip is reduced to the plain box --
+   it still clips the element's children, which is the part of the chamfer
+   polygon a surface relied on -- and every radius on the page is zero, the
+   modules' own included: a corner rounded somewhere would be the one soft
+   shape on a surface that has none, and "never" is again a claim about all of
+   them at once. A circle (a dot, a spinner) becomes a square, which on this
+   look is the honest version of the same mark. */
 :root[data-op-style="minimal"] [data-augmented-ui] {
-  --op-radius: var(--op-radius-md);
-  border-radius: var(--op-radius);
-  clip-path: inset(0 round var(--op-radius));
+  clip-path: inset(0) !important;
 }
 
-:root[data-op-style="minimal"] .op-frame,
-:root[data-op-style="minimal"] .op-cap {
-  --op-radius: var(--op-radius-sm);
-  border-radius: var(--op-radius);
+:root[data-op-style="minimal"] body *,
+:root[data-op-style="minimal"] body *::before,
+:root[data-op-style="minimal"] body *::after {
+  border-radius: 0 !important;
 }
 
-:root[data-op-style="minimal"] .op-bay {
-  --op-radius: var(--op-radius-lg);
-}
-
-/* The ring, now a rounded one: a padded layer whose content box is masked
-   out, which leaves a ring exactly `--aug-border-all` wide that follows the
-   radius. Both mask spellings, because the engine baseline is unmeasured and
-   the prefixed one is what an older CEF reads. */
+/* The ring: a padded layer whose content box is masked out, which leaves a
+   ring exactly `--aug-border-all` wide. Both mask spellings, because the
+   engine baseline is unmeasured and the prefixed one is what an older CEF
+   reads. */
 :root[data-op-style="minimal"] [data-augmented-ui~="border"]::after {
   box-sizing: border-box;
   padding: var(--aug-border-all);
-  border-radius: inherit;
   clip-path: none;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
@@ -202,24 +215,22 @@
   --aug-border-all: 1.5px;
 }
 
-/* --- the pane: light on the ground -------------------------------------------
-   A wash of white across the top of every pane and one pixel of highlight on
-   its top edge: the edge of smoked glass. `background-image` and not
-   `background`, so the colour each module and state sets stays where it was. */
+/* --- no pane -----------------------------------------------------------------
+   The grounds are cleared at the token (above); what a preset paints on top of
+   its ground -- the cyberpunk look has none, the earlier minimal had a wash --
+   is cleared here, so a frame is its hairline and its words and nothing else. */
 :root[data-op-style="minimal"] .op-frame,
 :root[data-op-style="minimal"] .op-bay {
-  background-image: linear-gradient(180deg,
-    rgba(255, 255, 255, 0.05) 0%,
-    rgba(255, 255, 255, 0) 60%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background-image: none;
+  box-shadow: none;
 }
 
-/* A keycap: a small rounded key with a faint fill, the letter in white. */
+/* A keycap: a hairline box around the letter, no fill. */
 :root[data-op-style="minimal"] .op-cap {
-  background: rgba(255, 255, 255, 0.10);
-  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  background: none;
+  box-shadow: none;
   color: var(--op-text);
-  --aug-border-bg: transparent;
+  --aug-border-bg: var(--op-edge-on);
 }
 
 /* --- the entrance: a fade and a 4px rise -------------------------------------

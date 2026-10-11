@@ -190,25 +190,18 @@ onUnmounted(clearRaise)
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A small pane with the action written above a hairline that fills: no frame
-   around the bar, no chamfered fill. The action arrives in capitals and is
-   lowered, first letter back; the cancel hint sits below it, quieter. */
-/* Clear of the vehicle dial. The block sat 96px up, which put the thin
-   cyberpunk bar across the top of the dial's ring where it was hard to see;
-   a pane there covers the speed. */
+   The action written above a line that fills, and nothing around either: no
+   frame, no pane, no chamfered fill. The line keeps a faint track -- the one
+   ground here, because a bar that is a third full has to show the rest. The
+   action arrives in capitals and is lowered, first letter back; the cancel
+   hint sits below it, quieter. */
+/* Clear of the vehicle dial: 96px up put the bar across the dial's ring. */
 :root[data-op-style="minimal"] .progress {
   bottom: calc(var(--op-inset-y) + 172px);
 }
 
 :root[data-op-style="minimal"] .progress .plate {
-  box-sizing: border-box;
   gap: 6px;
-  padding: var(--op-space-3) var(--op-space-4);
-  border-radius: var(--op-radius-md);
-  background: rgba(var(--op-plate-rgb), 0.62);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
 :root[data-op-style="minimal"] .progress .label,
@@ -232,17 +225,13 @@ onUnmounted(clearRaise)
 }
 
 :root[data-op-style="minimal"] .progress .track {
-  --op-radius: 999px;
   --aug-border-bg: transparent;
-  height: 3px;
+  height: 2px;
   padding: 0;
   background: rgba(255, 255, 255, 0.14);
-  background-image: none;
-  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .progress .bar {
-  border-radius: 999px;
   background: var(--op-text);
   clip-path: none;
 }

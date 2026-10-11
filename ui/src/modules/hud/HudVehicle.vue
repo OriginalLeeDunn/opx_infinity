@@ -566,37 +566,27 @@ const gearClass = computed(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The dial becomes a disc of smoked glass with two fine arcs on it: the outer
-   one is speed-in-the-band (the rpm), the inner one the car's condition. Both
-   have rounded ends and run over a faint track drawn on the same path, so the
-   empty part of the arc is still legible as "room left". The rails, the
-   redline tick and the black shading are the instrument cluster's, and go.
+   The dial is two fine arcs and a figure, and nothing behind them: the outer
+   arc is speed-in-the-band (the rpm), the inner one the car's condition. Both
+   run over a faint track on the same path, so the empty part still reads as
+   "room left", and both end square -- there is no rounded thing on this look.
+   The rails, the redline tick and the black shading are the instrument
+   cluster's, and go.
 
    The figure is the dial's whole voice: large, light, white. Redline is the
    rpm arc going white rather than a red band -- there is no red here. */
-:root[data-op-style="minimal"] .vehicle .dial::before {
-  content: "";
-  position: absolute;
-  inset: 3px;
-  border-radius: 50%;
-  background: rgba(var(--op-plate-rgb), 0.55);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-
 :root[data-op-style="minimal"] .vehicle .rings {
-  stroke-linecap: round;
+  stroke-linecap: butt;
 }
 
 :root[data-op-style="minimal"] .vehicle .shade {
-  stroke: rgba(255, 255, 255, 0.10);
-  stroke-width: 3;
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 2;
 }
 
 :root[data-op-style="minimal"] .vehicle .shade-in {
-  stroke: rgba(255, 255, 255, 0.07);
-  stroke-width: 2;
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1.5;
 }
 
 :root[data-op-style="minimal"] .vehicle .rail,
@@ -607,16 +597,17 @@ const gearClass = computed(() => {
 
 :root[data-op-style="minimal"] .vehicle .rpm {
   stroke: var(--op-red-hi);
-  stroke-width: 3;
+  stroke-width: 2;
 }
 
 :root[data-op-style="minimal"] .vehicle.hot .rpm {
   stroke: var(--op-alarm);
+  stroke-width: 3;
 }
 
 :root[data-op-style="minimal"] .vehicle .integrity {
   stroke: rgba(var(--op-red-idle-rgb), 0.7);
-  stroke-width: 2;
+  stroke-width: 1.5;
 }
 
 :root[data-op-style="minimal"] .vehicle .integrity.warn {
@@ -632,9 +623,12 @@ const gearClass = computed(() => {
   margin-top: -6px;
 }
 
+/* No colour transition: the dial is mounted before the theme arrives, and the
+   cyberpunk 90ms fade would otherwise carry the shipped red into this look. */
 :root[data-op-style="minimal"] .vehicle .speed {
   font: 300 32px / 1 var(--op-font-display);
   color: var(--op-text);
+  transition: none;
 }
 
 :root[data-op-style="minimal"] .vehicle.hot .speed {
@@ -649,26 +643,27 @@ const gearClass = computed(() => {
   text-transform: lowercase !important;
 }
 
+/* The gear is a letter in a hairline box. Reverse is the box and the letter
+   going white and heavy -- a warning, said without a fill. */
 :root[data-op-style="minimal"] .vehicle .gear {
-  --op-radius: 999px;
-  --aug-border-bg: transparent;
+  --aug-border-bg: var(--op-edge-hover);
+  --aug-border-all: 1px;
   bottom: 12px;
   min-width: 22px;
   padding: 3px 8px;
   font: 600 var(--op-fs-label) / 1 var(--op-font-body);
-  background: rgba(255, 255, 255, 0.10);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .vehicle .gear.idle {
-  background: rgba(255, 255, 255, 0.05);
+  --aug-border-bg: var(--op-edge);
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .vehicle .gear.reverse {
-  background: var(--op-alarm);
-  color: rgb(var(--op-plate-rgb));
-  text-shadow: none;
+  --aug-border-bg: var(--op-alarm);
+  font-weight: 900;
+  color: var(--op-alarm);
 }
 
 :root[data-op-style="minimal"] .vehicle .meta {
@@ -700,17 +695,17 @@ const gearClass = computed(() => {
   font-weight: 900;
 }
 
+/* The fuel gauge is the same line as the vitals: a 2px faint track and the
+   fill along it. */
 :root[data-op-style="minimal"] .vehicle .fuel-track {
   width: 40px;
-  height: 4px;
+  height: 2px;
   overflow: hidden;
   border: none;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.14);
 }
 
 :root[data-op-style="minimal"] .vehicle .fuel-fill {
-  border-radius: 999px;
   background: var(--op-red-hi);
 }
 
@@ -719,12 +714,11 @@ const gearClass = computed(() => {
 }
 
 :root[data-op-style="minimal"] .vehicle .chip {
-  --op-radius: 999px;
-  --aug-border-bg: transparent;
+  --aug-border-bg: var(--op-alarm);
+  --aug-border-all: 1px;
   padding: 4px var(--op-space-3);
-  font: 600 var(--op-fs-label) / 1 var(--op-font-body);
-  background: var(--op-alarm);
-  color: rgb(var(--op-plate-rgb));
-  text-shadow: none;
+  font: 700 var(--op-fs-label) / 1 var(--op-font-body);
+  background: none;
+  color: var(--op-alarm);
 }
 </style>

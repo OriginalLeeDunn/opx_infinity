@@ -285,32 +285,22 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
    THE MINIMAL STYLE
    =============================================================================
    The four rules above still hold, in other words. Tone is not available --
-   the minimal surface is grey and white -- so the KIND is a short rule standing
-   just inside the left edge: faint for info, lit for success, white for the two
-   that are wrong. It is a background layer rather than an inset shadow, so it
-   stops short of the rounded corners and stands off the edge; against the
-   edge it read as the border.
+   the minimal surface is grey and white -- and neither is a pane, so a toast
+   is its words and a 2px rule down its leading edge, which carries the KIND:
+   faint for info, lit for success, white for the two that are wrong. No box
+   around it, no ground under it; the ink holds the type off the street.
 
    The kind's own word arrives in capitals (`CONFIRMED`) and is lowered with
    its first letter back. The title is the caller's text and is left as they
-   wrote it. The lifetime is a thin rounded line along the foot. */
+   wrote it. The lifetime is a 1px line along the foot. */
 :root[data-op-style="minimal"] .toast {
-  --rule: rgba(255, 255, 255, 0.28);
+  --rule: rgba(255, 255, 255, 0.32);
   --aug-border-bg: transparent;
-  --op-radius: var(--op-radius-md);
   gap: var(--op-space-3);
-  padding: var(--op-space-3) var(--op-space-4) var(--op-space-3) calc(var(--op-space-4) + 8px);
+  padding: var(--op-space-2) var(--op-space-4) var(--op-space-3) calc(var(--op-space-3) + 2px);
   color: var(--op-text);
-  background-color: rgba(var(--op-plate-rgb), 0.66);
-  background-image:
-    linear-gradient(var(--rule), var(--rule)),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 60%);
-  background-size: 2px calc(100% - 2 * var(--op-space-3) - 4px), auto;
-  background-position: 11px calc(var(--op-space-3) + 2px), 0 0;
-  background-repeat: no-repeat;
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: none;
+  box-shadow: inset 2px 0 0 var(--rule);
 }
 
 :root[data-op-style="minimal"] .toast .glyph {
@@ -329,7 +319,7 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
 
 :root[data-op-style="minimal"] .toast .tag {
   font: 500 var(--op-fs-label) / 1.2 var(--op-font-body);
-  color: var(--op-text-faint);
+  color: var(--op-text-dim);
   opacity: 1;
   text-transform: lowercase !important;
 }
@@ -350,13 +340,12 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
 }
 
 :root[data-op-style="minimal"] .toast .bar {
-  left: var(--op-space-4);
-  bottom: 5px;
-  width: calc(100% - 2 * var(--op-space-4));
-  height: 1.5px;
-  border-radius: 999px;
+  left: calc(var(--op-space-3) + 2px);
+  bottom: 2px;
+  width: calc(100% - var(--op-space-3) - var(--op-space-4) - 2px);
+  height: 1px;
   background: var(--rule);
-  opacity: 0.4;
+  opacity: 0.5;
 }
 
 :root[data-op-style="minimal"] .toast.success {
@@ -370,6 +359,7 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
 
 :root[data-op-style="minimal"] .toast.warning .tag,
 :root[data-op-style="minimal"] .toast.error .tag {
+  font-weight: 700;
   color: var(--op-alarm);
 }
 
@@ -378,11 +368,10 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
   color: var(--op-text);
 }
 
-/* The error alone keeps an edge you can see -- still 1px, still grey-white --
-   because it is the one kind that must be noticed without being read. */
+/* The error alone is boxed -- a white hairline round the words -- because it
+   is the one kind that must be noticed without being read. */
 :root[data-op-style="minimal"] .toast.error {
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  --aug-border-bg: var(--op-alarm);
+  --aug-border-all: 1px;
 }
 </style>

@@ -394,31 +394,48 @@ svg {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The door list is a table in the doorlock window, and on the minimal surface
-   a table is rows without boxes: each row is a pane only on hover, the header
-   is a quiet line of grey, the search is a pill and the add and page steps are
-   round buttons. An unlocked door says so in white, the one loud word here. */
-:root[data-op-style="minimal"] .list .search,
-:root[data-op-style="minimal"] .list .add,
-:root[data-op-style="minimal"] .list .step {
-  --op-radius: 999px;
+   The door list is a table in the doorlock window, and on this look a table is
+   rows of words with nothing behind them: a row goes white under the pointer,
+   the header is a quiet line of grey over a hairline, the search is its text
+   over a 1px line and the add and page steps are hairline squares. An unlocked
+   door says so in white, the one loud word here. */
+:root[data-op-style="minimal"] .list {
+  text-shadow: var(--op-ink);
+}
+
+:root[data-op-style="minimal"] .list .search {
   --aug-border-bg: transparent;
-  background: var(--op-wash);
-  box-shadow: none;
+  padding: 0;
+  background: none;
+  box-shadow: inset 0 -1px 0 var(--op-edge-hover);
+  transition: box-shadow var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .list .search:focus-within {
-  --aug-border-bg: var(--op-edge-on);
-  background: var(--op-wash-on);
+  --aug-border-bg: transparent;
+  box-shadow: inset 0 -1px 0 var(--op-text);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .list .add,
 :root[data-op-style="minimal"] .list .step {
+  --aug-border-bg: var(--op-edge-hover);
+  --aug-border-all: 1px;
   width: 30px;
+  background: none;
+  box-shadow: none;
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .list .add:hover,
+:root[data-op-style="minimal"] .list .step:hover:not(.is-off) {
+  --aug-border-bg: var(--op-edge-on);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .list .thead {
+  padding-bottom: var(--op-space-2);
+  border-bottom: 1px solid var(--op-edge);
   color: var(--op-text-faint);
 }
 
@@ -426,19 +443,27 @@ svg {
   color: var(--op-text);
 }
 
+:root[data-op-style="minimal"] .list .rows {
+  gap: 0;
+}
+
 :root[data-op-style="minimal"] .list .row {
   --aug-border-bg: transparent;
-  background: transparent;
+  background: none;
   box-shadow: none;
-  transition: background-color var(--op-dur-fast) linear;
+  color: var(--op-red-text);
+  transition: color var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .list .row:hover {
-  background: var(--op-wash);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .list .c-name {
   font-weight: 500;
+}
+
+:root[data-op-style="minimal"] .list .row:hover .c-name {
   color: var(--op-text);
 }
 
@@ -447,17 +472,17 @@ svg {
 }
 
 :root[data-op-style="minimal"] .list .c-state.unlocked {
-  color: var(--op-alarm);
+  color: var(--op-text);
   font-weight: 600;
 }
 
 :root[data-op-style="minimal"] .list .icon {
-  border-radius: 50%;
+  background: none;
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .list .icon:hover:not(.off) {
-  background: var(--op-wash);
+  background: none;
   color: var(--op-text);
 }
 </style>

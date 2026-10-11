@@ -1111,30 +1111,31 @@ function focusField(field: Field): void {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A sheet, not a terminal. The three rules above stay true -- the focused field
-   does not leave the plane, a centred form does not tilt, the caret is the one
-   thing the browser fills -- and everything they were written against goes:
+   Type on the street, not a terminal. The three rules above stay true -- the
+   focused field does not leave the plane, a centred form does not tilt, the
+   caret is the one thing the browser fills -- and everything they were written
+   against goes:
 
-     the bay       is one smoked pane, so the interlace and the hard ink over
-                   every glyph are dropped with it
+     the bay       has no ground and no interlace; the scrim behind it dims the
+                   world, and the ink holds each letter off it
      the header    is the title alone; the `// FORM` eyebrow is the instrument
-                   naming itself, and a sheet does not need to
-     a field       is a soft filled row; focus lights the row and draws a fine
-                   edge round it, with no step sideways and no bloom
-     an entry      has no underline: the row is already the box it is typed in
-     a choice      steps with two small round buttons
-     a keycap      is a flat rounded key, the way the rest of this look draws one */
+                   naming itself, and a form does not need to
+     a field       is a label and its entry over a 1px line; focus turns the
+                   label and the line white, with no step sideways, no fill
+                   and no bloom
+     a choice      steps with two bare arrows that go white under the pointer
+     a keycap      is a hairline box around the key */
 :root[data-op-style="minimal"] .scrim {
   background: rgba(0, 0, 0, 0.45);
 }
 
 :root[data-op-style="minimal"] .bay {
-  background: var(--op-plate);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), var(--op-shadow);
+  background: none;
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .bay-inner {
-  text-shadow: none;
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .bay-inner::before {
@@ -1159,35 +1160,34 @@ function focusField(field: Field): void {
 :root[data-op-style="minimal"] .note {
   padding: var(--op-space-1) var(--op-space-5) 0;
   font-size: var(--op-fs-meta);
-  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .list {
-  gap: var(--op-space-2);
-  padding: var(--op-space-4) var(--op-space-4) var(--op-space-4);
+  gap: var(--op-space-1);
+  padding: var(--op-space-3) var(--op-space-5) var(--op-space-4);
 }
 
 :root[data-op-style="minimal"] .field {
-  --op-radius: var(--op-radius-md);
   --aug-border-bg: transparent;
-  padding: 11px var(--op-space-4);
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow: none;
+  padding: 11px 0;
+  background: none;
+  box-shadow: inset 0 -1px 0 var(--op-edge-hover);
   color: var(--op-text);
+  transition: box-shadow var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .field:hover:not(.on) {
   --aug-border-bg: transparent;
-  background: rgba(255, 255, 255, 0.08);
+  background: none;
+  box-shadow: inset 0 -1px 0 var(--op-edge-on);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .field.on {
-  --aug-border-bg: var(--op-edge-on);
-  --aug-border-all: 1px;
+  --aug-border-bg: transparent;
   transform: none;
-  background: rgba(255, 255, 255, 0.10);
-  box-shadow: none;
+  background: none;
+  box-shadow: inset 0 -1px 0 var(--op-text);
   color: var(--op-text);
 }
 
@@ -1198,7 +1198,6 @@ function focusField(field: Field): void {
 
 :root[data-op-style="minimal"] .field.on .label {
   color: var(--op-text);
-  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .entry,
@@ -1230,10 +1229,12 @@ function focusField(field: Field): void {
   opacity: 1;
 }
 
+/* A range: a 2px line, and the share of it filled in white. The fill is the
+   reading, so it stays. */
 :root[data-op-style="minimal"] .rule {
   width: 72px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
+  height: 2px;
+  background: var(--op-edge-hover);
   box-shadow: none;
   overflow: hidden;
 }
@@ -1248,19 +1249,23 @@ function focusField(field: Field): void {
 }
 
 :root[data-op-style="minimal"] .mark {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   padding: 0;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.10);
-  font: 500 var(--op-fs-body) / 20px var(--op-font-body);
+  background: none;
+  color: var(--op-text-dim);
+  font: 500 var(--op-fs-body) / 18px var(--op-font-body);
   text-align: center;
+}
+
+:root[data-op-style="minimal"] .mark:hover {
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .foot {
   gap: var(--op-space-3);
   padding: var(--op-space-3) var(--op-space-5) var(--op-space-5);
-  border-top: 1px solid var(--op-line);
+  border-top: 1px solid var(--op-edge);
 }
 
 :root[data-op-style="minimal"] .status {
@@ -1275,12 +1280,12 @@ function focusField(field: Field): void {
 }
 
 :root[data-op-style="minimal"] .cap {
-  --op-radius: 6px;
-  --aug-border-bg: transparent;
-  height: 22px;
-  padding: 0 8px;
-  background: rgba(255, 255, 255, 0.10);
-  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  --aug-border-bg: var(--op-edge-on);
+  --aug-border-all: 1px;
+  height: 20px;
+  padding: 0 7px;
+  background: none;
+  box-shadow: none;
   font: 600 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text);
 }

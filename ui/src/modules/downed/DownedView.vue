@@ -735,25 +735,24 @@ onUnmounted(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   Not a biomonitor readout: a quiet card in the middle of a darkened screen,
-   saying what has happened in a large light word and offering the two things
-   that can be done about it as two soft buttons.
+   Not a biomonitor readout: words in the middle of a darkened screen, saying
+   what has happened in a large light word and offering the two things that
+   can be done about it as two hairline boxes. No card and no ground under any
+   of it -- the darkening is the screen's, not a pane's, and it is the one wash
+   kept, because it is the moment itself: the street going dark.
 
-   The screen behind is dimmed toward its edges -- the cyberpunk surface has
-   its own red to carry the moment, this one has only the street going dark.
    Every caption here comes from the catalogue in capitals (`FLATLINE`, `DOWN
    FOR`, `CALL FOR HELP`) and is lowered with its first letter put back; the
-   figures are tabular so the clock does not shuffle as it counts. */
+   figures are tabular so the clock does not shuffle as it counts. Holding a
+   choice draws a line along its foot rather than filling it. */
 :root[data-op-style="minimal"] .room {
   background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.30) 0%, rgba(0, 0, 0, 0.62) 100%);
 }
 
 :root[data-op-style="minimal"] .bay {
   --aug-border-bg: transparent;
-  background-color: rgba(var(--op-plate-rgb), 0.74);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  background: none;
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .eyebrow,
@@ -780,7 +779,7 @@ onUnmounted(() => {
 
 :root[data-op-style="minimal"] .eyebrow {
   font: 500 var(--op-fs-label) / 1.2 var(--op-font-body);
-  color: var(--op-text-faint);
+  color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .head h1 {
@@ -805,15 +804,12 @@ onUnmounted(() => {
 
 :root[data-op-style="minimal"] .read dt {
   font: 500 var(--op-fs-label) / 1.2 var(--op-font-body);
-  color: var(--op-text-faint);
+  color: var(--op-text-dim);
 }
 
-:root[data-op-style="minimal"] .read dd {
-  gap: var(--op-space-2);
-  color: var(--op-text);
-}
-
+:root[data-op-style="minimal"] .read dd,
 :root[data-op-style="minimal"] .read dd.live {
+  gap: var(--op-space-2);
   color: var(--op-text);
 }
 
@@ -830,7 +826,7 @@ onUnmounted(() => {
 
 :root[data-op-style="minimal"] .read .unit {
   font: 500 var(--op-fs-label) / 1 var(--op-font-body);
-  color: var(--op-text-faint);
+  color: var(--op-text-dim);
   text-transform: lowercase !important;
 }
 
@@ -840,26 +836,20 @@ onUnmounted(() => {
 }
 
 :root[data-op-style="minimal"] .choice {
-  --op-radius: var(--op-radius-md);
-  --aug-border-bg: transparent;
+  --aug-border-bg: var(--op-edge);
+  --aug-border-all: 1px;
   gap: var(--op-space-3);
   padding: var(--op-space-4);
-  background-color: var(--op-wash);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  transition: background-color var(--op-dur-fast) var(--op-ease);
+  background: none;
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .choice:hover:not(.is-off) {
-  background-color: rgba(255, 255, 255, 0.10);
+  --aug-border-bg: var(--op-edge-hover);
 }
 
 :root[data-op-style="minimal"] .choice.is-on {
-  background-color: var(--op-wash-on);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge-on),
-    inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  --aug-border-bg: var(--op-edge-on);
 }
 
 :root[data-op-style="minimal"] .mark {
@@ -869,6 +859,7 @@ onUnmounted(() => {
   color: var(--op-text-dim);
 }
 
+:root[data-op-style="minimal"] .choice:hover:not(.is-off) .mark,
 :root[data-op-style="minimal"] .choice.is-on .mark {
   color: var(--op-text);
 }
@@ -883,8 +874,11 @@ onUnmounted(() => {
   color: var(--op-text-dim);
 }
 
+/* The hold, as a 2px line filling along the choice's foot. */
 :root[data-op-style="minimal"] .charge {
-  background: rgba(255, 255, 255, 0.14);
+  inset: auto 0 0 0;
+  height: 2px;
+  background: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .notice {

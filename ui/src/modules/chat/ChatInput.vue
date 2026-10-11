@@ -859,28 +859,34 @@ onUnmounted(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A text field, the way a text field looks anywhere quiet: a rounded pane a
-   shade lighter than the log, its edge one step up because it is the box that
-   is live, and no prompt glyph -- the `>` is a terminal's, and the placeholder
-   already says what to do. The keys at its end are the house keycaps.
+   A text field drawn as one line: no box, no fill, no prompt glyph -- just a
+   1px hairline under what is being typed, which comes up to white while the
+   field is live. The `>` is a terminal's, and the placeholder already says
+   what to do. The keys at its end are the house keycaps, hairline boxes.
 
-   The completion list is a pane of its own with its rows inset from the
-   edge. The row Tab will take is lit as a soft rounded wash, where the
-   cyberpunk list draws a red rule; the argument being typed is a small white
-   pill among grey ones, where the cyberpunk list underlines it. */
+   The completion list is lines of type with nothing behind them. The row Tab
+   will take goes white and takes a 2px rule down its leading edge -- the one
+   mark on the list -- and the argument being typed is the white word among
+   grey ones, underlined, where the others are not. With no ground anywhere,
+   the ink is set on the whole input so every word of it carries one. */
 :root[data-op-style="minimal"] .chat-input {
-  gap: 6px;
-  text-shadow: none;
+  gap: 8px;
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .chat-field {
-  --op-radius: var(--op-radius-md);
-  --aug-border-all: 1px;
-  --aug-border-bg: var(--op-edge-on);
+  --aug-border-bg: transparent;
   gap: var(--op-space-3);
-  padding: 10px var(--op-space-3) 10px var(--op-space-4);
-  background: rgba(var(--op-plate-rgb), 0.86);
+  padding: 8px 0 7px;
+  border-bottom: 1px solid var(--op-edge-hover);
+  background: none;
+  box-shadow: none;
   color: var(--op-text);
+  transition: border-color var(--op-dur-fast) linear;
+}
+
+:root[data-op-style="minimal"] .chat-field:focus-within {
+  border-bottom-color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .chat-caret {
@@ -913,21 +919,21 @@ onUnmounted(() => {
 }
 
 :root[data-op-style="minimal"] .chat-suggestions {
-  --op-radius: var(--op-radius-md);
-  padding: 6px;
-  background: rgba(var(--op-plate-rgb), 0.86);
+  --aug-border-bg: transparent;
+  padding: 0;
+  background: none;
+  box-shadow: none;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .chat-suggestion {
   gap: var(--op-space-3);
-  padding: 7px 10px;
-  border-left: 0;
-  border-radius: var(--op-radius-sm);
+  padding: 5px 0 5px 12px;
+  border-left: 2px solid transparent;
 }
 
 :root[data-op-style="minimal"] .chat-suggestion.is-selected {
-  background: var(--op-wash-on);
+  border-left-color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .chat-suggestion-name {
@@ -942,21 +948,17 @@ onUnmounted(() => {
 }
 
 :root[data-op-style="minimal"] .chat-suggestion-params {
-  gap: 4px;
+  gap: 8px;
   font-size: var(--op-fs-label);
 }
 
 :root[data-op-style="minimal"] .chat-param {
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--op-wash);
-  color: var(--op-text-dim);
+  color: var(--op-text-faint);
 }
 
 :root[data-op-style="minimal"] .chat-param.is-here {
-  border-bottom: 0;
-  background: var(--op-text);
-  color: rgb(var(--op-plate-rgb));
+  border-bottom: 1px solid var(--op-text);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .chat-suggestion-help {

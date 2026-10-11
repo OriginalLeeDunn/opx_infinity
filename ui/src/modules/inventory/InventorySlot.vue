@@ -529,61 +529,59 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A cell is a tile of glass, not a framed socket. An empty one is barely there
-   -- a faint pane, no edge -- so a forty-slot bag reads as the few things in
-   it rather than as forty boxes. A filled one is a step brighter with a
-   hairline, and the item's picture sits in the middle of it with its name
-   under it in sentence case. The pointer and the pick light the tile up; the
-   drag leaves a dashed outline where the stack came from.
+   A cell is a square hairline with nothing in it but the item. An empty one is
+   the faintest line on the surface, so a forty-slot bag reads as the few
+   things in it rather than as forty boxes; a filled one is a step brighter;
+   the pointer brings the line up and a pick or a drop target is the one white
+   square in the grid. No fill at any step -- the picture and its words are the
+   whole of what a filled cell is.
 
-   The count is a small pill in the corner and the hotbar number a quiet figure
-   opposite it: both are labels on the tile, not stencils on a crate. */
+   The count and the hotbar number are plain figures in two corners, labels on
+   the square rather than badges on it. */
 :root[data-op-style="minimal"] .cell {
-  --op-radius: 12px;
-  --aug-border-bg: transparent;
+  --aug-border-bg: var(--op-edge);
   padding: 6px 8px;
   color: var(--op-text-dim);
-  background: rgba(255, 255, 255, 0.035);
+  background: none;
   box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .cell.filled {
-  --aug-border-bg: var(--op-edge);
+  --aug-border-bg: rgba(255, 255, 255, 0.18);
   color: var(--op-text);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 70%),
-    rgba(255, 255, 255, 0.05);
+  background: none;
 }
 
+/* The weight stays the house hover weight (1.5px, held by the suite); only the
+   line's brightness is this look's. */
 :root[data-op-style="minimal"] .cell.filled:hover:not(.over):not(.dragging) {
-  --aug-border-bg: var(--op-edge-hover);
+  --aug-border-bg: var(--op-edge-on);
   color: var(--op-text);
-  background: rgba(255, 255, 255, 0.10);
+  background: none;
 }
 
 :root[data-op-style="minimal"] .cell.over,
 :root[data-op-style="minimal"] .cell.selected {
-  --aug-border-bg: var(--op-edge-on);
+  --aug-border-bg: var(--op-text);
   --aug-border-all: 1px;
   color: var(--op-text);
-  background: rgba(255, 255, 255, 0.15);
+  background: none;
   filter: none;
 }
 
-/* The slot the stack left: a dashed well, the shape a reader takes for "this
-   came from here", instead of the cyberpunk sprite's four corner brackets. */
+/* The slot the stack left: a dashed square, the shape a reader takes for
+   "this came from here", instead of the cyberpunk sprite's corner brackets. */
 :root[data-op-style="minimal"] .cell.dragging,
 :root[data-op-style="minimal"] .cell.dragging:hover {
   border: 1px dashed rgba(255, 255, 255, 0.35);
   border-image: none;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
+  background: none;
 }
 
 :root[data-op-style="minimal"] .key {
   top: 6px;
   left: 8px;
-  font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
+  font: 500 var(--op-fs-micro) / 1 var(--op-font-body);
   opacity: 0.5;
 }
 
@@ -595,10 +593,10 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
   inset: 14px 10px 24px;
 }
 
-/* A soft shadow under the picture lifts it off the glass. A filter, but on an
-   image that changes when the player moves a stack and never on a clock. */
+/* A soft shadow under the picture lifts it off the street. A filter, but on
+   an image that changes when the player moves a stack and never on a clock. */
 :root[data-op-style="minimal"] .art img {
-  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.55));
 }
 
 :root[data-op-style="minimal"] .initials {
@@ -608,14 +606,13 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
 }
 
 :root[data-op-style="minimal"] .count {
-  top: 5px;
-  right: 6px;
-  padding: 2px 6px;
-  border-radius: 999px;
-  font: 600 var(--op-fs-micro) / 1.2 var(--op-font-body);
+  top: 6px;
+  right: 8px;
+  padding: 0;
+  font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text);
-  background: rgba(0, 0, 0, 0.45);
-  text-shadow: none;
+  background: none;
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .rounds {
@@ -625,24 +622,23 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
   color: var(--op-text-dim);
 }
 
+/* Wear: a 1px track and a 2px reading on it, like the load. */
 :root[data-op-style="minimal"] .wear {
   left: 8px;
   right: 8px;
   bottom: 21px;
   height: 2px;
-  border-radius: 999px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.12);
+  background: linear-gradient(rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.18)) center / 100% 1px no-repeat;
   box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .wear i {
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.6);
 }
 
 :root[data-op-style="minimal"] .wear.worn i {
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.85);
 }
 
 :root[data-op-style="minimal"] .wear.spent i {

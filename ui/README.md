@@ -165,24 +165,28 @@ its own colours. The style is the one word on the wire: `palette.lua` and `theme
 hold the same two-word allowlist, and the page writes it as `data-op-style` on `<html>`.
 
 **The minimal style is a different object, not a quieter cyberpunk.** The cyberpunk look
-is an instrument -- outlined, chamfered, tilted, in capitals and mono. The minimal look is
-smoked glass: Manrope in sentence case, rounded panes and pills, an edge that is barely
-there, and a state that is the pane lighting up rather than the outline thickening.
+is an instrument -- outlined, chamfered, tilted, in capitals and mono, on dark plates.
+The minimal look is type on the street: Manrope in sentence case, square everywhere, no
+ground behind anything -- no plate, no pane, no wash -- a hairline only where a box must
+read as one, and a state that is the words going white, never a fill.
 
 `design-system/minimal.css` is its vocabulary, every rule scoped to
 `:root[data-op-style="minimal"]` -- with the attribute absent or `cyberpunk`, the page is
 exactly what the other sheets draw. Geometry there outranks every module; paint is
 wrapped in `:where()` so states and module rules still beat it.
 
-- **The face is Manrope, as `'OPX Minimal'`** (`fonts.css`). The family name is where
-  the weight map lives: every weight a surface asks for is drawn one step lighter
-  (700 → 600, 600 → 500, 900 → 700), so no surface restates a weight. All three font
-  tokens point at it, mono included; figures are tabular page-wide.
-- **No capitals and no tracking, anywhere.** One `!important` rule in `minimal.css` and
-  the only one in the design system: thirty-three module rules ask for uppercase by
+- **The face is Manrope, as `'OPX Minimal'`** (`fonts.css`): one variable file declared
+  over 200..600, so a surface asking for 700 or 900 is drawn at 600 and no surface
+  restates a weight. All three font tokens point at it, mono included; figures are
+  tabular page-wide.
+- **No capitals and no tracking, anywhere.** An `!important` rule in `minimal.css`: thirty-three module rules ask for uppercase by
   name, and "never, on this look" is a claim about all of them at once.
-- **The edge and the wash are tokens**: `--op-edge`, `--op-edge-hover`, `--op-edge-on`,
-  `--op-wash`, `--op-wash-on`, and `--op-radius-sm/md/lg` scaled from `CUT`. A
+- **No radius and no ground, anywhere.** Every radius on the page is forced to zero
+  (the second `!important` rule), and the grounds are cleared at their compositions
+  (`--op-plate`, `--op-plate-quiet`, `--op-plate-lit`) rather than their alphas,
+  because the alphas are operator knobs that arrive inline and would win. What is
+  left to fill is a functional mark: a gauge's fill, a slider's thumb, a tick.
+- **The edge is a token**: `--op-edge`, `--op-edge-hover`, `--op-edge-on`. A
   surface's minimal block speaks in these, not in its own rgba.
 
 - **Grey and white, and nothing else.** The shipped `minimal` block is a neutral grey

@@ -1640,14 +1640,15 @@ onUnmounted(() => {
    =============================================================================
    The cyberpunk cascade is a column of outlined plates, each its own object,
    leaning toward the screen edge and jumping out at the pointer. Here a column
-   is ONE sheet of glass and the rows are lines on it: no frame around any row,
-   the hovered one lit by a soft pane behind it, nothing moves. A folder that is
-   open keeps that pane while its own sheet stands beside it. That is the shape
-   of a context menu, which is what this is.
+   is a list of words standing next to what the eye is on: no sheet under it,
+   no frame around any row, nothing moves. The pointed row goes white and takes
+   a 2px rule down its leading edge; a folder that is open keeps the rule while
+   its own list stands beside it. The ink is all that holds the words off the
+   street, which is why it is the house ink and not a lighter one.
 
    THE DANGER ROW CANNOT BE RED, and the minimal surface has no second colour
-   to spend on it. It is white at the heavier weight with a hairline of its own,
-   so it reads as the one row that is not like the others before it is read. */
+   to spend on it. It is white at the heavier weight, so it reads as the one
+   row that is not like the others before it is read. */
 :root[data-op-style="minimal"] .column {
   width: 236px;
   perspective: none;
@@ -1655,31 +1656,24 @@ onUnmounted(() => {
 }
 
 :root[data-op-style="minimal"] .plane {
-  border-radius: 14px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 45%),
-    rgba(22, 22, 22, 0.86);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge-hover),
-    0 12px 32px rgba(0, 0, 0, 0.45);
-  overflow: hidden;
+  background: none;
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .rows {
-  gap: 1px;
-  padding: 6px;
+  gap: 0;
+  padding: 0;
 }
 
 :root[data-op-style="minimal"] .row {
-  --op-radius: 8px;
   --aug-border-bg: transparent;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 7px 12px;
   font: 500 var(--op-fs-body) / 1.2 var(--op-font-body);
-  color: var(--op-text);
-  background: transparent;
+  color: var(--op-text-dim);
+  background: none;
   box-shadow: none;
-  text-shadow: none;
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .row .label {
@@ -1694,7 +1688,7 @@ onUnmounted(() => {
 
 :root[data-op-style="minimal"] .glyph svg {
   stroke-width: 1.6;
-  filter: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.85));
 }
 
 :root[data-op-style="minimal"] .value,
@@ -1707,37 +1701,39 @@ onUnmounted(() => {
   font: 400 var(--op-fs-meta) / 1.35 var(--op-font-body);
 }
 
+/* A square hairline; ticked, the mark is the one fill a row may carry. */
 :root[data-op-style="minimal"] .check {
-  width: 14px;
-  height: 14px;
-  border-radius: 4px;
-  border-color: rgba(255, 255, 255, 0.35);
+  width: 13px;
+  height: 13px;
+  border-color: rgba(255, 255, 255, 0.45);
+  background: none;
 }
 
 :root[data-op-style="minimal"] .check.ticked {
-  border-color: transparent;
-  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--op-text);
+  background: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .check svg {
   stroke: rgb(var(--op-plate-rgb));
-  stroke-linecap: round;
 }
 
-/* --- the states: the pane behind the row lights up -------------------------- */
+/* --- the states: the words go white and the leading edge takes a rule ------- */
 :root[data-op-style="minimal"] .row:hover:not(.off):not(.pending):not(.open),
 :root[data-op-style="minimal"] .plane.keyboard .row:focus:not(.off):not(.pending):not(.open),
 :root[data-op-style="minimal"] .row.danger:hover:not(.off):not(.pending),
 :root[data-op-style="minimal"] .plane.keyboard .row.danger:focus:not(.off):not(.pending) {
   --aug-border-bg: transparent;
   color: var(--op-text);
-  background: rgba(255, 255, 255, 0.12);
+  background: none;
+  box-shadow: inset 2px 0 0 var(--op-text);
   transform: none;
   filter: none;
 }
 
 :root[data-op-style="minimal"] .row:hover:not(.off):not(.pending):not(.open) .glyph,
-:root[data-op-style="minimal"] .plane.keyboard .row:focus:not(.off):not(.pending):not(.open) .glyph {
+:root[data-op-style="minimal"] .plane.keyboard .row:focus:not(.off):not(.pending):not(.open) .glyph,
+:root[data-op-style="minimal"] .row.open .glyph {
   color: var(--op-text);
 }
 
@@ -1745,25 +1741,21 @@ onUnmounted(() => {
 :root[data-op-style="minimal"] .plane.keyboard .row:focus:not(.off):not(.pending):not(.open) .label,
 :root[data-op-style="minimal"] .row.open .label,
 :root[data-op-style="minimal"] .row.pending .label {
-  text-shadow: none;
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .row.open,
 :root[data-op-style="minimal"] .row.pending {
   --aug-border-bg: transparent;
   color: var(--op-text);
-  background: rgba(255, 255, 255, 0.08);
+  background: none;
+  box-shadow: inset 2px 0 0 var(--op-edge-on);
   transform: none;
   filter: none;
 }
 
-:root[data-op-style="minimal"] .row.pending .check.ticked {
-  background: rgba(255, 255, 255, 0.92);
-}
-
 :root[data-op-style="minimal"] .row.danger {
-  --aug-border-bg: rgba(255, 255, 255, 0.28);
-  --aug-border-all: 1px;
+  --aug-border-bg: transparent;
   color: var(--op-alarm);
 }
 
@@ -1782,11 +1774,11 @@ onUnmounted(() => {
 
 /* --- waiting and refused ------------------------------------------------------ */
 :root[data-op-style="minimal"] .status {
-  padding: 12px 14px;
-  background: transparent;
+  padding: 8px 12px;
+  background: none;
   font: 500 var(--op-fs-meta) / 1.3 var(--op-font-body);
   color: var(--op-text-dim);
-  text-shadow: none;
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .status.bad {
@@ -1794,14 +1786,13 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-/* A round spinner that turns smoothly, rather than a square ticking through
-   eight positions like a scanner. */
+/* A square outline that turns smoothly, rather than ticking through eight
+   positions like a scanner. Square because nothing on this look is round. */
 :root[data-op-style="minimal"] .spin {
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
   border-top-color: var(--op-text);
-  border-radius: 50%;
   animation-timing-function: linear;
 }
 </style>

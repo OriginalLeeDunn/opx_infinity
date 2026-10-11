@@ -563,34 +563,31 @@ useBridge('open77:anchors', (payload: Payload) => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A name over a head is a small pill of smoked glass: the player id in a disc
-   at its leading end, the name beside it, and the account and citizen id as a
-   quieter second line. The pill is the tag's ground, so the heavy two-pass ink
-   it needed over open street is gone.
+   A name over a head is two lines of type and nothing behind them: the player
+   id in a hairline box at the leading end, the name beside it, and the account
+   and citizen id as a quieter second line. With no ground, the type is held
+   off the street by the design system's ink, which is why this block keeps it.
 
-   STAFF INVERTS THE DISC -- white with dark figures -- and the staff word is a
-   small white pill of its own. On a grey surface that is the only mark that
-   can stand apart, and it is the one this tag exists to show. The word comes
-   in capitals and is lowered, first letter back; a player's name is theirs and
+   STAFF IS SAID IN WHITE: the id box and the staff word go white and heavy,
+   each in a white hairline. On a grey surface that is the only mark that can
+   stand apart, and it is the one this tag exists to show. The word comes in
+   capitals and is lowered, first letter back; a player's name is theirs and
    is left exactly as written. */
 :root[data-op-style="minimal"] .tag {
-  padding: 4px var(--op-space-3) 4px 4px;
-  border-radius: 999px;
-  background: rgba(var(--op-plate-rgb), 0.58);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  text-shadow: none;
+  padding: 2px 0;
+  background: none;
+  box-shadow: none;
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .id {
-  --op-radius: 999px;
-  --aug-border-bg: transparent;
-  min-width: 24px;
-  height: 24px;
+  --aug-border-bg: var(--op-edge-hover);
+  --aug-border-all: 1px;
+  min-width: 22px;
+  height: 22px;
   padding: 0 6px;
   font: 600 var(--op-fs-label) / 1 var(--op-font-body);
-  background: rgba(255, 255, 255, 0.12);
+  background: none;
   color: var(--op-text);
 }
 
@@ -599,9 +596,9 @@ useBridge('open77:anchors', (payload: Payload) => {
   padding-left: var(--op-space-2);
 }
 
-/* No id disc (`TECHNICAL` off): the name takes the inset the disc gave it. */
+/* No id box (`TECHNICAL` off): nothing to stand off from. */
 :root[data-op-style="minimal"] .plate.bare {
-  padding-left: 6px;
+  padding-left: 0;
 }
 
 :root[data-op-style="minimal"] .name {
@@ -617,8 +614,9 @@ useBridge('open77:anchors', (payload: Payload) => {
 }
 
 :root[data-op-style="minimal"] .id.staff {
-  background: var(--op-alarm);
-  color: rgb(var(--op-plate-rgb));
+  --aug-border-bg: var(--op-alarm);
+  font-weight: 900;
+  color: var(--op-alarm);
 }
 
 :root[data-op-style="minimal"] .plate.staff .name {
@@ -634,11 +632,11 @@ useBridge('open77:anchors', (payload: Payload) => {
 :root[data-op-style="minimal"] .badge {
   align-self: flex-start;
   margin-top: 2px;
-  padding: 2px 6px;
-  border-radius: 999px;
-  font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
-  background: var(--op-alarm);
-  color: rgb(var(--op-plate-rgb));
+  padding: 1px 5px;
+  border: 1px solid var(--op-alarm);
+  font: 700 var(--op-fs-micro) / 1 var(--op-font-body);
+  background: none;
+  color: var(--op-alarm);
   opacity: 1;
   text-transform: lowercase !important;
 }

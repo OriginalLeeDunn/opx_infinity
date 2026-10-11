@@ -303,11 +303,12 @@ const percent = computed(() => Math.floor(fraction.value * 100))
    THE MINIMAL STYLE
    =============================================================================
    A title card, not a terminal booting: the film still plays behind a deeper,
-   neutral scrim, and the bay becomes a flat card of smoked glass with the
-   wordmark in Manrope, the phase and the percentage on one line, and a 3px
-   line for the progress with its ends rounded. The `//` in the wordmark keeps
-   its place and loses its red: it is set in the dim grey, which is the only
-   accent this look has. */
+   neutral scrim -- the cover's own, and the one dark thing this look allows,
+   because it is a cover over the game and not a ground under a component --
+   and the bay is no box at all: the wordmark in Manrope, the phase and the
+   percentage on one line, and a 1px line for the progress. The `//` in the
+   wordmark keeps its place and loses its red: it is set in the dim grey,
+   which is the only accent this look has. */
 :root[data-op-style="minimal"] .scrim {
   background:
     linear-gradient(to top, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.45) 30%, rgba(0, 0, 0, 0) 65%),
@@ -319,13 +320,15 @@ const percent = computed(() => Math.floor(fraction.value * 100))
 }
 
 :root[data-op-style="minimal"] .bay {
-  --op-radius: var(--op-radius-lg);
-  background: rgba(var(--op-plate-rgb), 0.62);
+  --aug-border-bg: transparent;
+  background: none;
+  box-shadow: none;
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .bay-inner {
   gap: var(--op-space-5);
-  padding: var(--op-space-5) var(--op-space-5) var(--op-space-4);
+  padding: 0;
 }
 
 :root[data-op-style="minimal"] .brand {
@@ -362,11 +365,11 @@ const percent = computed(() => Math.floor(fraction.value * 100))
   color: var(--op-text-dim);
 }
 
+/* The track is the hairline itself: 1px of the edge, filled in white. */
 :root[data-op-style="minimal"] .track {
-  --op-radius: 999px;
-  height: 3px;
+  height: 1px;
   padding: 0;
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--op-edge-hover);
 }
 
 :root[data-op-style="minimal"] .track::after {
@@ -375,7 +378,6 @@ const percent = computed(() => Math.floor(fraction.value * 100))
 
 :root[data-op-style="minimal"] .bar {
   clip-path: none;
-  border-radius: 999px;
 }
 
 :root[data-op-style="minimal"] .fill {

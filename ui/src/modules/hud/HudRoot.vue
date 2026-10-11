@@ -286,10 +286,10 @@ onMounted(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The HUD's two-pass ink is sized for red capitals over a blown-out plaza. On
-   the minimal look every block sits on a pane of its own, so the type needs
-   only the light shadow the design system gives it; and it arrives on the
-   ease, not the stutter. */
+   Nothing on the minimal HUD has a ground under it, so every glyph is held off
+   the street by the design system's ink alone -- which that look makes heavy
+   for exactly this. The HUD's own two-pass shadow is dropped so the two do not
+   stack, and the block arrives on the ease, not the stutter. */
 :root[data-op-style="minimal"] .hud {
   --hud-shadow: none;
   text-shadow: var(--op-ink);

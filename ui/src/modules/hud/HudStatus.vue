@@ -334,27 +334,23 @@ onUnmounted(stop)
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A chip is a pill of smoked glass with its letter in a small disc. The tone
-   still climbs -- resting, lit, white -- but on the fill and the type rather
-   than on a stroke, and a BAD chip inverts: a white pill with dark type. That
-   is the one filled thing on the HUD, which is what makes it read first.
+   A chip is a word with its letter in front of it, inside a hairline box that
+   is barely there -- no fill, no pill. The tone climbs on the type and the
+   line: resting is dim, lit is white with the line up, and a BAD chip is
+   white, bold, in a white line, the loudest thing on the strip without a
+   single filled pixel.
 
    Labels arrive in capitals from whoever raised the chip; they are lowered and
-   the first letter put back. The countdown is a fine line along the pill's
-   foot, inset so it never runs into the rounded ends. */
+   the first letter put back. The countdown is a fine line along the box's foot. */
 :root[data-op-style="minimal"] .strip {
   gap: 6px;
 }
 
 :root[data-op-style="minimal"] .strip .chip {
-  --op-radius: 999px;
-  --aug-border-bg: transparent;
-  padding: 4px var(--op-space-3) 4px var(--op-space-3);
+  --aug-border-bg: var(--op-edge);
+  --aug-border-all: 1px;
+  padding: 4px var(--op-space-3);
   font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
-  background: rgba(var(--op-plate-rgb), 0.62);
-  box-shadow:
-    inset 0 0 0 1px var(--op-edge),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
   color: var(--op-text-dim);
 }
 
@@ -366,53 +362,41 @@ onUnmounted(stop)
   text-transform: uppercase !important;
 }
 
-/* Pulled into the pill's own padding, so a chip with no letter keeps an even
-   inset and one with a letter sits its disc 3px from the edge. */
+/* The letter is set apart by weight and a thin rule after it, not by a disc. */
 :root[data-op-style="minimal"] .strip .chip .icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  margin-left: calc(4px - var(--op-space-3));
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.10);
+  padding-right: var(--op-space-2);
+  border-right: 1px solid var(--op-edge-hover);
   font: 900 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .strip .chip .time {
-  left: 12px;
-  right: 12px;
-  bottom: 0;
-  width: auto;
-  height: 1.5px;
-  border-radius: 999px;
+  height: 1px;
   background: currentcolor;
-  opacity: 0.45;
+  opacity: 0.5;
 }
 
 :root[data-op-style="minimal"] .strip .chip.accent,
 :root[data-op-style="minimal"] .strip .chip.warn,
 :root[data-op-style="minimal"] .strip .chip.shock {
+  --aug-border-bg: var(--op-edge-on);
   color: var(--op-text);
-  background: rgba(var(--op-plate-lit-rgb), 0.78);
 }
 
 :root[data-op-style="minimal"] .strip .chip.bad {
-  background: var(--op-alarm);
-  box-shadow: none;
-  color: rgb(var(--op-plate-rgb));
-  text-shadow: none;
+  --aug-border-bg: var(--op-alarm);
+  --aug-border-all: 1px;
+  font-weight: 700;
+  color: var(--op-alarm);
 }
 
 :root[data-op-style="minimal"] .strip .chip.bad .icon {
-  background: rgba(0, 0, 0, 0.12);
-  color: rgb(var(--op-plate-rgb));
+  border-right-color: var(--op-alarm);
+  color: var(--op-alarm);
 }
 
 :root[data-op-style="minimal"] .strip .chip.overflow {
-  border: none;
+  border: 1px dashed var(--op-edge-hover);
   color: var(--op-text-faint);
 }
 </style>

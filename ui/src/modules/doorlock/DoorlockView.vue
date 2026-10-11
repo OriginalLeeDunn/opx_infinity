@@ -642,26 +642,28 @@ function giveKey(): void {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The editor's shell as a window rather than a console: one smoked pane, the
-   title alone in the header -- the `OPX // 77` kicker is the instrument's
-   serial plate -- a round close button, and a delete confirm that is a small
-   sheet over a dimmed window. The destructive answer is the solid white pill:
-   this look has no red to spend on danger, so it marks the one answer that
-   acts with the one filled control. */
+   The editor's shell as a window drawn in one hairline: no ground, the title
+   alone in the header -- the `OPX // 77` kicker is the instrument's serial
+   plate -- a bare `x` to close, and a delete confirm that is a hairline box
+   over the dimmed window. The destructive answer is the one drawn in white,
+   box and word: this look has no red to spend on danger and no fill to spend
+   on anything, so the one answer that acts is the brightest line on screen. */
 :root[data-op-style="minimal"] .bay {
-  background: var(--op-plate);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), var(--op-shadow);
+  --aug-border-bg: var(--op-edge);
+  background: none;
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .bay-inner {
   padding: var(--op-space-5);
   color: var(--op-text);
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .head {
   padding: 0 var(--op-space-7) var(--op-space-4) 0;
   margin-bottom: var(--op-space-4);
-  border-bottom: 1px solid var(--op-line);
+  border-bottom: 1px solid var(--op-edge);
 }
 
 :root[data-op-style="minimal"] .head-kicker {
@@ -678,21 +680,20 @@ function giveKey(): void {
 }
 
 :root[data-op-style="minimal"] .close {
-  --op-radius: 50%;
   --aug-border-bg: transparent;
   top: var(--op-space-4);
   right: var(--op-space-4);
   width: 28px;
   height: 28px;
-  background: rgba(255, 255, 255, 0.08);
+  background: none;
   box-shadow: none;
   font: 400 15px / 1 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .close:hover {
-  --aug-border-bg: transparent;
-  background: rgba(255, 255, 255, 0.16);
+  --aug-border-bg: var(--op-edge-on);
+  background: none;
   color: var(--op-text);
 }
 
@@ -701,13 +702,17 @@ function giveKey(): void {
   font-weight: 600;
 }
 
+/* The veil stays: it dims the window behind the question, it is not a ground
+   under a component. */
 :root[data-op-style="minimal"] .veil {
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.55);
 }
 
 :root[data-op-style="minimal"] .ask {
-  background: var(--op-plate-lit);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), var(--op-shadow);
+  --aug-border-bg: var(--op-edge-on);
+  background: none;
+  box-shadow: none;
+  text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .ask-inner {
@@ -716,21 +721,30 @@ function giveKey(): void {
 }
 
 :root[data-op-style="minimal"] .btn {
-  --op-radius: 999px;
-  --aug-border-bg: transparent;
+  --aug-border-bg: var(--op-edge-hover);
+  --aug-border-all: 1px;
   padding: 9px var(--op-space-5);
-  background: rgba(255, 255, 255, 0.08);
+  background: none;
   box-shadow: none;
+  color: var(--op-red-text);
+}
+
+:root[data-op-style="minimal"] .btn:hover {
+  --aug-border-bg: var(--op-edge-on);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .btn.danger {
-  --aug-border-bg: transparent;
-  background: var(--op-text);
-  color: rgb(var(--op-plate-rgb));
+  --aug-border-bg: var(--op-text);
+  background: none;
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .btn .op-label {
   font-weight: 500;
+}
+
+:root[data-op-style="minimal"] .btn.danger .op-label {
+  font-weight: 600;
 }
 </style>

@@ -39650,7 +39650,12 @@ do
 			and slurp('ui/src/design-system/shapes.css'):find('@import', 1, true) == nil)
 	check('the build refuses a shape token shapes.css does not draw',
 		slurp('vite.config.ts'):find("new Set(['tr-clip', 'bl-clip', 'border'])", 1, true) ~= nil)
-	check('the page stays well under its 591 kB with the library', #built > 0 and #built < 520000,
+	-- 600 kB, raised from 520 when the page grew a second look: the minimal style is
+	-- ~72 kB of rules across every surface and one 25 kB variable face, inlined.
+	-- The guard still does its job -- the library's core alone was 130 kB, and the
+	-- checks above find its tokens by name -- it just no longer pretends the page
+	-- carries one look.
+	check('the page stays under 600 kB, two looks and no library', #built > 0 and #built < 600000,
 		tostring(#built))
 
 	local types = slurp('ui/src/bridge/types.ts')
