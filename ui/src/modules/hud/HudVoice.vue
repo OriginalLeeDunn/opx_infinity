@@ -651,7 +651,8 @@ function share(value: number): number {
    them. The level is a 3px column that fills smoothly -- the segmented ladder
    is a VU meter, an instrument -- over a faint track, the one ground kept,
    because an empty meter has to show its height. The channels are small
-   square marks; the keys and the receive count are hairline boxes. The state
+   square marks; the keys and the receive count are THINGS, each on its own
+   small dark square -- the block that holds them has none. The state
    sets the tone from the grey ramp: resting is faint, talking is white, muted
    keeps its slash.
 
@@ -761,13 +762,14 @@ function share(value: number): number {
   height: 22px;
   padding: 0 7px;
   font: 600 var(--op-fs-meta) / 1 var(--op-font-body);
-  background: none;
+  background: var(--op-plate-lit);
   box-shadow: none;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .voice .cap.quiet {
   --aug-border-bg: var(--op-edge);
+  background: var(--op-plate);
   color: var(--op-text-dim);
 }
 
@@ -777,7 +779,7 @@ function share(value: number): number {
   gap: 6px;
   padding: 3px var(--op-space-3);
   font: 600 var(--op-fs-label) / 1 var(--op-font-body);
-  background: none;
+  background: var(--op-plate);
   color: var(--op-text);
   filter: none;
 }

@@ -750,11 +750,11 @@ function choose(row: Slot): void {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A LIST OF WORDS, NOT A RACK OF PLATES. The cyberpunk menu is a column of
-   framed rows on a bay; here neither the bay nor a row has a box or a ground.
-   A row is a line of type in the voice's grey until it is pointed at (it goes
-   white) or chosen (white, and a 2px rule down its leading edge), so the list
-   reads as a list and the state is where the eye already is.
+   A RACK OF SQUARE PLATES WITH NOTHING AROUND THEM. Each row keeps its own dark
+   ground -- it is a thing to press -- but the bay that held them in the
+   cyberpunk look has neither a frame nor a ground: the rows stand on the
+   street as a column. Pointed at, a row's ground lifts; chosen, it lifts
+   further, its words go white and a 2px rule runs down its leading edge.
 
    The chosen row does not step out of the column: the pop is a plane pushed
    toward the player, and on a flat surface it is only a row out of line. A
@@ -762,27 +762,34 @@ function choose(row: Slot): void {
    position -- and a separator is a quiet label with no rule under it. */
 :root[data-op-style="minimal"] .bay {
   --aug-border-bg: transparent;
+  background: none;
 }
 
 :root[data-op-style="minimal"] .list {
-  gap: 0;
+  gap: 2px;
   padding: var(--op-space-2) 0;
 }
 
 :root[data-op-style="minimal"] .row {
   --aug-border-bg: transparent;
   padding: 8px var(--op-space-3);
+  background: var(--op-plate);
   color: var(--op-red-text);
-  transition: color var(--op-dur-fast) linear, box-shadow var(--op-dur-fast) linear;
+  transition:
+    color var(--op-dur-fast) linear,
+    background-color var(--op-dur-fast) linear,
+    box-shadow var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .row.is-hover,
 :root[data-op-style="minimal"] .row:hover:not(.is-off):not(.is-on) {
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .row.on {
   transform: none;
+  background: var(--op-plate-lit);
   color: var(--op-text);
   box-shadow: inset 2px 0 0 var(--op-text);
 }

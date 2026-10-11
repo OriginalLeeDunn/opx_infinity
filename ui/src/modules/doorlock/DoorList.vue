@@ -394,19 +394,19 @@ svg {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The door list is a table in the doorlock window, and on this look a table is
-   rows of words with nothing behind them: a row goes white under the pointer,
-   the header is a quiet line of grey over a hairline, the search is its text
-   over a 1px line and the add and page steps are hairline squares. An unlocked
-   door says so in white, the one loud word here. */
+   The door list is a table in the doorlock window. The window is bare; each
+   row is a thing on its own dark plate that lifts under the pointer, the
+   header is a quiet line of grey over a hairline, the search is a plate with a
+   1px line under its text, and the add and page steps are small square
+   plates. An unlocked door says so in white, the one loud word here. */
 :root[data-op-style="minimal"] .list {
   text-shadow: var(--op-ink);
 }
 
 :root[data-op-style="minimal"] .list .search {
   --aug-border-bg: transparent;
-  padding: 0;
-  background: none;
+  padding: 0 var(--op-space-3);
+  background: var(--op-plate);
   box-shadow: inset 0 -1px 0 var(--op-edge-hover);
   transition: box-shadow var(--op-dur-fast) linear;
 }
@@ -419,17 +419,17 @@ svg {
 
 :root[data-op-style="minimal"] .list .add,
 :root[data-op-style="minimal"] .list .step {
-  --aug-border-bg: var(--op-edge-hover);
+  --aug-border-bg: transparent;
   --aug-border-all: 1px;
   width: 30px;
-  background: none;
+  background: var(--op-plate);
   box-shadow: none;
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .list .add:hover,
 :root[data-op-style="minimal"] .list .step:hover:not(.is-off) {
-  --aug-border-bg: var(--op-edge-on);
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
@@ -444,18 +444,19 @@ svg {
 }
 
 :root[data-op-style="minimal"] .list .rows {
-  gap: 0;
+  gap: 2px;
 }
 
 :root[data-op-style="minimal"] .list .row {
   --aug-border-bg: transparent;
-  background: none;
+  background: var(--op-plate);
   box-shadow: none;
   color: var(--op-red-text);
-  transition: color var(--op-dur-fast) linear;
+  transition: color var(--op-dur-fast) linear, background-color var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .list .row:hover {
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 

@@ -1640,11 +1640,11 @@ onUnmounted(() => {
    =============================================================================
    The cyberpunk cascade is a column of outlined plates, each its own object,
    leaning toward the screen edge and jumping out at the pointer. Here a column
-   is a list of words standing next to what the eye is on: no sheet under it,
-   no frame around any row, nothing moves. The pointed row goes white and takes
-   a 2px rule down its leading edge; a folder that is open keeps the rule while
-   its own list stands beside it. The ink is all that holds the words off the
-   street, which is why it is the house ink and not a lighter one.
+   is a stack of rows standing next to what the eye is on: each row is a thing
+   on its own dark square, the column that holds them has no sheet, and nothing
+   moves. The pointed row's ground lights up, its words go white and it takes a
+   2px rule down its leading edge; a folder that is open keeps the lit ground
+   and the rule while its own list stands beside it.
 
    THE DANGER ROW CANNOT BE RED, and the minimal surface has no second colour
    to spend on it. It is white at the heavier weight, so it reads as the one
@@ -1661,7 +1661,7 @@ onUnmounted(() => {
 }
 
 :root[data-op-style="minimal"] .rows {
-  gap: 0;
+  gap: 2px;
   padding: 0;
 }
 
@@ -1671,7 +1671,7 @@ onUnmounted(() => {
   padding: 7px 12px;
   font: 500 var(--op-fs-body) / 1.2 var(--op-font-body);
   color: var(--op-text-dim);
-  background: none;
+  background: var(--op-plate);
   box-shadow: none;
   text-shadow: var(--op-ink);
 }
@@ -1718,14 +1718,14 @@ onUnmounted(() => {
   stroke: rgb(var(--op-plate-rgb));
 }
 
-/* --- the states: the words go white and the leading edge takes a rule ------- */
+/* --- the states: the ground lights, the words go white, the edge takes a rule - */
 :root[data-op-style="minimal"] .row:hover:not(.off):not(.pending):not(.open),
 :root[data-op-style="minimal"] .plane.keyboard .row:focus:not(.off):not(.pending):not(.open),
 :root[data-op-style="minimal"] .row.danger:hover:not(.off):not(.pending),
 :root[data-op-style="minimal"] .plane.keyboard .row.danger:focus:not(.off):not(.pending) {
   --aug-border-bg: transparent;
   color: var(--op-text);
-  background: none;
+  background: var(--op-plate-lit);
   box-shadow: inset 2px 0 0 var(--op-text);
   transform: none;
   filter: none;
@@ -1748,7 +1748,7 @@ onUnmounted(() => {
 :root[data-op-style="minimal"] .row.pending {
   --aug-border-bg: transparent;
   color: var(--op-text);
-  background: none;
+  background: var(--op-plate-lit);
   box-shadow: inset 2px 0 0 var(--op-edge-on);
   transform: none;
   filter: none;
@@ -1770,12 +1770,13 @@ onUnmounted(() => {
 :root[data-op-style="minimal"] .row.off {
   --aug-border-bg: transparent;
   color: var(--op-text-faint);
+  background: var(--op-plate-quiet);
 }
 
 /* --- waiting and refused ------------------------------------------------------ */
 :root[data-op-style="minimal"] .status {
   padding: 8px 12px;
-  background: none;
+  background: var(--op-plate);
   font: 500 var(--op-fs-meta) / 1.3 var(--op-font-body);
   color: var(--op-text-dim);
   text-shadow: var(--op-ink);

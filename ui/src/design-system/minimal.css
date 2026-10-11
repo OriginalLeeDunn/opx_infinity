@@ -15,11 +15,12 @@
      the type          Manrope ('OPX Minimal' in fonts.css), in sentence case,
                        untracked, one weight lighter than asked, figures tabular
      the shape         square, everywhere: no chamfer and no radius
-     the ground        none -- no plate, no pane, no wash; the ink holds the
-                       letters off the street
+     the ground        on things, never on places: a row, a cell, a button, a
+                       toast has its own dark square; a panel, a window, a HUD
+                       cluster has nothing behind it
      the edge          a hairline where a box must be read as one, barely there
-                       at rest; a state is the words going white and the line
-                       coming up, never a fill
+                       at rest; a state is the thing's ground lighting up and
+                       its words going white
      the plane         flat, no scanline, no glow
      the colour        grey and white, and nothing else
      the entrance      a short fade and a 4px rise
@@ -55,14 +56,12 @@
   --op-plate-quiet-a: 0.52;
   --op-plate-lit-a:   0.84;
 
-  /* NO GROUND. This look puts nothing behind its type: no pane, no wash, no
-     plate -- the words and their hairlines stand on the street, held off it
-     by the ink below. The COMPOSITIONS are what is cleared, not the alphas:
-     the alphas are operator knobs and arrive inline on the root, where they
-     would beat this sheet, while nothing on the wire writes these three. */
-  --op-plate:       transparent;
-  --op-plate-quiet: transparent;
-  --op-plate-lit:   transparent;
+  /* A GROUND FOR A THING, NEVER FOR A PLACE. A row, a cell, a button, a chip,
+     a key and a toast each sit on their own small dark square -- that is what
+     makes them read as things to press or to read. What holds them -- a bay, a
+     panel, a window, a HUD cluster -- has no ground at all: the things stand on
+     the street side by side, and nothing is enveloped. The plate tokens are
+     the things' ground; each surface's own block leaves its containers bare. */
 
   /* No glow anywhere: this look is lit by contrast alone. */
   --op-red-glow:   transparent;
@@ -83,8 +82,8 @@
   --op-edge:       rgba(255, 255, 255, 0.08);
   --op-edge-hover: rgba(255, 255, 255, 0.16);
   --op-edge-on:    rgba(255, 255, 255, 0.32);
-  --op-wash:       transparent;
-  --op-wash-on:    transparent;
+  --op-wash:       rgba(255, 255, 255, 0.06);
+  --op-wash-on:    rgba(255, 255, 255, 0.12);
 
   /* With no ground, the ink is all that holds a letter off a bright street:
      a tight dark pass for the edge and a wide soft one under it. */
@@ -215,22 +214,27 @@
   --aug-border-all: 1.5px;
 }
 
-/* --- no pane -----------------------------------------------------------------
-   The grounds are cleared at the token (above); what a preset paints on top of
-   its ground -- the cyberpunk look has none, the earlier minimal had a wash --
-   is cleared here, so a frame is its hairline and its words and nothing else. */
-:root[data-op-style="minimal"] .op-frame,
+/* --- no envelope -------------------------------------------------------------
+   A bay is a container, and a container has no ground on this look: the rows
+   inside it carry their own. A frame keeps its plate -- it is a thing -- but
+   none of the earlier glass wash on top of it. */
 :root[data-op-style="minimal"] .op-bay {
+  background: none;
   background-image: none;
   box-shadow: none;
 }
 
-/* A keycap: a hairline box around the letter, no fill. */
+:root[data-op-style="minimal"] .op-frame {
+  background-image: none;
+  box-shadow: none;
+}
+
+/* A keycap: a small square key with a faint fill, the letter in white. */
 :root[data-op-style="minimal"] .op-cap {
-  background: none;
+  background: rgba(255, 255, 255, 0.10);
   box-shadow: none;
   color: var(--op-text);
-  --aug-border-bg: var(--op-edge-on);
+  --aug-border-bg: transparent;
 }
 
 /* --- the entrance: a fade and a 4px rise -------------------------------------

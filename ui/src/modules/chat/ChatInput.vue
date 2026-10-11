@@ -859,16 +859,15 @@ onUnmounted(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A text field drawn as one line: no box, no fill, no prompt glyph -- just a
-   1px hairline under what is being typed, which comes up to white while the
-   field is live. The `>` is a terminal's, and the placeholder already says
-   what to do. The keys at its end are the house keycaps, hairline boxes.
+   The field is a THING, so it has a ground: one dark square with a 1px line
+   under what is being typed, which comes up to white while the field is live.
+   No prompt glyph -- the `>` is a terminal's, and the placeholder already says
+   what to do. The keys at its end are the house keycaps.
 
-   The completion list is lines of type with nothing behind them. The row Tab
-   will take goes white and takes a 2px rule down its leading edge -- the one
-   mark on the list -- and the argument being typed is the white word among
-   grey ones, underlined, where the others are not. With no ground anywhere,
-   the ink is set on the whole input so every word of it carries one. */
+   The completion LIST is a place and has no ground; each ROW is a thing and
+   has its own. The row Tab will take is the lit ground with white type and a
+   2px rule down its leading edge, and the argument being typed is the white
+   word among grey ones, underlined, where the others are not. */
 :root[data-op-style="minimal"] .chat-input {
   gap: 8px;
   text-shadow: var(--op-ink);
@@ -877,9 +876,9 @@ onUnmounted(() => {
 :root[data-op-style="minimal"] .chat-field {
   --aug-border-bg: transparent;
   gap: var(--op-space-3);
-  padding: 8px 0 7px;
+  padding: 8px var(--op-space-3) 7px;
   border-bottom: 1px solid var(--op-edge-hover);
-  background: none;
+  background: var(--op-plate);
   box-shadow: none;
   color: var(--op-text);
   transition: border-color var(--op-dur-fast) linear;
@@ -920,6 +919,7 @@ onUnmounted(() => {
 
 :root[data-op-style="minimal"] .chat-suggestions {
   --aug-border-bg: transparent;
+  gap: 2px;
   padding: 0;
   background: none;
   box-shadow: none;
@@ -928,12 +928,14 @@ onUnmounted(() => {
 
 :root[data-op-style="minimal"] .chat-suggestion {
   gap: var(--op-space-3);
-  padding: 5px 0 5px 12px;
+  padding: 5px var(--op-space-3) 5px 10px;
   border-left: 2px solid transparent;
+  background: var(--op-plate);
 }
 
 :root[data-op-style="minimal"] .chat-suggestion.is-selected {
   border-left-color: var(--op-text);
+  background: var(--op-plate-lit);
 }
 
 :root[data-op-style="minimal"] .chat-suggestion-name {

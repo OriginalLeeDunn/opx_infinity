@@ -563,10 +563,10 @@ useBridge('open77:anchors', (payload: Payload) => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A name over a head is two lines of type and nothing behind them: the player
-   id in a hairline box at the leading end, the name beside it, and the account
-   and citizen id as a quieter second line. With no ground, the type is held
-   off the street by the design system's ink, which is why this block keeps it.
+   A name over a head is one THING, so it sits on one small dark square: the
+   player id in a hairline box at the leading end, the name beside it, and the
+   account and citizen id as a quieter second line. The ink stays as well --
+   the square is small and the street around it is not.
 
    STAFF IS SAID IN WHITE: the id box and the staff word go white and heavy,
    each in a white hairline. On a grey surface that is the only mark that can
@@ -574,8 +574,8 @@ useBridge('open77:anchors', (payload: Payload) => {
    capitals and is lowered, first letter back; a player's name is theirs and
    is left exactly as written. */
 :root[data-op-style="minimal"] .tag {
-  padding: 2px 0;
-  background: none;
+  padding: 4px var(--op-space-2);
+  background: var(--op-plate);
   box-shadow: none;
   text-shadow: var(--op-ink);
 }

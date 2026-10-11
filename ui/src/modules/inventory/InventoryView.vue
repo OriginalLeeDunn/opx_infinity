@@ -2051,15 +2051,15 @@ try {
    THE MINIMAL STYLE
    =============================================================================
    The cyberpunk bag is two tilted columns of outlined cells on dark plates,
-   held together by red rules. Here there is no plate and no pane: each side is
-   its title, a hairline under it, its grid and its buttons, standing on the
-   street with the ink holding them off it. The grid is what gives a side its
-   shape, so nothing else is drawn around it.
+   held together by red rules. Here no pane envelops anything: each side is its
+   title, a hairline under it, its grid and its buttons, standing on the street.
+   The grid is what gives a side its shape, so nothing is drawn around it.
 
-   Every box that has to be read as a box -- a button, a cap, the card, the
-   count dialog -- is a square hairline. A state is the words going white and
-   the line coming up, never a fill. The only fills left are the load's own
-   line and the stepper's figure, which are readings rather than surfaces.
+   THE THINGS HAVE GROUNDS, THE PLACES DO NOT. A button, a tab, a cap, a row of
+   the card, the drop square and the refusal line each sit on their own dark
+   square; a side, the card and the count dialog, which hold several things,
+   have nothing behind them. A state is the thing's ground lighting up and its
+   words going white; the confirming button is the one white ground.
 
    The two-column arrangement, the fit-to-screen scale and every interaction
    are untouched. */
@@ -2116,36 +2116,40 @@ try {
   font: 500 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text-dim);
   --aug-border-bg: var(--op-edge-hover);
-  background: none;
+  background: var(--op-plate);
 }
 
-/* --- the tabs: words, the chosen one underlined -------------------------------
-   No track and no box: a row of words, the chosen one white with a 1px rule
-   under it. The rule is an inset shadow because the tab is clipped to its box
-   and a border would change its height. */
+/* --- the tabs: small squares side by side -------------------------------------
+   Each tab is a thing with its own ground; the strip that holds them has none.
+   The chosen one is the lit ground with white words and a 1px rule under it.
+   The rule is an inset shadow because the tab is clipped to its box and a
+   border would change its height. */
 :root[data-op-style="minimal"] .tabs {
-  gap: var(--op-space-4);
+  gap: 2px;
   align-self: flex-start;
   margin: var(--op-space-3) 0;
+  background: none;
 }
 
 :root[data-op-style="minimal"] .tab {
   --aug-border-bg: transparent;
-  padding: 4px 0 6px;
+  padding: 6px 12px;
   font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
   color: var(--op-text-dim);
-  background: none;
+  background: var(--op-plate);
   box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .tab:hover:not(.on) {
   --aug-border-bg: transparent;
   color: var(--op-text);
+  background: linear-gradient(var(--op-wash), var(--op-wash)), var(--op-plate);
 }
 
 :root[data-op-style="minimal"] .tab.on {
   --aug-border-bg: transparent;
   color: var(--op-text);
+  background: var(--op-plate-lit);
   box-shadow: inset 0 -1px 0 var(--op-text);
   filter: none;
 }
@@ -2192,7 +2196,7 @@ try {
   color: var(--op-text-dim);
 }
 
-/* --- the buttons: square hairlines --------------------------------------------
+/* --- the buttons: square grounds with a hairline ------------------------------
    The hairline is an inset shadow on every button rather than the augmented
    ring, because the card's and the dialog's buttons are not augmented and the
    two must be the same line. */
@@ -2207,31 +2211,33 @@ try {
   padding: 9px var(--op-space-4);
   font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
   color: var(--op-text-dim);
-  background: none;
-  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  background: var(--op-plate);
+  box-shadow: inset 0 0 0 1px var(--op-edge);
 }
 
 :root[data-op-style="minimal"] .row:hover:not(.off):not(.on) {
   --aug-border-bg: transparent;
   color: var(--op-text);
-  box-shadow: inset 0 0 0 1px var(--op-edge-on);
+  background: linear-gradient(var(--op-wash-on), var(--op-wash-on)), var(--op-plate);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
 }
 
-/* The one confirming button is the brightest line in the bag, not a block of
-   white: the answer the dialog is waiting for, said by weight and contrast. */
+/* The one confirming button is the one white ground in the bag: the answer
+   the dialog is waiting for, said by contrast alone. */
 :root[data-op-style="minimal"] .row.on {
   --aug-border-bg: transparent;
   font-weight: 700;
-  color: var(--op-text);
-  background: none;
-  box-shadow: inset 0 0 0 1px var(--op-text);
+  color: rgb(var(--op-plate-rgb));
+  background: var(--op-text);
+  box-shadow: none;
+  text-shadow: none;
   filter: none;
 }
 
 :root[data-op-style="minimal"] .row.off {
   --aug-border-bg: transparent;
   color: var(--op-text-faint);
-  background: none;
+  background: var(--op-plate-quiet);
   box-shadow: inset 0 0 0 1px var(--op-off-line);
 }
 
@@ -2239,7 +2245,7 @@ try {
 :root[data-op-style="minimal"] .ground {
   --aug-border-bg: transparent;
   color: var(--op-text-dim);
-  background: none;
+  background: var(--op-plate-quiet);
   border: 1px dashed rgba(255, 255, 255, 0.28);
   opacity: 0.7;
 }
@@ -2247,7 +2253,7 @@ try {
 :root[data-op-style="minimal"] .ground.over {
   --aug-border-bg: transparent;
   color: var(--op-text);
-  background: none;
+  background: var(--op-plate-lit);
   border-color: var(--op-text);
   opacity: 1;
   filter: none;
@@ -2262,8 +2268,9 @@ try {
 }
 
 /* --- the card and the count dialog: a hairline box over the grid --------------
-   No sheet under them. They float over the cells, so the box is drawn one step
-   brighter than a button and the words carry the ink like everything else. */
+   No sheet under them: each holds several things, and a holder has no ground
+   on this look. Its rows and buttons carry their own. The box is drawn one
+   step brighter than a button so the two read as floating over the cells. */
 :root[data-op-style="minimal"] .menu,
 :root[data-op-style="minimal"] .dialog {
   border-left: 0;
@@ -2278,16 +2285,18 @@ try {
   width: 220px;
 }
 
-/* A row of the card is a line of text; the pointed one goes white and takes
-   a 2px rule down its leading edge. */
+/* A row of the card is a thing on its own ground; the pointed one lights up,
+   goes white and takes a 2px rule down its leading edge. */
 :root[data-op-style="minimal"] .menu .row {
   padding: 8px 10px;
   font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  background: var(--op-plate);
   box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .menu .row:hover:not(.off) {
   color: var(--op-text);
+  background: var(--op-plate-lit);
   box-shadow: inset 2px 0 0 var(--op-text);
 }
 
@@ -2344,7 +2353,7 @@ try {
   color: var(--op-text-dim);
 }
 
-/* A refusal is said once, quietly, as a line of white under the panes. */
+/* A refusal is said once, quietly, as one line on its own ground. */
 :root[data-op-style="minimal"] .status {
   left: 50%;
   right: auto;
@@ -2352,7 +2361,7 @@ try {
   padding: 8px 16px;
   font: 500 var(--op-fs-meta) / 1.4 var(--op-font-body);
   color: var(--op-text);
-  background: none;
+  background: var(--op-plate);
   box-shadow: inset 0 0 0 1px var(--op-edge-on);
   text-shadow: var(--op-ink);
 }

@@ -534,9 +534,12 @@ onBeforeUnmount(() => {
    regular weight, in sentence case -- the catalogue writes `OPEN`, the player
    reads "Open". A key name stays as the key is printed (`SHIFT`): a keycap is
    a picture of a key, and a cap is an inline-flex box, which `::first-letter`
-   does not reach. Groups are set apart by space, not by a pane. */
+   does not reach. A group -- one door, one vehicle -- is a THING and sits on
+   its own dark square; the strip that lines the groups up has none. */
 :root[data-op-style="minimal"] .group {
   gap: var(--op-space-2) var(--op-space-4);
+  padding: var(--op-space-2) var(--op-space-3);
+  background: var(--op-plate);
 }
 
 :root[data-op-style="minimal"] .title,

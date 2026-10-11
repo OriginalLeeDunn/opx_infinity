@@ -237,10 +237,11 @@ const cells = computed(() =>
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   Five squares in a row at the bottom of the screen, nothing under them: each
-   a hairline around the item's picture, the key a quiet figure in one corner
-   and the count a plain figure in the other. The inventory's cells are the
-   same line, so the peek reads as five cells of the bag lifted out of it. */
+   Five squares in a row at the bottom of the screen and no dock under them:
+   each slot is a thing with its own dark ground and hairline around the
+   item's picture, the key a quiet figure in one corner and the count a plain
+   figure in the other. The inventory's cells are the same square, so the peek
+   reads as five cells of the bag lifted out of it. */
 :root[data-op-style="minimal"] .slotbar {
   gap: var(--op-space-2);
   padding: 0;
@@ -253,7 +254,7 @@ const cells = computed(() =>
   width: 64px;
   height: 64px;
   padding: 10px;
-  background: none;
+  background: var(--op-plate);
   box-shadow: none;
 }
 

@@ -1116,15 +1116,16 @@ function focusField(field: Field): void {
    caret is the one thing the browser fills -- and everything they were written
    against goes:
 
-     the bay       has no ground and no interlace; the scrim behind it dims the
-                   world, and the ink holds each letter off it
+     the bay       has no ground and no interlace -- it is a place, and the
+                   fields in it carry their own; the scrim behind dims the world
      the header    is the title alone; the `// FORM` eyebrow is the instrument
                    naming itself, and a form does not need to
-     a field       is a label and its entry over a 1px line; focus turns the
-                   label and the line white, with no step sideways, no fill
-                   and no bloom
-     a choice      steps with two bare arrows that go white under the pointer
-     a keycap      is a hairline box around the key */
+     a field       is a thing, so it has its own dark plate -- the label and
+                   its entry on it, a 1px line under; pointed at, the plate
+                   lifts; focused, it lifts and the label and line go white,
+                   with no step sideways and no bloom
+     a choice      steps with two small plates that light under the pointer
+     a keycap      is a small key with a faint fill */
 :root[data-op-style="minimal"] .scrim {
   background: rgba(0, 0, 0, 0.45);
 }
@@ -1163,22 +1164,24 @@ function focusField(field: Field): void {
 }
 
 :root[data-op-style="minimal"] .list {
-  gap: var(--op-space-1);
+  gap: 2px;
   padding: var(--op-space-3) var(--op-space-5) var(--op-space-4);
 }
 
 :root[data-op-style="minimal"] .field {
   --aug-border-bg: transparent;
-  padding: 11px 0;
-  background: none;
+  padding: 11px var(--op-space-3);
+  background: var(--op-plate);
   box-shadow: inset 0 -1px 0 var(--op-edge-hover);
   color: var(--op-text);
-  transition: box-shadow var(--op-dur-fast) linear;
+  transition:
+    background-color var(--op-dur-fast) linear,
+    box-shadow var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .field:hover:not(.on) {
   --aug-border-bg: transparent;
-  background: none;
+  background: var(--op-plate-lit);
   box-shadow: inset 0 -1px 0 var(--op-edge-on);
   color: var(--op-text);
 }
@@ -1186,7 +1189,7 @@ function focusField(field: Field): void {
 :root[data-op-style="minimal"] .field.on {
   --aug-border-bg: transparent;
   transform: none;
-  background: none;
+  background: var(--op-plate-lit);
   box-shadow: inset 0 -1px 0 var(--op-text);
   color: var(--op-text);
 }
@@ -1252,13 +1255,14 @@ function focusField(field: Field): void {
   width: 18px;
   height: 18px;
   padding: 0;
-  background: none;
+  background: var(--op-wash);
   color: var(--op-text-dim);
   font: 500 var(--op-fs-body) / 18px var(--op-font-body);
   text-align: center;
 }
 
 :root[data-op-style="minimal"] .mark:hover {
+  background: var(--op-wash-on);
   color: var(--op-text);
 }
 
@@ -1280,11 +1284,11 @@ function focusField(field: Field): void {
 }
 
 :root[data-op-style="minimal"] .cap {
-  --aug-border-bg: var(--op-edge-on);
+  --aug-border-bg: transparent;
   --aug-border-all: 1px;
   height: 20px;
   padding: 0 7px;
-  background: none;
+  background: rgba(255, 255, 255, 0.10);
   box-shadow: none;
   font: 600 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text);

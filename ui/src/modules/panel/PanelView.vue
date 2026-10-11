@@ -2366,23 +2366,22 @@ function filter(value: string): void {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The same room drawn as type on the street instead of an instrument panel.
+   The same room with the walls taken away. THINGS KEEP A GROUND, PLACES DO
+   NOT: the column, the rail, the tool strip and the dialog have no ground and
+   no frame, and every control inside them -- a tab, the search, a range, an
+   item, a button, a tile, a slot -- sits on its own square of dark plate:
 
-   NOTHING HAS A GROUND. The cyberpunk column is an outline with framed plates
-   inside it; here the column, the rail, the tool strip and the dialog are each
-   at most a hairline, and what sits in them is words, lines and marks:
-
-     tabs        words; the chosen one white with a 2px line under it
-     search      a 1px line under the entry, white while it has focus; its
-                 eyebrow goes, the placeholder says it
-     a range     a 1px line and a square white thumb, never the angled blade
-     an item     a line of type with the detail UNDER the name, so a two-column
-                 grid stops cutting both in half; chosen is white with a 2px
-                 rule down its leading edge
-     a button    a hairline box around a word; the primary one is the same box
-                 in white, with the word in white -- never a fill
-     a tile      a hairline square that comes up on hover and goes white when
-                 chosen
+     tabs        plates side by side; the chosen one lifts and goes white with
+                 a 2px line under it
+     search      a plate with a 1px line under the entry, white while it has
+                 focus; its eyebrow goes, the placeholder says it
+     a range     a 1px line and a square white thumb on a plate
+     an item     a plate with the detail UNDER the name, so a two-column grid
+                 stops cutting both in half; pointed at it lifts, chosen it
+                 lifts and takes a 2px rule down its leading edge
+     a button    a plate around a word; the primary one is a white plate with
+                 dark words, the one solid thing on the sheet
+     a tile      a plate that lifts on hover and goes white-edged when chosen
 
    The dial's thumb and the slider's thumb are pseudo-elements, so they take
    their shape here and not from `shapes.css`. */
@@ -2412,8 +2411,7 @@ function filter(value: string): void {
 }
 
 /* Every control on the sheet is a native <button>, which brings the browser's
-   own border and face with it. Both go: a control here is its words and, where
-   it must read as a box, one hairline from the border layer. */
+   own border and face with it. The border goes; the face becomes the plate. */
 :root[data-op-style="minimal"] .row,
 :root[data-op-style="minimal"] .tab,
 :root[data-op-style="minimal"] .tile,
@@ -2424,22 +2422,25 @@ function filter(value: string): void {
 :root[data-op-style="minimal"] .field,
 :root[data-op-style="minimal"] .dial {
   border: 0;
-  background: none;
+  background: var(--op-plate);
   box-shadow: none;
   text-shadow: var(--op-ink);
+  transition:
+    color var(--op-dur-fast) linear,
+    background-color var(--op-dur-fast) linear,
+    box-shadow var(--op-dur-fast) linear;
 }
 
 /* --- the tabs ------------------------------------------------------------------- */
 :root[data-op-style="minimal"] .tabs {
-  gap: var(--op-space-4);
+  gap: 2px;
   align-self: flex-start;
   padding: 0;
-  border-bottom: 1px solid var(--op-edge);
 }
 
 :root[data-op-style="minimal"] .tab {
   --aug-border-bg: transparent;
-  padding: 6px 0 8px;
+  padding: 8px var(--op-space-3);
   font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
   color: var(--op-text-dim);
   transition: color var(--op-dur-fast) linear, box-shadow var(--op-dur-fast) linear;
@@ -2447,11 +2448,13 @@ function filter(value: string): void {
 
 :root[data-op-style="minimal"] .tab:hover:not(.is-off):not(.is-on) {
   --aug-border-bg: transparent;
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .tab.is-on {
   --aug-border-bg: transparent;
+  background: var(--op-plate-lit);
   color: var(--op-text);
   box-shadow: inset 0 -2px 0 var(--op-text);
 }
@@ -2463,7 +2466,7 @@ function filter(value: string): void {
 /* --- the search line --------------------------------------------------------------- */
 :root[data-op-style="minimal"] .field {
   --aug-border-bg: transparent;
-  padding: 8px 0;
+  padding: 8px var(--op-space-3);
   box-shadow: inset 0 -1px 0 var(--op-edge-hover);
   transition: box-shadow var(--op-dur-fast) linear;
 }
@@ -2484,7 +2487,7 @@ function filter(value: string): void {
 /* --- a range -------------------------------------------------------------------------- */
 :root[data-op-style="minimal"] .dial {
   --aug-border-bg: transparent;
-  padding: 0 var(--op-space-1);
+  padding: var(--op-space-2) var(--op-space-3);
 }
 
 :root[data-op-style="minimal"] .dial-track::-webkit-slider-runnable-track,
@@ -2511,7 +2514,7 @@ function filter(value: string): void {
 
 /* --- the items --------------------------------------------------------------------- */
 :root[data-op-style="minimal"] .grid {
-  gap: var(--op-space-1) var(--op-space-4);
+  gap: 2px;
 }
 
 :root[data-op-style="minimal"] .grid .row {
@@ -2522,7 +2525,6 @@ function filter(value: string): void {
   --aug-border-bg: transparent;
   padding: 8px var(--op-space-3);
   color: var(--op-red-text);
-  transition: color var(--op-dur-fast) linear, box-shadow var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .grid .row-label {
@@ -2541,11 +2543,13 @@ function filter(value: string): void {
 :root[data-op-style="minimal"] .grid .row.is-hover,
 :root[data-op-style="minimal"] .grid .row:hover:not(.is-off):not(.is-on) {
   --aug-border-bg: transparent;
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .grid .row.is-on {
   --aug-border-bg: transparent;
+  background: var(--op-plate-lit);
   color: var(--op-text);
   box-shadow: inset 2px 0 0 var(--op-text);
 }
@@ -2590,9 +2594,9 @@ function filter(value: string): void {
   min-width: 8rem;
 }
 
-/* --- buttons: a hairline box around a word ------------------------------------------ */
+/* --- buttons: a plate around a word --------------------------------------------------- */
 :root[data-op-style="minimal"] .button {
-  --aug-border-bg: var(--op-edge-hover);
+  --aug-border-bg: transparent;
   --aug-border-all: 1px;
   padding: 10px var(--op-space-4);
   color: var(--op-red-text);
@@ -2603,14 +2607,16 @@ function filter(value: string): void {
 }
 
 :root[data-op-style="minimal"] .button:hover:not(.is-off):not(.is-on) {
-  --aug-border-bg: var(--op-edge-on);
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
-/* The primary: the same box, in white. */
+/* The primary: a white plate, dark words -- the one solid thing on the sheet. */
 :root[data-op-style="minimal"] .button.is-on {
-  --aug-border-bg: var(--op-text);
-  color: var(--op-text);
+  --aug-border-bg: transparent;
+  background: var(--op-text);
+  color: rgb(var(--op-plate-rgb));
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .button.is-on .row-label {
@@ -2647,6 +2653,7 @@ function filter(value: string): void {
 :root[data-op-style="minimal"] .view-btn:hover:not(:disabled),
 :root[data-op-style="minimal"] .view-btn:focus-visible {
   --aug-border-bg: transparent;
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
@@ -2665,7 +2672,7 @@ function filter(value: string): void {
 }
 
 :root[data-op-style="minimal"] .tile {
-  --aug-border-bg: var(--op-edge);
+  --aug-border-bg: transparent;
   --aug-border-all: 1px;
   padding: var(--op-space-2);
   color: var(--op-red-text);
@@ -2673,13 +2680,14 @@ function filter(value: string): void {
 
 :root[data-op-style="minimal"] .tile:hover:not(:disabled):not(.is-on),
 :root[data-op-style="minimal"] .tile:focus-visible:not(.is-on) {
-  --aug-border-bg: var(--op-edge-on);
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .tile.is-on {
   --aug-border-bg: var(--op-text);
   --aug-border-all: 1px;
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
@@ -2694,13 +2702,13 @@ function filter(value: string): void {
 
 :root[data-op-style="minimal"] .slot {
   --aug-border-bg: transparent;
-  padding: var(--op-space-1) 0;
-  box-shadow: inset 0 -1px 0 var(--op-edge);
+  padding: var(--op-space-2) var(--op-space-3);
 }
 
 :root[data-op-style="minimal"] .slot.is-on {
   --aug-border-bg: transparent;
-  box-shadow: inset 0 -1px 0 var(--op-edge-on);
+  background: var(--op-plate-lit);
+  box-shadow: inset 2px 0 0 var(--op-text);
 }
 
 :root[data-op-style="minimal"] .slot-value {
@@ -2709,9 +2717,10 @@ function filter(value: string): void {
 }
 
 :root[data-op-style="minimal"] .slot-step {
-  --aug-border-bg: var(--op-edge-hover);
+  --aug-border-bg: transparent;
   --aug-border-all: 1px;
   padding: 5px var(--op-space-3);
+  background: var(--op-wash);
 }
 
 :root[data-op-style="minimal"] .slot-step:focus-within {

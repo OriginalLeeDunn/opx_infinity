@@ -653,6 +653,8 @@ const gearClass = computed(() => {
   padding: 3px 8px;
   font: 600 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text);
+  /* The gear is a thing in the dial -- the one with a ground; the dial is not. */
+  background: var(--op-plate);
 }
 
 :root[data-op-style="minimal"] .vehicle .gear.idle {
@@ -718,7 +720,7 @@ const gearClass = computed(() => {
   --aug-border-all: 1px;
   padding: 4px var(--op-space-3);
   font: 700 var(--op-fs-label) / 1 var(--op-font-body);
-  background: none;
+  background: var(--op-plate-lit);
   color: var(--op-alarm);
 }
 </style>

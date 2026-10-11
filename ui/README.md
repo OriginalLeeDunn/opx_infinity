@@ -166,9 +166,10 @@ hold the same two-word allowlist, and the page writes it as `data-op-style` on `
 
 **The minimal style is a different object, not a quieter cyberpunk.** The cyberpunk look
 is an instrument -- outlined, chamfered, tilted, in capitals and mono, on dark plates.
-The minimal look is type on the street: Manrope in sentence case, square everywhere, no
-ground behind anything -- no plate, no pane, no wash -- a hairline only where a box must
-read as one, and a state that is the words going white, never a fill.
+The minimal look is square and quiet: Manrope in sentence case, a dark ground under each
+THING -- a row, a cell, a button, a toast -- and never a panel around them, so nothing
+on screen is enveloped. A state is the thing's ground lighting up and its words going
+white.
 
 `design-system/minimal.css` is its vocabulary, every rule scoped to
 `:root[data-op-style="minimal"]` -- with the attribute absent or `cyberpunk`, the page is
@@ -181,11 +182,10 @@ wrapped in `:where()` so states and module rules still beat it.
   tabular page-wide.
 - **No capitals and no tracking, anywhere.** An `!important` rule in `minimal.css`: thirty-three module rules ask for uppercase by
   name, and "never, on this look" is a claim about all of them at once.
-- **No radius and no ground, anywhere.** Every radius on the page is forced to zero
-  (the second `!important` rule), and the grounds are cleared at their compositions
-  (`--op-plate`, `--op-plate-quiet`, `--op-plate-lit`) rather than their alphas,
-  because the alphas are operator knobs that arrive inline and would win. What is
-  left to fill is a functional mark: a gauge's fill, a slider's thumb, a tick.
+- **No radius anywhere, and no ground on a container.** Every radius on the page is
+  forced to zero (the second `!important` rule). The plate tokens are the ground of a
+  thing; a bay, a panel, a window or a HUD cluster is left bare -- `.op-bay` in
+  `minimal.css`, and every other container in its own surface's block.
 - **The edge is a token**: `--op-edge`, `--op-edge-hover`, `--op-edge-on`. A
   surface's minimal block speaks in these, not in its own rgba.
 

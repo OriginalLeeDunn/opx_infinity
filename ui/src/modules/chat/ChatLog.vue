@@ -370,12 +370,12 @@ onUnmounted(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   Lines of type on the street and nothing behind them: no pane, no edge, and
+   A ground under each LINE, never under the log. Each line sits on its own
+   slim dark square that hugs its text, so a scroll of chat is a stack of
+   separate things on the street rather than a panel with words in it -- and
    not the red rule down the leading edge that is the cyberpunk log's whole
-   identity. The ink is what holds each line off a bright plaza, so it is set
-   here on the column and every line inherits it. The author is the line's
-   weight -- white, set heavier -- and what they said is the grey after it, so a
-   scroll of chat reads as names first.
+   identity. The author is the line's weight -- white, set heavier -- and what
+   they said is the grey after it, so a scroll of chat reads as names first.
 
    THE SYSTEM'S OWN AUTHORS ARE CAPITALS IN THE CATALOGUE (`NETWORK`,
    `COMMAND`), and the minimal look never sets capitals. A player's name is
@@ -391,7 +391,12 @@ onUnmounted(() => {
 }
 
 :root[data-op-style="minimal"] .chat-line {
+  align-self: flex-start;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 3px var(--op-space-2);
   line-height: 1.45;
+  background: var(--op-plate-quiet);
   color: var(--op-red-text);
 }
 

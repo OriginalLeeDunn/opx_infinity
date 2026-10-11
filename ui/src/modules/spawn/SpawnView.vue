@@ -609,9 +609,9 @@ onUnmounted(() => {
    =============================================================================
    The three rules above hold -- a grid, no step out of the column, no tilt --
    and the bay is the one the form draws: no ground, a plain title, no eyebrow.
-   A place is its name with its district under it, standing on a 1px line; the
-   pointer turns it white and brings the line up, the chosen one is white with
-   a white line. The ordinal goes: `01 02 03` is the instrument counting its
+   A place is a thing, so it is a dark plate with its name and its district
+   under it; the pointer lifts the plate and turns it white, the chosen one is
+   lifted with a white line under it. The bay around them stays bare. The ordinal goes: `01 02 03` is the instrument counting its
    own rows, and the choice here is a place, not a position in a list. */
 :root[data-op-style="minimal"] .scrim {
   background: rgba(0, 0, 0, 0.45);
@@ -643,31 +643,33 @@ onUnmounted(() => {
 }
 
 :root[data-op-style="minimal"] .grid {
-  gap: var(--op-space-1) var(--op-space-5);
+  gap: 2px;
   padding: var(--op-space-5) var(--op-space-6);
 }
 
 :root[data-op-style="minimal"] .card {
   --aug-border-bg: transparent;
   min-height: 56px;
-  padding: var(--op-space-3) 0;
+  padding: var(--op-space-3) var(--op-space-4);
   border: 0;
-  background: none;
-  box-shadow: inset 0 -1px 0 var(--op-edge-hover);
+  background: var(--op-plate);
+  box-shadow: none;
   color: var(--op-red-text);
-  transition: color var(--op-dur-fast) linear, box-shadow var(--op-dur-fast) linear;
+  transition:
+    color var(--op-dur-fast) linear,
+    background-color var(--op-dur-fast) linear,
+    box-shadow var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .card:hover:not(.is-on) {
   --aug-border-bg: transparent;
-  background: none;
-  box-shadow: inset 0 -1px 0 var(--op-edge-on);
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .card.is-on {
   --aug-border-bg: transparent;
-  background: none;
+  background: var(--op-plate-lit);
   box-shadow: inset 0 -2px 0 var(--op-text);
   color: var(--op-text);
 }

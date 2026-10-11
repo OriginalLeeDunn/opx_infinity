@@ -529,12 +529,12 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A cell is a square hairline with nothing in it but the item. An empty one is
-   the faintest line on the surface, so a forty-slot bag reads as the few
-   things in it rather than as forty boxes; a filled one is a step brighter;
-   the pointer brings the line up and a pick or a drop target is the one white
-   square in the grid. No fill at any step -- the picture and its words are the
-   whole of what a filled cell is.
+   A cell is a THING, so it has its own dark square: the quiet ground when it
+   is empty, so a forty-slot bag reads as the few things in it rather than as
+   forty boxes, and the full ground once it holds something. The pointer adds a
+   wash over that ground, and a pick or a drop target is the lit ground with
+   the one white line in the grid. The bag around the cells has nothing behind
+   it -- that is the grid's own business, in InventoryView.
 
    The count and the hotbar number are plain figures in two corners, labels on
    the square rather than badges on it. */
@@ -542,14 +542,14 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
   --aug-border-bg: var(--op-edge);
   padding: 6px 8px;
   color: var(--op-text-dim);
-  background: none;
+  background: var(--op-plate-quiet);
   box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .cell.filled {
   --aug-border-bg: rgba(255, 255, 255, 0.18);
   color: var(--op-text);
-  background: none;
+  background: var(--op-plate);
 }
 
 /* The weight stays the house hover weight (1.5px, held by the suite); only the
@@ -557,7 +557,7 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
 :root[data-op-style="minimal"] .cell.filled:hover:not(.over):not(.dragging) {
   --aug-border-bg: var(--op-edge-on);
   color: var(--op-text);
-  background: none;
+  background: linear-gradient(var(--op-wash), var(--op-wash)), var(--op-plate);
 }
 
 :root[data-op-style="minimal"] .cell.over,
@@ -565,7 +565,7 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
   --aug-border-bg: var(--op-text);
   --aug-border-all: 1px;
   color: var(--op-text);
-  background: none;
+  background: var(--op-plate-lit);
   filter: none;
 }
 
@@ -575,7 +575,7 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
 :root[data-op-style="minimal"] .cell.dragging:hover {
   border: 1px dashed rgba(255, 255, 255, 0.35);
   border-image: none;
-  background: none;
+  background: var(--op-plate-quiet);
 }
 
 :root[data-op-style="minimal"] .key {

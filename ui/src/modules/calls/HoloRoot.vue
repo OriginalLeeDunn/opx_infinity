@@ -1034,9 +1034,10 @@ const shown = computed<Row[]>(() => contacts.value)
    the panel leaning back on its own perspective -- is the cyberpunk look's
    idea of a phone, and none of it survives here. What is left is the phone's
    actual content, flat, anchored where the projection
-   was: a hairline box with a header, its two lists as two words, contact rows
-   and buttons that are words in a hairline. Nothing behind any of it: the
-   ink carries the type, as it does everywhere on this look. The rings and the sweep are not hidden by opacity:
+   was: a hairline box with a header, its two lists as two tabs, and contact
+   rows and buttons that each sit on a dark ground of their own. The BOX is a
+   place and has no ground -- the things in it stand on the street side by
+   side, held together by one hairline. The rings and the sweep are not hidden by opacity:
    they are taken out of the render, so the sweep's infinite rotation stops
    costing anything at all.
 
@@ -1108,26 +1109,27 @@ const shown = computed<Row[]>(() => contacts.value)
 
 :root[data-op-style="minimal"] .shut {
   align-self: center;
-  padding: 0;
-  background: none;
+  padding: 3px 8px;
+  background: var(--op-plate);
   color: var(--op-text-dim);
   font-size: var(--op-fs-label);
 }
 
 :root[data-op-style="minimal"] .shut:hover {
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
 /* --- a call ringing in, a call running ---------------------------------------
-   A row set off by one hairline under it, with the answer as the one white
-   button on the surface -- white words in a white line, never a fill. */
+   A row on its own ground, with the answer as the one white button on the
+   surface -- a white square with dark words, the loudest thing it can be. */
 :root[data-op-style="minimal"] .ring-row,
 :root[data-op-style="minimal"] .live-row {
   gap: var(--op-space-3);
   margin-bottom: var(--op-space-3);
-  padding: 0 0 var(--op-space-3);
-  border-bottom: 1px solid var(--op-edge-hover);
-  background: none;
+  padding: var(--op-space-3);
+  border-bottom: 0;
+  background: var(--op-plate);
 }
 
 :root[data-op-style="minimal"] .ring-who,
@@ -1142,26 +1144,26 @@ const shown = computed<Row[]>(() => contacts.value)
 :root[data-op-style="minimal"] .act,
 :root[data-op-style="minimal"] .pill {
   padding: 4px 12px;
-  border: 1px solid var(--op-edge-hover);
-  background: none;
+  border: 0;
+  background: var(--op-plate-lit);
   color: var(--op-text-dim);
   font-size: var(--op-fs-label);
   box-shadow: none;
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .act:hover,
 :root[data-op-style="minimal"] .pill:hover {
-  border-color: var(--op-edge-on);
-  background: none;
+  background: var(--op-wash-on);
   color: var(--op-text);
   box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .act.yes,
 :root[data-op-style="minimal"] .act.yes:hover {
-  border-color: var(--op-text);
+  background: var(--op-text);
   font-weight: 700;
-  color: var(--op-text);
+  color: rgb(var(--op-plate-rgb));
 }
 
 :root[data-op-style="minimal"] .waiting {
@@ -1170,20 +1172,21 @@ const shown = computed<Row[]>(() => contacts.value)
 }
 
 /* --- the two lists, as two words ---------------------------------------------
-   The open one is white and underlined; the other is grey. */
+   Each on a ground of its own; the open one lit, white and underlined, the
+   other grey. */
 :root[data-op-style="minimal"] .tabs {
   display: inline-flex;
-  gap: var(--op-space-4);
+  gap: 2px;
   margin-bottom: var(--op-space-2);
   padding: 0;
   background: none;
 }
 
 :root[data-op-style="minimal"] .tab {
-  padding: 2px 0 4px;
+  padding: 4px 12px 3px;
   border: 0;
   border-bottom: 1px solid transparent;
-  background: none;
+  background: var(--op-plate);
   color: var(--op-text-dim);
   font-size: var(--op-fs-label);
 }
@@ -1194,19 +1197,23 @@ const shown = computed<Row[]>(() => contacts.value)
 
 :root[data-op-style="minimal"] .tab.on {
   border-bottom-color: var(--op-text);
-  background: none;
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
-/* --- the rows ---------------------------------------------------------------- */
+/* --- the rows ----------------------------------------------------------------
+   Each contact on its own ground, 2px from the next, so the list is a stack
+   of things and not a table drawn on a panel. */
 :root[data-op-style="minimal"] .row {
   gap: var(--op-space-3);
-  padding: 9px 2px;
-  border-bottom: 1px solid var(--op-edge);
+  margin-bottom: 2px;
+  padding: 8px var(--op-space-3);
+  border-bottom: 0;
+  background: var(--op-plate);
 }
 
 :root[data-op-style="minimal"] .row:last-child {
-  border-bottom: 0;
+  margin-bottom: 0;
 }
 
 :root[data-op-style="minimal"] .who {
@@ -1246,12 +1253,12 @@ const shown = computed<Row[]>(() => contacts.value)
 
 /* --- the sphere, passive: a call arriving with nothing open ------------------
    Three lines of type where the projection would rise -- who, what, and the
-   two keys -- in a hairline box and nothing behind them. */
+   two keys. It is one thing, not a box of things, so it has its own ground. */
 :root[data-op-style="minimal"] .passive {
   margin-bottom: 0;
   padding: var(--op-space-3) var(--op-space-5);
-  background: none;
-  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  background: var(--op-plate);
+  box-shadow: inset 0 0 0 1px var(--op-edge);
   text-shadow: var(--op-ink);
 }
 
@@ -1279,8 +1286,8 @@ const shown = computed<Row[]>(() => contacts.value)
   min-width: 22px;
   height: 20px;
   padding: 0 6px;
-  border: 1px solid var(--op-edge-on);
-  background: none;
+  border: 0;
+  background: rgba(255, 255, 255, 0.10);
   box-shadow: none;
   color: var(--op-text);
   font-size: var(--op-fs-label);

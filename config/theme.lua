@@ -16,8 +16,9 @@ OPX.Config.MODULES.theme = {
 	-- The look, and the only two there are:
 	--   'cyberpunk'  red, outlined, chamfered, tilted toward the screen edge,
 	--                with a scanline over every enclosure. The house look.
-	--   'minimal'    the same surfaces as type on the street: Manrope, square,
-	--                no ground behind anything, grey and white only.
+	--   'minimal'    the same surfaces, square and quiet: Manrope, a dark ground
+	--                under each thing but never a panel around them, grey and
+	--                white only.
 	-- Anything else is refused with a line in the journal and the page keeps
 	-- the cyberpunk look its stylesheet ships with.
 	STYLE = 'cyberpunk',
@@ -59,7 +60,7 @@ OPX.Config.MODULES.theme = {
 
 	-- ── the minimal look ────────────────────────────────────────────────────
 	-- The colour knobs only. Everything else about this look -- the type, the
-	-- square shapes, the absence of any ground -- is `ui/src/design-system/minimal.css`.
+	-- square shapes, the bare containers -- is `ui/src/design-system/minimal.css`.
 	minimal = {
 		-- A neutral light grey, and nothing but grey and white on this surface: no
 		-- saturation anywhere, so every rung derived from it is a grey too. It
@@ -71,8 +72,9 @@ OPX.Config.MODULES.theme = {
 		-- surfaces give it a heavier stroke to carry the rest.
 		ALARM = '#ffffff',
 
-		-- No PLATE_OPACITY: this look draws no ground under its type at all, so
-		-- there is nothing for it to set.
+		-- The ground under a THING -- a row, a cell, a button, a toast. Panels,
+		-- windows and HUD clusters have none on this look, whatever this says.
+		PLATE_OPACITY = 0.72,
 
 		-- No scanline and no lean: both are the cyberpunk look's, not this one's.
 		INTERLACE = 0,

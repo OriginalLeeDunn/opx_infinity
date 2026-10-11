@@ -642,12 +642,13 @@ function giveKey(): void {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The editor's shell as a window drawn in one hairline: no ground, the title
-   alone in the header -- the `OPX // 77` kicker is the instrument's serial
-   plate -- a bare `x` to close, and a delete confirm that is a hairline box
-   over the dimmed window. The destructive answer is the one drawn in white,
-   box and word: this look has no red to spend on danger and no fill to spend
-   on anything, so the one answer that acts is the brightest line on screen. */
+   The editor's shell as a window drawn in one hairline: no ground -- it is a
+   place, and what it holds carries its own -- the title alone in the header
+   (the `OPX // 77` kicker is the instrument's serial plate), a small square
+   `x` to close, and a delete confirm that is a hairline box over the dimmed
+   window. Its buttons are things, so each has a dark plate; the destructive
+   answer is the white one: this look has no red to spend on danger, so the
+   one answer that acts is the one solid thing on screen. */
 :root[data-op-style="minimal"] .bay {
   --aug-border-bg: var(--op-edge);
   background: none;
@@ -685,15 +686,15 @@ function giveKey(): void {
   right: var(--op-space-4);
   width: 28px;
   height: 28px;
-  background: none;
+  background: var(--op-plate);
   box-shadow: none;
   font: 400 15px / 1 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .close:hover {
-  --aug-border-bg: var(--op-edge-on);
-  background: none;
+  --aug-border-bg: transparent;
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
@@ -721,23 +722,25 @@ function giveKey(): void {
 }
 
 :root[data-op-style="minimal"] .btn {
-  --aug-border-bg: var(--op-edge-hover);
+  --aug-border-bg: transparent;
   --aug-border-all: 1px;
   padding: 9px var(--op-space-5);
-  background: none;
+  background: var(--op-plate);
   box-shadow: none;
   color: var(--op-red-text);
+  transition: background-color var(--op-dur-fast) linear, color var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .btn:hover {
-  --aug-border-bg: var(--op-edge-on);
+  background: var(--op-plate-lit);
   color: var(--op-text);
 }
 
-:root[data-op-style="minimal"] .btn.danger {
-  --aug-border-bg: var(--op-text);
-  background: none;
-  color: var(--op-text);
+:root[data-op-style="minimal"] .btn.danger,
+:root[data-op-style="minimal"] .btn.danger:hover {
+  background: var(--op-text);
+  color: rgb(var(--op-plate-rgb));
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .btn .op-label {

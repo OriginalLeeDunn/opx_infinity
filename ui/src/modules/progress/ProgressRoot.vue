@@ -190,9 +190,10 @@ onUnmounted(clearRaise)
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The action written above a line that fills, and nothing around either: no
-   frame, no pane, no chamfered fill. The line keeps a faint track -- the one
-   ground here, because a bar that is a third full has to show the rest. The
+   The action written above a line that fills, the two on one small dark
+   square -- a progress is a single THING -- with no frame and no chamfered
+   fill. The line keeps a faint track, because a bar that is a third full has
+   to show the rest. The
    action arrives in capitals and is lowered, first letter back; the cancel
    hint sits below it, quieter. */
 /* Clear of the vehicle dial: 96px up put the bar across the dial's ring. */
@@ -202,6 +203,8 @@ onUnmounted(clearRaise)
 
 :root[data-op-style="minimal"] .progress .plate {
   gap: 6px;
+  padding: var(--op-space-2) var(--op-space-3);
+  background: var(--op-plate);
 }
 
 :root[data-op-style="minimal"] .progress .label,

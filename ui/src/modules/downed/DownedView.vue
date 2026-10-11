@@ -840,16 +840,19 @@ onUnmounted(() => {
   --aug-border-all: 1px;
   gap: var(--op-space-3);
   padding: var(--op-space-4);
-  background: none;
+  /* A choice is a THING, so it has a ground; the room around the two does not. */
+  background: var(--op-plate);
   box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .choice:hover:not(.is-off) {
   --aug-border-bg: var(--op-edge-hover);
+  background: var(--op-plate-lit);
 }
 
 :root[data-op-style="minimal"] .choice.is-on {
   --aug-border-bg: var(--op-edge-on);
+  background: var(--op-plate-lit);
 }
 
 :root[data-op-style="minimal"] .mark {

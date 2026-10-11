@@ -334,16 +334,20 @@ onUnmounted(stop)
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A chip is a word with its letter in front of it, inside a hairline box that
-   is barely there -- no fill, no pill. The tone climbs on the type and the
-   line: resting is dim, lit is white with the line up, and a BAD chip is
-   white, bold, in a white line, the loudest thing on the strip without a
-   single filled pixel.
+   A chip is a THING, so it stands on its own small dark square -- the strip
+   holding them has no ground, the chips sit on the street side by side. The
+   tone climbs on the square and the type: resting is dim on the plate, lit is
+   white on the lit plate with the line up, and a BAD chip is white, bold, in
+   a white line, the loudest thing on the strip.
 
    Labels arrive in capitals from whoever raised the chip; they are lowered and
    the first letter put back. The countdown is a fine line along the box's foot. */
 :root[data-op-style="minimal"] .strip {
   gap: 6px;
+}
+
+:root[data-op-style="minimal"] .strip {
+  background: none;
 }
 
 :root[data-op-style="minimal"] .strip .chip {
@@ -352,6 +356,7 @@ onUnmounted(stop)
   padding: 4px var(--op-space-3);
   font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
   color: var(--op-text-dim);
+  background: var(--op-plate);
 }
 
 :root[data-op-style="minimal"] .strip .chip .label {
@@ -381,6 +386,7 @@ onUnmounted(stop)
 :root[data-op-style="minimal"] .strip .chip.shock {
   --aug-border-bg: var(--op-edge-on);
   color: var(--op-text);
+  background: var(--op-plate-lit);
 }
 
 :root[data-op-style="minimal"] .strip .chip.bad {
@@ -388,6 +394,7 @@ onUnmounted(stop)
   --aug-border-all: 1px;
   font-weight: 700;
   color: var(--op-alarm);
+  background: var(--op-plate-lit);
 }
 
 :root[data-op-style="minimal"] .strip .chip.bad .icon {
@@ -398,5 +405,6 @@ onUnmounted(stop)
 :root[data-op-style="minimal"] .strip .chip.overflow {
   border: 1px dashed var(--op-edge-hover);
   color: var(--op-text-faint);
+  background: var(--op-plate-quiet);
 }
 </style>
