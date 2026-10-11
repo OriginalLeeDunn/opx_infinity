@@ -695,16 +695,11 @@ function choose(row: Slot): void {
   opacity: 0.9;
 }
 
-.row.on .check.ticked {
-  background: var(--op-red);
-}
-
-/* The one place the tick is not `currentcolor`: on the filled box it would be
-   red on red, and the tick simply did not appear. `TargetView` had the answer
-   for its own checkbox and this file never took it. */
-.row.on .check.ticked svg {
-  stroke: var(--op-ink-on);
-}
+/* NO FILL ON THE CHOSEN ROW. The box used to flood red when its row was the
+   chosen one, so the same option read as a red square on one row and a tick
+   on the next. It is the eye's checkbox now, in every state: a square, and a
+   tick in it when it is ticked -- the two surfaces ask the same question and
+   draw the same answer. */
 
 /* --- a captioned separator: a mono eyebrow and a rule, no frame ----------- */
 .sep {
@@ -820,43 +815,23 @@ function choose(row: Slot): void {
   stroke-width: 1.5;
 }
 
-/* The switch: a hairline track and a square knob that crosses it. The knob is
-   the one fill on the menu, and it is a state mark, not a ground. The box's
-   tick is hidden rather than removed: its stroke-dash transition is the
-   cyberpunk tick drawing itself, and this look has no tick. */
+/* The eye's checkbox, exactly: a square hairline, and ticked, a white square
+   with the tick cut out of it in the ground's colour. Not a switch -- a menu
+   row and an eye row ask the same yes-or-no, and answer it the same way. */
 :root[data-op-style="minimal"] .check {
-  position: relative;
-  width: 26px;
-  height: 14px;
-  border: 1px solid var(--op-edge-hover);
+  width: 13px;
+  height: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
   background: none;
-  transition: border-color var(--op-dur) var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .check.ticked {
+  border-color: var(--op-text);
+  background: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .check svg {
-  display: none;
-}
-
-:root[data-op-style="minimal"] .check::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 8px;
-  height: 8px;
-  background: var(--op-text-dim);
-  transition: transform var(--op-dur) var(--op-ease), background var(--op-dur) var(--op-ease);
-}
-
-:root[data-op-style="minimal"] .check.ticked,
-:root[data-op-style="minimal"] .row.on .check.ticked {
-  background: none;
-  border-color: var(--op-text);
-}
-
-:root[data-op-style="minimal"] .check.ticked::after {
-  transform: translateX(12px);
-  background: var(--op-text);
+  stroke: rgb(var(--op-plate-rgb));
 }
 
 :root[data-op-style="minimal"] .sep {
