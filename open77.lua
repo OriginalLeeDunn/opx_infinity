@@ -95,6 +95,9 @@ shared_script "config/loading.lua"
 shared_script "config/target.lua"
 shared_script "config/shops.lua"
 shared_script "config/animations.lua"
+-- Shared like the rest, though only the client half reads it: the camera
+-- styles offered on the eye. See modules/camera/module.lua.
+shared_script "config/camera.lua"
 shared_script "config/elevators.lua"
 -- Shared: the client reads the reach, the key and the lockpick timings here,
 -- and the server re-derives every one of them. See modules/doorlock/module.lua.
@@ -432,6 +435,13 @@ client_script "modules/animations/client/picker.lua"
 client_script "modules/animations/client/duo.lua"
 client_script "modules/animations/client/prompt.lua"
 client_script "modules/animations/client/exports.lua"
+
+-- The player's own camera styles, on the eye. Client only; after `target`,
+-- which carries the rows and is optional. `camera.style` below is its only
+-- permission.
+shared_script "modules/camera/module.lua"
+shared_script "modules/camera/locales.lua"
+client_script "modules/camera/client/main.lua"
 
 -- The timed-action bar. AFTER `animations`, whose gesture it starts and stops
 -- together with the bar, and after `downed`, which takes it away. Both are
@@ -848,6 +858,15 @@ permissions {
   -- `permission_denied` and a clean boot, which is what they were checked
   -- against. A client permission is verified in the game or not at all.
   "camera.preview",
+
+  -- THE PLAYABLE THIRD-PERSON STYLE (client op77.78): framing, FOV, shoulder,
+  -- blend. `modules/camera/client/main.lua` calls
+  -- `Open77.camera.configureThirdPerson` and `resetThirdPerson`, both gated by
+  -- it. The unforced `Open77.perspective.setThirdPerson(true)` it pairs with
+  -- needs no permission; only a FORCED lock would need `perspective.policy`,
+  -- and nothing here forces one. A CLIENT permission: a missing line shows up
+  -- as `permission_denied:camera.style` in the player's log, not the server's.
+  "camera.style",
   "world.query",
 
   "player.travel",

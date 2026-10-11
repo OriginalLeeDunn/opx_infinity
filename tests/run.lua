@@ -42227,6 +42227,126 @@ do
 	check('a client booting with 96 pumps keeps every resume under 4,500', worst < 4500, worst)
 end
 
+-- ── the camera styles ────────────────────────────────────────────────────────
+-- What is under test is the CLAIM, as with the walk lease: a style is a
+-- resource-owned hold on the player's camera, and the questions worth asking
+-- are whether a bad config ever reaches the native, whether a refusal leaves
+-- the state honest, and whether the rows the eye was given actually exist.
+section('camera: styles on the eye')
+do
+	local env, _, why = boot('client')
+	check('the client boots with the camera module', why == nil, why)
+
+	local camera = why == nil and env.OPX.Modules.Get('camera') or nil
+	local Styles = type(camera) == 'table' and camera.Styles or nil
+	check('the camera module declared its styles', type(Styles) == 'table')
+
+	if type(Styles) == 'table' then
+		local OPX = env.OPX
+		-- Recorders in place of the natives, and a store, so every ask is
+		-- counted rather than inferred.
+		local asked, entered, released, refuse = {}, 0, 0, nil
+		env.Open77.camera = {
+			configureThirdPerson = function(options)
+				if refuse then return false, refuse end
+				asked[#asked + 1] = options
+				return true
+			end,
+			resetThirdPerson = function() released = released + 1; return true end,
+		}
+		env.Open77.perspective = {
+			setThirdPerson = function(enabled, force)
+				if enabled == true and force == nil then entered = entered + 1 end
+				return true
+			end,
+		}
+		local kept = {}
+		env.Open77.kvp = {
+			get = function(key) return kept[key] end,
+			set = function(key, value) kept[key] = value; return true end,
+		}
+
+		-- The harness boots without the rig, so `Start` correctly offered
+		-- nothing. Re-run it now that the rig exists: the path a real client takes.
+		camera.Start()
+
+		local configured = OPX.Config.MODULES.camera.STYLES
+		check('every shipped style is inside the platform bounds',
+			#Styles.List() == #configured, ('%d of %d'):format(#Styles.List(), #configured))
+
+		-- A style with one value out of range is dropped whole, not trimmed.
+		local built = Styles.Build({ ID = 'bad', BASE = 'shoulder',
+			HIP = { DISTANCE = 20, OFFSET = { X = 0, Y = 0, Z = 0 }, FOV = 60 } })
+		check('a style with a boom past 8 m is refused before the native sees it', built == nil)
+		check('and so is an unknown base',
+			Styles.Build({ ID = 'odd', BASE = 'orbit' }) == nil)
+		check('and an id the default already names',
+			Styles.Build({ ID = 'default', BASE = 'classic' }) == nil)
+		local lensless = Styles.Build({ ID = 'lens', BASE = 'classic',
+			HIP = { DISTANCE = 2, OFFSET = { X = 0, Y = 0, Z = 0 }, FOV = 0 }, RUN_FOV = 0 })
+		check('a lens of 0 is kept: it means the game\'s own',
+			lensless ~= nil and lensless.options.hip.fov == 0 and lensless.options.runFov == 0)
+
+		-- ── the rows are accepted, which is the only question worth asking ──
+		local target = OPX.Api.Get('target')
+		local held = target ~= nil and target.List('camera') or nil
+		check('the camera rows were accepted by the registry',
+			held ~= nil and held.ok == true, held ~= nil and tostring(held.error) or 'no contract')
+		local options = held ~= nil and held.ok and held.value.options or {}
+		check('one per style, the game camera and the shoulder swap',
+			#options == #configured + 2, #options)
+		local raw = {}
+		for index = 1, #options do
+			local text = tostring(options[index].label)
+			if text:match('^camera%.') then raw[#raw + 1] = text end
+		end
+		check('and their labels are resolved, not catalogue keys', #raw == 0, table.concat(raw, ', '))
+
+		-- ── choosing ──
+		check('choosing a style holds it', Styles.Choose('shoulder') == true
+			and Styles.Current() == 'shoulder' and #asked == 1
+			and asked[1].style == 'shoulder' and asked[1].shoulder == 'right')
+		check('and asks for third person, unforced', entered == 1, entered)
+		check('and is remembered on this machine', kept['opx.camera.style'] == 'shoulder')
+
+		check('the shoulder swaps with one patch', Styles.Swap() == true
+			and asked[#asked].shoulder == 'left' and asked[#asked].style == nil
+			and kept['opx.camera.shoulder'] == 'left')
+		Styles.Choose('cinematic')
+		check('and the next style keeps the player\'s shoulder',
+			asked[#asked].style == 'classic' and asked[#asked].shoulder == 'left'
+				and asked[#asked].hip ~= nil and asked[#asked].hip.distance == 4.0)
+
+		refuse = 'camera_style_owned'
+		check('a style another resource owns is refused', Styles.Choose('close') == false)
+		check('and the state still names the one we hold', Styles.Current() == 'cinematic')
+		check('and nothing was remembered for it', kept['opx.camera.style'] == 'cinematic')
+		refuse = nil
+
+		check('the game camera releases the style', Styles.Choose('default') == true
+			and released == 1 and Styles.Current() == 'default')
+		check('and there is no shoulder to swap on it', Styles.Swap() == false)
+
+		-- ── restored at start, without forcing a view ──
+		kept['opx.camera.style'] = 'centered'
+		local before = entered
+		camera.Start()
+		check('the remembered style comes back at start',
+			Styles.Current() == 'centered' and asked[#asked].style == 'centered')
+		check('without asking for third person: the player\'s F7 stands', entered == before)
+
+		camera.Stop()
+		check('stopping gives the style back', Styles.Current() == 'default' and released == 2)
+
+		-- ── a client without the rig ──
+		env.Open77.camera = nil
+		check('a client older than the rig offers nothing and raises nothing',
+			Styles.Available() == false and Styles.Choose('shoulder') == false)
+		env.Open77.perspective = nil
+		env.Open77.kvp = nil
+	end
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the
