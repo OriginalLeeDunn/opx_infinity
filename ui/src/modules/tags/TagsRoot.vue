@@ -297,7 +297,13 @@ useBridge('open77:anchors', (payload: Payload) => {
   <div class="tags">
     <!-- Keyed on the ANCHOR and not the player id: an anchor is re-pointed when a
          body respawns, so the element survives exactly as long as the tag does. -->
-    <div v-for="entry in drawn" :key="entry.row.anchor" class="tag" :style="styleFor(entry)">
+    <div
+      v-for="entry in drawn"
+      :key="entry.row.anchor"
+      class="tag"
+      :class="{ staff: entry.row.staff }"
+      :style="styleFor(entry)"
+    >
       <span
         v-if="technical"
         class="id"
@@ -519,60 +525,45 @@ useBridge('open77:anchors', (payload: Payload) => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A tag is a caption floating over a head, and on this look it is drawn as
-   one: no box, no ground, no frame around the id. Boxes over every head in a
-   crowd are a wall of stickers; a caption is read and then forgotten.
+   ONE COMPACT BAND, ON ONE LINE: the id in grey, then the name in white, on a
+   single dark strip that hugs them. A tag is a THING, so it has a ground --
+   and a ground is what keeps a name legible against a bright sky, which the
+   ink alone did not. The account and citizen id, when the operator shows them,
+   stay on the same line, small and grey, so the band never grows a second row.
 
-     12 | Valerie Kaine
-          valerie_k  4821
+     [ 12  Valerie Kaine  valerie_k ]
 
-   The id leads in a quiet grey, cut off from the name by a 1px rule -- the
-   one line in the tag, and enough to say "this number is not part of the
-   name". The name is the only white on it, at a weight that holds at a
-   distance. The account and the citizen id sit under it, small and grey, on
-   one line. All of it is held off the street by the page's ink alone, a
-   little heavier here because a tag is the text most often read against sky.
-
-   STAFF IS SAID, NOT SHOUTED: the id and the rule go white, and a small white
-   square marks the word beside the name. */
+   STAFF INVERTS IT: a light band with dark type. It is the one tag in a crowd
+   that is not dark, which is all the emphasis it needs. */
 :root[data-op-style="minimal"] .tag {
-  align-items: center;
-  text-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.9),
-    0 0 12px rgba(0, 0, 0, 0.6);
+  align-items: baseline;
+  gap: var(--op-space-2);
+  padding: 4px var(--op-space-2);
+  background: var(--op-plate);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .id {
   --aug-border-bg: transparent;
   --aug-border-all: 0px;
-  align-self: stretch;
   min-width: 0;
   height: auto;
-  padding: 0 var(--op-space-2) 0 0;
-  border-right: 1px solid rgba(255, 255, 255, 0.35);
+  padding: 0;
   background: none;
   font: 500 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
-:root[data-op-style="minimal"] .plate {
-  display: inline-grid;
-  grid-template-columns: auto auto;
-  column-gap: var(--op-space-2);
-  row-gap: 3px;
-  align-items: baseline;
-  padding-left: var(--op-space-2);
-}
-
+:root[data-op-style="minimal"] .plate,
 :root[data-op-style="minimal"] .plate.bare {
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--op-space-2);
   padding-left: 0;
 }
 
-/* The name spans the row; the badge, when there is one, takes the second cell
-   of the first row instead. */
 :root[data-op-style="minimal"] .name {
-  grid-column: 1 / -1;
-  font: 600 13px / 1.1 var(--op-font-body);
+  font: 600 var(--op-fs-meta) / 1 var(--op-font-body);
   color: var(--op-text);
 }
 
@@ -580,43 +571,28 @@ useBridge('open77:anchors', (payload: Payload) => {
 :root[data-op-style="minimal"] .cid {
   font: 400 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text-dim);
-  opacity: 0.9;
+  opacity: 1;
 }
 
-:root[data-op-style="minimal"] .id.staff {
-  --aug-border-bg: transparent;
-  border-right-color: var(--op-alarm);
-  font-weight: 600;
-  color: var(--op-alarm);
+:root[data-op-style="minimal"] .tag.staff {
+  background: rgba(245, 245, 245, 0.92);
+}
+
+:root[data-op-style="minimal"] .id.staff,
+:root[data-op-style="minimal"] .plate.staff .user,
+:root[data-op-style="minimal"] .plate.staff .cid {
+  color: rgba(var(--op-plate-rgb), 0.6);
+  opacity: 1;
 }
 
 :root[data-op-style="minimal"] .plate.staff .name {
-  grid-column: 1;
-  color: var(--op-text);
-}
-
-:root[data-op-style="minimal"] .plate.staff .user,
-:root[data-op-style="minimal"] .plate.staff .cid {
-  color: var(--op-text-dim);
-  opacity: 0.9;
+  color: rgb(var(--op-plate-rgb));
 }
 
 :root[data-op-style="minimal"] .badge {
-  grid-row: 1;
-  grid-column: 2;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font: 500 var(--op-fs-micro) / 1 var(--op-font-body);
-  color: var(--op-alarm);
+  font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
+  color: rgb(var(--op-plate-rgb));
   opacity: 1;
   text-transform: lowercase !important;
-}
-
-:root[data-op-style="minimal"] .badge::before {
-  content: '';
-  width: 4px;
-  height: 4px;
-  background: var(--op-alarm);
 }
 </style>
