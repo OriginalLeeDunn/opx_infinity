@@ -826,6 +826,36 @@ The order is: the message is not drawn while the opening clip plays, it appears 
 that clip ends, it goes when its lifetime ends, and only then does the closing clip
 start -- with a refused playback still drawing the message.
 
+### Contracts: the gig board
+
+`modules/contracts`, configured in `config/contracts.lua`. A **fixer** (`/postgig`)
+posts a gig and its reward plus `POST_FEE` leave their cash at once, **into escrow**; a
+**merc** (`/gigs`, or ALT on a district fixer NPC) takes it, first come first served.
+The server alone records the proof — a parcel handed over at a drop-off, a zone held
+for `HOLD_MS`, or a fixer's sign-off for a `manual` gig — and the settlement pays the
+merc the reward minus the fixer's cut (handed back to the fixer), moves street cred
+(character metadata `contracts`), and refunds the escrow on cancel, expiry or failure.
+
+Every eddie moves through one rule: a ledger row keyed `contracts:<id>:<phase>`
+(`opx77_contract_ledger`) is reserved, the money moves, the row is committed. A replay
+finds the receipt and moves nothing; a row a crash left `reserved` is marked
+`orphaned` and audited for staff, never guessed at. A gig that ends is written
+`settling` first, so a restart finishes paying it. Payouts use `AddMoneyOffline`: a
+merc who logged off is still paid.
+
+District fixers (`FIXERS`) stand as NPCs, open the board on ALT and — when no player
+fixer is on duty — post gigs from `TEMPLATES` paid in new money, capped by
+`MINT_PER_HOUR`; their cut is destroyed. A manual gig nobody signs off within
+`VALIDATE_TTL_S` is paid or goes `disputed` (`MANUAL_TIMEOUT`); staff settle it with
+`/opx.contracts.resolve <id> paid|failed`.
+
+Other modules post and measure through `OPX.Api.Get('contracts')`: `Post(spec)`,
+`Cancel`, `Get`, `List`, `ReportProof(id, proof)`, `Resolve(id, outcome)`,
+`RegisterObjectiveType(name, { validate, describe?, waypoint?, canStart?, start?,
+stop?, tick? })`. The bus is `opx:on:contracts:posted`, `accepted`, `paid`,
+`failed`, `expired`, `cancelled` — ids, type, citizen ids and reward, never a position.
+Every drop-off, zone and fixer ships at `0,0,0` and is disabled, by name, until surveyed.
+
 ---
 
 ## For creators

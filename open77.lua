@@ -124,6 +124,9 @@ shared_script "config/fuel.lua"
 -- the dispatch key here; the server re-derives every bound. See
 -- modules/medical/module.lua.
 shared_script "config/medical.lua"
+-- Shared: both halves declare the module with its settings; the server
+-- re-derives every choice it offers. See modules/contracts/module.lua.
+shared_script "config/contracts.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -546,6 +549,18 @@ shared_script "modules/medical/shared/model.lua"
 server_script "modules/medical/server/dispatch.lua"
 server_script "modules/medical/server/main.lua"
 client_script "modules/medical/client/main.lua"
+
+-- Contracts, the fixer / merc gig board. After `character` (required: the
+-- escrow, the payouts and the street cred), `inventory` (the package item,
+-- registered at runtime), `target`, `menu` and `form`, all optional and all
+-- ordered above. `world.npcs` (the district fixers and the drop-off NPCs) and
+-- `ui.vanilla.map` (the merc's waypoint) are declared below already.
+shared_script "modules/contracts/module.lua"
+shared_script "modules/contracts/locales.lua"
+shared_script "modules/contracts/shared/access.lua"
+server_script "modules/contracts/server/storage.lua"
+server_script "modules/contracts/server/main.lua"
+client_script "modules/contracts/client/main.lua"
 
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before
