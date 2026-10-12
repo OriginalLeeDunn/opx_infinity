@@ -47089,6 +47089,348 @@ do
 	end
 end
 
+-- ── workplace: duty points, uniforms and service fleets ──────────────────────
+section('workplace: the config, the validator and the uniform arithmetic')
+do
+	local env, _, why = boot('server', fuelBridge({}, {}))
+	check('the server boots with the workplace module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local workplace = OPX.Modules.Get('workplace')
+		local Access = workplace.Access
+		local jobs = OPX.Config.MODULES.character.JOBS
+		local shipped = Access.Build(OPX.Config.MODULES.workplace, jobs)
+		check('the shipped config has no problem', #shipped.problems == 0, table.concat(shipped.problems, ' | '))
+		check('and every station waits to be surveyed', next(shipped.stations) == nil and #shipped.placeholders >= 20,
+			#shipped.placeholders)
+		check('the uniforms and fleets are read per job', shipped.outfits.ncpd.patrol ~= nil
+			and shipped.outfits.trauma.response.wear.Outfit == 'Items.Trauma_Team_Outfit'
+			and shipped.fleet.ncpd.cortes.record == 'Vehicle.v_standard2_villefort_cortes_police')
+
+		local config = OPX.Table.DeepCopy(OPX.Config.MODULES.workplace)
+		local kabuki = config.STATIONS.ncpd_kabuki
+		kabuki.DUTY.X, kabuki.WARDROBE.X, kabuki.GARAGE.X = 100.0, 110.0, 120.0
+		config.STATIONS.trauma_hq.JOB = 'nobody'
+		config.STATIONS.delamain_hq.DUTY = { X = 5.0, Y = 0.0, Z = 0.0 }
+		config.STATIONS.ncpd_vista_del_rey.WARDROBE.X = 1.0
+		config.STATIONS.ncpd_vista_del_rey.GARAGE.X = 2.0
+		config.STATIONS.ncpd_vista_del_rey.GARAGE.PAD.X = 3.0
+		config.STATIONS.ncpd_vista_del_rey.GARAGE.VEHICLES = { 'cortes', 'tank' }
+		config.OUTFITS.ncpd.broken = { WEAR = { Torso = 'Items.SQ029_Police_Suit' } }
+		config.FLEET.maxtac.bad = { RECORD = 'Character.Judy' }
+		local built = Access.Build(config, jobs)
+		local all = table.concat(built.problems, '\n')
+		local station = built.stations.ncpd_kabuki
+		check('a surveyed station opens with its duty and wardrobe points', station ~= nil
+			and station.points.duty ~= nil and station.points.wardrobe ~= nil)
+		check('a garage whose pad is still at zeros is disabled, and named',
+			station ~= nil and station.points.garage == nil
+			and table.concat(built.placeholders, ','):find('ncpd_kabuki.pad', 1, true) ~= nil)
+		check('a station of an unknown job is refused alone', built.stations.trauma_hq == nil
+			and all:find('STATIONS.trauma_hq', 1, true) ~= nil)
+		check('a duty clock on a defaultDuty job is refused', all:find('STATIONS.delamain_hq', 1, true) ~= nil)
+		check('a garage naming a vehicle the fleet lacks is refused', built.stations.ncpd_vista_del_rey == nil
+			and all:find('tank', 1, true) ~= nil)
+		check('a uniform on an unknown slot is refused, the others kept', all:find('OUTFITS.ncpd.broken', 1, true) ~= nil
+			and built.outfits.ncpd.broken == nil and built.outfits.ncpd.patrol ~= nil)
+		check('a vehicle record that is no Vehicle.* is refused', all:find('FLEET.maxtac.bad', 1, true) ~= nil)
+
+		local cadet = Access.Outfits(built, 'ncpd', 0)
+		local detective = Access.Outfits(built, 'ncpd', 2)
+		check('a cadet sees the grade-0 uniform only', #cadet == 1 and cadet[1].key == 'patrol')
+		check('a detective sees all three, lowest grade first', #detective == 3 and detective[1].key == 'patrol'
+			and detective[3].key == 'detective')
+
+		local civilian = { schemaVersion = 1, wardrobe = { active = 2, outfits = { ['2'] = { Head = 'Items.Cap_01' } } },
+			equipment = { Head = 'Items.Cap_01', OuterChest = 'Items.Jacket_01', Legs = 'Items.Pants_01',
+				Feet = 'Items.Boots_01_basic_01', UnderwearTop = 'Items.Underwear_Top', Outfit = false } }
+		local suit = Access.Uniform(civilian, built.outfits.ncpd.patrol, 'male')
+		check('a full-body uniform takes the Outfit slot and empties the rest',
+			suit.equipment.Outfit == 'Items.SQ029_Police_Suit' and suit.equipment.Head == false
+			and suit.equipment.Legs == false)
+		check('underwear and the saved wardrobe outfits are kept, the active one dropped',
+			suit.equipment.UnderwearTop == 'Items.Underwear_Top' and suit.wardrobe.active == nil
+			and suit.wardrobe.outfits['2'] ~= nil)
+		check('and the civilian record is not touched', civilian.equipment.Head == 'Items.Cap_01'
+			and civilian.wardrobe.active == 2)
+		local office = Access.Uniform(civilian, built.outfits.arasaka.office, 'female')
+		check('a body-family override replaces its slot', office.equipment.Legs == 'Items.FormalSkirt_01_rich_03')
+		local cab = Access.Uniform(false, built.outfits.cabbie.driver, nil)
+		check('KEEP_OTHERS keeps unlisted slots, and nothing stored starts empty',
+			cab.equipment.OuterChest == 'Items.Q000_Corpo_FormalJacket' and cab.equipment.Head == nil
+			and cab.schemaVersion == 1)
+	end
+end
+
+section('workplace: clock in, suit up, take a car out, and every way it comes back')
+do
+	local function survey(env, file)
+		if file ~= 'config/workplace.lua' then return end
+		local stations = env.OPX.Config.MODULES.workplace.STATIONS
+		local kabuki = stations.ncpd_kabuki
+		kabuki.DUTY.X, kabuki.WARDROBE.X, kabuki.GARAGE.X, kabuki.GARAGE.PAD.X = 600.0, 610.0, 620.0, 630.0
+		local depot = stations.delamain_hq
+		depot.GARAGE.X, depot.GARAGE.PAD.X = 700.0, 710.0
+	end
+	local env, control, why = boot('server', fuelBridge({}, {}), nil, survey)
+	check('the server boots with a surveyed precinct', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local workplace = OPX.Modules.Get('workplace')
+		local api = OPX.Api.Get('workplace')
+		local P, MEDIC, CAB, ROOKIE = 81, 82, 83, 84
+
+		local function stand(source, cid, job, jobs)
+			local player = standCharacter(env, control, source, cid)
+			player.PlayerData.job = job
+			player.PlayerData.jobs = jobs
+			local meta = {}
+			player.Functions.GetMetaData = function(key) if key == nil then return meta end return meta[key] end
+			player.Functions.SetMetaData = function(key, value) meta[key] = value end
+			return player, meta
+		end
+		local cop, meta = stand(P, 'WORK0001', { name = 'ncpd', onDuty = true, grade = { level = 2 } }, { ncpd = 2 })
+
+		-- The appearance and key contracts, faked.
+		local civilian = { schemaVersion = 1, wardrobe = { outfits = {} },
+			equipment = { Head = 'Items.Cap_01', OuterChest = 'Items.Jacket_01', Outfit = false } }
+		cop.PlayerData.clothing = civilian
+		local saves, revoked, refuseSave = {}, {}, false
+		local appearance = {
+			GetClothing = function(who)
+				local data = OPX.Api.Get('character').GetPlayer(who)
+				return { ok = true, value = data and data.PlayerData.clothing }
+			end,
+			SaveClothing = function(who, record)
+				if refuseSave then return { ok = false, error = 'clothing.invalid' } end
+				saves[#saves + 1] = { who = who, record = record }
+				OPX.Api.Get('character').GetPlayer(who).PlayerData.clothing = record
+				return { ok = true, value = record }
+			end,
+		}
+		local vehiclekeys = {
+			GiveFor = function(_, id) return { ok = true, value = { plate = 'TMP-' .. tostring(id):sub(-3), label = 'x' } } end,
+			RevokeAll = function(plate) revoked[#revoked + 1] = plate; return { ok = true } end,
+		}
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if name == 'appearance' then return appearance end
+			if name == 'vehiclekeys' then return vehiclekeys end
+			return realGet(name, minimum)
+		end
+		local function step() control.Advance(1000) end
+		local function job() return cop.PlayerData.job end
+
+		-- The duty clock.
+		control.Stand(P, 5000.0, 0.0, 0.0)
+		step()
+		local ok, code = workplace.Duty(P, { station = 'ncpd_kabuki' })
+		check('away from the duty point: refused too_far', not ok and code == 'too_far', code)
+		control.Stand(P, 600.5, 0.0, 0.0)
+		step()
+		ok, code = workplace.Duty(P, { station = 'ncpd_kabuki' })
+		check('at the duty point an on-duty officer clocks out, through the character contract',
+			ok and code == 'clocked_out' and job().onDuty == false, code)
+		check('and the contract reads it back', api.OnDuty(P) == false)
+		ok, code = workplace.Duty(P, { station = 'ncpd_kabuki' })
+		check('a second press inside the floor is too fast', not ok and code == 'too_fast', code)
+		step()
+		ok, code = workplace.Duty(P, { station = 'ncpd_kabuki' })
+		check('and clocks back in', ok and code == 'clocked_in' and job().onDuty == true and api.OnDuty(P) == true, code)
+		step()
+		ok, code = workplace.Duty(P, { station = 'trauma_hq' })
+		check('a station still waiting for its survey is unknown', not ok and code == 'unknown_station', code)
+
+		-- The wardrobe.
+		control.Stand(P, 610.5, 0.0, 0.0)
+		step()
+		ok, code = workplace.Wear(P, { station = 'ncpd_kabuki', outfit = 'tactical' })
+		check('another job\'s outfit is unknown here', not ok and code == 'unknown_outfit', code)
+		step()
+		ok, code = workplace.Wear(P, { station = 'ncpd_kabuki', outfit = 'patrol' })
+		check('the patrol uniform goes on through appearance.SaveClothing', ok and code == 'uniform_on'
+			and saves[#saves].record.equipment.Outfit == 'Items.SQ029_Police_Suit', code)
+		check('and the civilian look is kept on the metadata first', type(meta.workplace_civvies) == 'table'
+			and meta.workplace_civvies.clothing.equipment.Head == 'Items.Cap_01'
+			and meta.workplace_civvies.outfit == 'patrol')
+		step()
+		ok, code = workplace.Wear(P, { station = 'ncpd_kabuki', outfit = 'detective' })
+		check('a second uniform is built on the civilian look, not on the first uniform', ok
+			and saves[#saves].record.equipment.Outfit == false
+			and saves[#saves].record.equipment.OuterChest == 'Items.Corporate_01_Set_FormalJacket'
+			and meta.workplace_civvies.clothing.equipment.Head == 'Items.Cap_01', code)
+		check('the contract says who wears what', select(3, api.InUniform(P)) == 'detective')
+		step()
+		workplace.Ask(P, { station = 'ncpd_kabuki', kind = 'wardrobe' })
+		local menu = fuelAnswer(control, workplace.Event.MENU, P)
+		check('the locker room menu lists the three uniforms and marks the one worn', menu ~= nil
+			and #menu.rows == 3 and menu.worn == true and menu.rows[3].worn == true)
+		cop.PlayerData.job.grade.level = 0
+		step()
+		ok, code = workplace.Wear(P, { station = 'ncpd_kabuki', outfit = 'street' })
+		check('a cadet cannot put on the street kit', not ok and code == 'grade_too_low', code)
+		step()
+		workplace.Ask(P, { station = 'ncpd_kabuki', kind = 'wardrobe' })
+		check('and the cadet\'s menu offers the patrol uniform alone',
+			#fuelAnswer(control, workplace.Event.MENU, P).rows == 1)
+		cop.PlayerData.job.grade.level = 2
+		step()
+		refuseSave = true
+		ok, code = workplace.Civvies(P, { station = 'ncpd_kabuki' })
+		check('a civilian look the appearance service refuses keeps the metadata', not ok
+			and code == 'civvies_failed' and meta.workplace_civvies ~= nil, code)
+		refuseSave = false
+		step()
+		ok, code = workplace.Civvies(P, { station = 'ncpd_kabuki' })
+		check('back to civilian restores the exact look and clears the metadata', ok and code == 'civvies_on'
+			and saves[#saves].record.equipment.Head == 'Items.Cap_01'
+			and saves[#saves].record.equipment.OuterChest == 'Items.Jacket_01' and meta.workplace_civvies == nil, code)
+		step()
+		ok, code = workplace.Civvies(P, { station = 'ncpd_kabuki' })
+		check('and a second time there is nothing to take off', not ok and code == 'not_in_uniform', code)
+
+		-- The fleet.
+		control.Stand(P, 620.5, 0.0, 0.0)
+		step()
+		ok, code = workplace.Spawn(P, { station = 'ncpd_kabuki', vehicle = 'basilisk' })
+		check('a vehicle of another fleet is unknown', not ok and code == 'unknown_vehicle', code)
+		step()
+		local creates = #control.vehicleCreates
+		ok, code = workplace.Spawn(P, { station = 'ncpd_kabuki', vehicle = 'cortes' })
+		local made = control.vehicleCreates[#control.vehicleCreates]
+		check('a patrol car comes out on the pad, with a TTL and in the station\'s bucket', ok and code == 'spawned'
+			and #control.vehicleCreates == creates + 1 and made.position.x == 630.0 and made.ttlMs == 180 * 60000
+			and made.bucket == 0 and made.record == 'Vehicle.v_standard2_villefort_cortes_police', code)
+		local out = api.Out(P)
+		check('with a key cut and the vehicle on the contract', out ~= nil and out.vehicle == 'cortes'
+			and type(out.plate) == 'string')
+		step()
+		ok, code = workplace.Spawn(P, { station = 'ncpd_kabuki', vehicle = 'apollo' })
+		check('one service vehicle per player', not ok and code == 'already_out', code)
+		local car
+		for _, entry in ipairs(control.vehicles.world) do
+			if entry.id == out.id then car = entry end
+		end
+		car.position = { x = 900.0, y = 0.0, z = 0.0 }
+		step()
+		ok, code = workplace.Return(P, { station = 'ncpd_kabuki' })
+		check('a car left across the map cannot be handed in', not ok and code == 'vehicle_far', code)
+		car.position = { x = 632.0, y = 0.0, z = 0.0 }
+		step()
+		ok, code = workplace.Return(P, { station = 'ncpd_kabuki' })
+		check('brought back to the pad it is handed in, removed, and every key revoked', ok and code == 'returned'
+			and control.vehicleRemoves[#control.vehicleRemoves] == out.id and revoked[#revoked] == out.plate
+			and api.Out(P) == nil, code)
+
+		-- Off duty: the car and the uniform both go back.
+		control.Stand(P, 610.5, 0.0, 0.0)
+		step()
+		workplace.Wear(P, { station = 'ncpd_kabuki', outfit = 'patrol' })
+		control.Stand(P, 620.5, 0.0, 0.0)
+		step()
+		workplace.Spawn(P, { station = 'ncpd_kabuki', vehicle = 'cortes' })
+		out = api.Out(P)
+		control.Stand(P, 600.5, 0.0, 0.0)
+		step()
+		ok = workplace.Duty(P, { station = 'ncpd_kabuki' })
+		control.Pump(3)
+		check('clocking out takes the service vehicle back', ok and out ~= nil and api.Out(P) == nil
+			and control.vehicleRemoves[#control.vehicleRemoves] == out.id)
+		check('and puts the civilian look back on', meta.workplace_civvies == nil
+			and saves[#saves].record.equipment.Head == 'Items.Cap_01')
+		control.Stand(P, 620.5, 0.0, 0.0)
+		step()
+		ok, code = workplace.Spawn(P, { station = 'ncpd_kabuki', vehicle = 'cortes' })
+		check('off duty, the motor pool is closed', not ok and code == 'off_duty', code)
+		control.Stand(P, 600.5, 0.0, 0.0)
+		step()
+		workplace.Duty(P, { station = 'ncpd_kabuki' })
+
+		-- The host removes it (TTL, wreck), the player leaves.
+		control.Stand(P, 620.5, 0.0, 0.0)
+		step()
+		workplace.Spawn(P, { station = 'ncpd_kabuki', vehicle = 'cortes' })
+		out = api.Out(P)
+		env.Open77.vehicles.remove(out.id)
+		control.Fire(OPX.Host.VEHICLE_REMOVED, out.id)
+		check('a vehicle the host removed is forgotten and its keys revoked', api.Out(P) == nil
+			and revoked[#revoked] == out.plate)
+		step()
+		workplace.Spawn(P, { station = 'ncpd_kabuki', vehicle = 'cortes' })
+		out = api.Out(P)
+		control.Fire(OPX.Host.PLAYER_DISCONNECTED, P)
+		check('a player who leaves takes nothing with them: the car is removed', out ~= nil and api.Out(P) == nil
+			and control.vehicleRemoves[#control.vehicleRemoves] == out.id)
+
+		-- Another job, a secondary job, a job on duty by definition.
+		stand(MEDIC, 'WORK0002', { name = 'trauma', onDuty = true, grade = { level = 3 } }, { trauma = 3 })
+		control.Stand(MEDIC, 600.5, 0.0, 0.0)
+		ok, code = workplace.Duty(MEDIC, { station = 'ncpd_kabuki' })
+		check('a medic cannot clock in at the precinct', not ok and code == 'wrong_job', code)
+		local rookie = stand(ROOKIE, 'WORK0004', { name = 'unemployed', onDuty = true, grade = { level = 0 } },
+			{ unemployed = 0, ncpd = 1 })
+		control.Stand(ROOKIE, 600.5, 0.0, 0.0)
+		ok, code = workplace.Duty(ROOKIE, { station = 'ncpd_kabuki' })
+		check('a held secondary job is made primary and clocked in', ok and code == 'clocked_in'
+			and rookie.PlayerData.job.name == 'ncpd' and rookie.PlayerData.job.onDuty == true, code)
+		control.Stand(ROOKIE, 620.5, 0.0, 0.0)
+		step()
+		ok, code = workplace.Spawn(ROOKIE, { station = 'ncpd_kabuki', vehicle = 'merrimac' })
+		check('an officer of grade 1 cannot take the grade-2 interceptor', not ok and code == 'grade_too_low', code)
+		stand(CAB, 'WORK0003', { name = 'cabbie', onDuty = false, grade = { level = 0 } }, { cabbie = 0 })
+		control.Stand(CAB, 700.5, 0.0, 0.0)
+		ok, code = workplace.Spawn(CAB, { station = 'delamain_hq', vehicle = 'cortes' })
+		check('a Delamain driver is on duty by definition and takes a cab out', ok and code == 'spawned'
+			and control.vehicleCreates[#control.vehicleCreates].record
+				== 'Vehicle.v_standard2_villefort_cortes_delamain_taxi', code)
+		local fleet = api.Fleet('ncpd')
+		check('Fleet lists a job\'s vehicles, sorted', #fleet == 5 and fleet[1].key == 'apollo'
+			and fleet[5].key == 'merrimac')
+
+		-- Hostile input.
+		for _, payload in ipairs({ 'x', 5, { station = {} }, { station = string.rep('a', 500) },
+			{ station = 'ncpd_kabuki', kind = 'boot' } }) do
+			step()
+			ok = workplace.Ask(P, payload)
+			check('a bad menu request is refused', not ok)
+		end
+		env.source = P
+		local survived = pcall(function()
+			for _, name in ipairs({ 'DUTY', 'ASK', 'WEAR', 'CIVVIES', 'SPAWN', 'RETURN' }) do
+				control.netEvents[workplace.Event[name]]({ station = { 1 }, outfit = {}, vehicle = string.rep('v', 4000) })
+				control.netEvents[workplace.Event[name]](nil)
+			end
+			control.Pump(3)
+		end)
+		env.source = nil
+		check('and the net doors survive garbage', survived)
+	end
+end
+
+section('workplace: the client builds its rows inside the budget')
+do
+	local env, control = Host.Environment('client')
+	for _, file in ipairs(Host.LoadOrder('open77.lua', 'client')) do
+		local chunk = loadfile(file, 't', env)
+		if chunk ~= nil and pcall(chunk) and file == 'config/workplace.lua' then
+			local n = 0
+			for _, station in pairs(env.OPX.Config.MODULES.workplace.STATIONS) do
+				for _, point in pairs({ station.DUTY or false, station.WARDROBE or false, station.GARAGE or false,
+					station.GARAGE and station.GARAGE.PAD or false }) do
+					if point then
+						n = n + 1
+						point.X = 100.0 + n
+					end
+				end
+			end
+		end
+	end
+	local worst = resumeCost(env, control, function()
+		control.Fire('onClientResourceStart', 'opx_infinity')
+	end, 240)
+	check('a client booting with every workplace surveyed keeps every resume under 4,500', worst < 4500, worst)
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the

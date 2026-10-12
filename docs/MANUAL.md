@@ -803,6 +803,29 @@ paid?, felony? })`, `GetRecord(citizenId, { expunged? })`, `HasWarrant(citizenId
 `RevokeLicence(citizenId, kind, reason?, by?)`, `Crimes()`. Bus:
 `opx:on:justice:record|licence`. Staff: `/opx.justice.desks`, `/opx.justice.capture <key>`.
 
+### Workplace: duty, uniforms, service vehicles
+
+`modules/workplace` + `config/workplace.lua`. A **station** belongs to one job and holds
+up to three ALT spheres: **DUTY** (clock in / out through character `SetJobDuty`; a job
+held as a secondary membership is made primary first when `SWITCH_PRIMARY`; a
+`defaultDuty` job has no clock and the validator refuses one), **WARDROBE** (the job's
+`OUTFITS`, per `MIN_GRADE`: a uniform is a set of equipment slots written through
+`appearance.SaveClothing`, which re-dresses the puppet; the civilian record is kept on
+the `workplace_civvies` metadata BEFORE the uniform is written and put back by "Back to
+civilian", by going off duty (`RESTORE_OFF_DUTY`), by losing the job, or at the next
+login of a character no longer in that job) and **GARAGE** (the job's `FLEET`, per
+`MIN_GRADE`, narrowed per station by `VEHICLES`: `Open77.vehicles.create` on the `PAD`
+with `ttlMs`, no row, a key through `vehiclekeys.GiveFor`; one per player; handed back
+at the pad within `RETURN_RADIUS`, and taken back with every key revoked on off duty,
+job change, logout, disconnect, or when the host removes it). Every job decision goes
+through `OPX.JobGate`. Sirens and lights are the police module's.
+
+Contract `workplace` v1 (server): `OnDuty(player)` -> `(bool, job)`, `Fleet(job)`,
+`Out(player)`, `Recall(player, reason)`, `InUniform(player)`. Bus:
+`opx:on:workplace:duty|uniform|fleet`. Staff: `/opx.workplace.capture <station>
+<duty|wardrobe|garage|pad>` (the pad line carries the heading), `/opx.workplace.stations`.
+Every point ships as `0,0,0` and stays disabled until surveyed.
+
 ### Emotes
 
 `animations` offers **every animation the platform has** (**"toutes les animations,

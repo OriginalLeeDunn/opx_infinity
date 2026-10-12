@@ -149,6 +149,9 @@ shared_script "config/taxi.lua"
 -- it; the server re-derives every price, gate and bound. See
 -- modules/justice/module.lua.
 shared_script "config/justice.lua"
+-- Shared: the client draws each station's duty, wardrobe and garage spheres
+-- from it; the server re-derives every one. See modules/workplace/module.lua.
+shared_script "config/workplace.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -669,6 +672,11 @@ shared_script "modules/justice/shared/access.lua"
 server_script "modules/justice/server/storage.lua"
 server_script "modules/justice/server/main.lua"
 client_script "modules/justice/client/main.lua"
+shared_script "modules/workplace/module.lua"
+shared_script "modules/workplace/locales.lua"
+shared_script "modules/workplace/shared/access.lua"
+server_script "modules/workplace/server/main.lua"
+client_script "modules/workplace/client/main.lua"
 
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before
