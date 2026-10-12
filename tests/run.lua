@@ -45646,9 +45646,14 @@ do
 				check('cuffed, every hand control is blocked', blocked == 6, blocked)
 				calls = {}
 				control.Advance(1100)
-				control.Pump(6)
+				-- `settle`, not a fixed six frames: the scheduler rotates four jobs a
+				-- pass, so the re-hold's turn depends on how many modules run.
 				local again = 0
-				for _, call in ipairs(calls) do if call.value == false then again = again + 1 end end
+				settle(control, function()
+					again = 0
+					for _, call in ipairs(calls) do if call.value == false then again = again + 1 end end
+					return again >= 6
+				end, 200)
 				check('and held again on the next second, whatever reset it', again >= 6, again)
 				calls = {}
 				handler({ cuffed = false })
@@ -46521,6 +46526,566 @@ do
 		control.netEvents[taxi.Event.CLOSED]({ id = 1 })
 		control.netEvents[taxi.Event.ANSWER]({ ok = false, code = 'nonsense' })
 		check('the meter, a closed call and an unknown code are taken without a raise', true)
+	end
+end
+
+-- ── justice ─────────────────────────────────────────────────────────────────
+
+section('justice: the config, the validator and the rules a licence and a record are decided on')
+do
+	local env, _, why = boot('server')
+	check('the server boots with the justice module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local j = OPX.Modules.Get('justice')
+		local Access = j.Access
+		local S = j.S
+		check('and it runs', OPX.Modules.IsRunning('justice'), OPX.Modules.Record('justice').Reason)
+		check('the shipped config has no problem', #S.problems == 0, table.concat(S.problems, ' / '))
+		check('both shipped desks are 0,0,0 and so disabled, named', #S.deskList == 0 and #S.placeholders == 2
+			and S.placeholders[1] == 'nc_city_hall', table.concat(S.placeholders, ','))
+		check('the four licences, in their ORDER', #S.licenceList == 4 and S.licenceList[1].kind == 'driving'
+			and S.licenceList[4].kind == 'netrunning' and S.licences.weapons.clean == true)
+		check('the crime codes are read, felonies marked', #S.crimeList >= 10
+			and S.crimes.nc_501_murder.felony == true and S.crimes.nc_101_assault.felony == false)
+		check('the fees go to the courts\' job account by default', S.account ~= nil and S.account.kind == 'job'
+			and S.account.key == 'judge')
+		check('lawyer and judge are jobs of config/character.lua, with a boss grade each',
+			OPX.Config.MODULES.character.JOBS.lawyer.grades[1].isBoss == true
+				and OPX.Config.MODULES.character.JOBS.judge.grades[1].isBoss == true
+				and OPX.Config.MODULES.character.JOBS.judge.grades[0].name == 'Judge')
+
+		local bad = Access.Problems({
+			POLICE = { JOBS = {} }, LAWYER = { JOBS = { lawyer = 0 } }, JUDGE = { JOBS = { judge = 0 } },
+			CITY_ACCOUNT = { KIND = 'city', KEY = 'x' },
+			CITY_HALLS = { ok = { DESK = { X = 1, Y = 2, Z = 3 } }, broken = { DESK = { X = 'a', Y = 0, Z = 1 } } },
+			LICENCES = { driving = { FEE = 10 }, junk = { FEE = -1 } },
+			CRIMES = { fine = { FINE = 1 }, ['bad code!'] = { FINE = 1 } },
+			CARD_ITEM = { NAME = 'not an item' },
+		})
+		local function names(word)
+			for _, line in ipairs(bad) do if line:find(word, 1, true) then return true end end
+			return false
+		end
+		check('a role with no job is closed and named', names('POLICE'))
+		check('a city account that is not job|gang is named', names('CITY_ACCOUNT'))
+		check('a desk with a broken axis, a negative fee, a bad crime key and a bad card are each named',
+			names('CITY_HALLS.broken') and names('LICENCES.junk') and names('bad code!') and names('CARD_ITEM'),
+			table.concat(bad, ' / '))
+		local read = Access.Read({ LICENCES = { driving = { FEE = 10 } }, CITY_HALLS = { ok = { DESK = { X = 1, Y = 2, Z = 3 } } } })
+		check('and what is fine is kept beside it', read.licences.driving ~= nil and read.desks.ok ~= nil
+			and read.police == nil)
+
+		local now = 1000000
+		local licence = { kind = 'driving', days = 30 }
+		check('a licence runs DAYS from its purchase, 0 = for life',
+			Access.Expiry(licence, now) == now + 30 * 86400 and Access.Expiry({ days = 0 }, now) == 0)
+		check('state: valid, expired, none', Access.State({ expires = now + 1 }, now) == 'valid'
+			and Access.State({ expires = now }, now) == 'expired' and Access.State({ expires = 0 }, now) == 'valid'
+			and Access.State(nil, now) == 'none')
+		check('the metadata is read defensively', next(Access.Held('junk')) == nil
+			and Access.Held({ driving = { expires = 5 }, ['bad key!'] = {} }).driving.expires == 5
+			and Access.Held({ ['bad key!'] = {} })['bad key!'] == nil)
+
+		local ok, code = Access.Clean({ { kind = 'warrant', active = true } }, now, 30)
+		check('an active warrant blocks a clean licence', not ok and code == 'warrant_active')
+		ok, code = Access.Clean({ { kind = 'offence', felony = true, at = now - 86400 } }, now, 30)
+		check('so does a recent felony', not ok and code == 'record_felony')
+		ok = Access.Clean({ { kind = 'offence', felony = true, at = now - 40 * 86400 } }, now, 30)
+		check('but not an old one', ok)
+		ok = Access.Clean({ { kind = 'offence', felony = true, at = now, expunged = true },
+			{ kind = 'warrant', active = true, expunged = true } }, now, 30)
+		check('and nothing expunged counts', ok)
+
+		local entry = Access.Entry(S, { code = 'nc_501_murder', fine = 100, officer = 'ABC-DEFG', source = 'police' })
+		check('an entry from a known code takes its label and felony',
+			entry ~= nil and entry.label == 'Murder' and entry.felony and entry.kind == 'offence' and not entry.paid)
+		entry = Access.Entry(S, { code = 'ncpd_custom', label = 'Loitering\nnear a Militech depot' })
+		check('an unknown code keeps its own (cleaned) label, and a zero fine is paid',
+			entry ~= nil and entry.label == 'Loitering near a Militech depot' and entry.paid and not entry.felony)
+		check('a warrant is active and coded warrant', Access.Entry(S, { kind = 'warrant' }).active == true
+			and Access.Entry(S, { kind = 'warrant' }).code == 'warrant')
+		local _, why1 = Access.Entry(S, { code = 'x', fine = -1 })
+		local _, why2 = Access.Entry(S, { code = 'bad code' })
+		local _, why3 = Access.Entry(S, { code = 'x', kind = 'ticket' })
+		local _, why4 = Access.Entry(S, { code = 'x', jail = S.maxJail + 1 })
+		check('a negative fine, a bad code, a bad kind and an over-long jail are each refused',
+			why1 == 'bad_amount' and why2 == 'bad_code' and why3 == 'bad_kind' and why4 == 'bad_amount')
+		check('a form amount: digits only, bounded', Access.Amount('1500', 2000) == 1500
+			and Access.Amount('2001', 2000) == nil and Access.Amount('1e3', 2000) == nil
+			and Access.Amount('-5', 2000) == nil and Access.Amount(12, 20) == 12 and Access.Amount(1.5, 20) == nil)
+		check('the storage owns three tables', #j.Storage.SCHEMA == 3
+			and j.Storage.SCHEMA[1]:find('opx77_justice_records', 1, true) ~= nil)
+
+		local justice = OPX.Api.Get('justice')
+		check('the justice contract is published with the shape the police call',
+			justice ~= nil and type(justice.AddRecord) == 'function' and type(justice.GetRecord) == 'function'
+				and type(justice.HasLicence) == 'function' and type(justice.RevokeLicence) == 'function'
+				and type(justice.HasWarrant) == 'function' and #justice.Crimes() == #S.crimeList)
+		local refused = justice.AddRecord('not a citizen', { code = 'x' })
+		check('and refuses a citizen id that is not one', refused.ok == false and refused.error == 'no_citizen')
+	end
+end
+
+section('justice: City Hall, the record, counsel and the court on the server')
+do
+	local function jConfig(env, file)
+		if file ~= 'config/justice.lua' then return end
+		local desk = env.OPX.Config.MODULES.justice.CITY_HALLS.nc_city_hall
+		desk.DESK.X, desk.DESK.Y, desk.DESK.Z = 500.0, 0.0, 0.0
+	end
+	local bridge = Host.Database({
+		scalar = function() return 1 end,
+		single = function() return nil end,
+		insert = function() return 1 end,
+		update = function() return 1 end,
+		query = function() return {} end,
+		transaction = function() return true end,
+	})
+	local env, control, why = boot('server', bridge, nil, jConfig)
+	check('the server boots with a surveyed City Hall', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local j = OPX.Modules.Get('justice')
+		local justice = OPX.Api.Get('justice')
+		check('the surveyed desk is open, the other still disabled', #j.S.deskList == 1
+			and j.S.placeholders[1] == 'watson_council_annex')
+
+		-- The storage, in memory: the SQL itself is the bridge's; the flows are ours.
+		local db = { records = {}, counsel = {}, cases = {}, n = 0, c = 0 }
+		local realStorage = j.Storage
+		local function copy(row) local out = {} for k, v in pairs(row) do out[k] = v end return out end
+		j.Storage = setmetatable({
+			Add = function(cid, e, at)
+				db.n = db.n + 1
+				local row = copy(e)
+				row.id, row.citizen, row.at, row.expunged = db.n, cid, at, false
+				db.records[db.n] = row
+				return db.n
+			end,
+			List = function(cid, limit, all)
+				local out = {}
+				for id = db.n, 1, -1 do
+					local row = db.records[id]
+					if row.citizen == cid and (all or not row.expunged) then out[#out + 1] = copy(row) end
+				end
+				return out
+			end,
+			Get = function(id) return db.records[id] and copy(db.records[id]) or nil end,
+			Pending = function()
+				local out = {}
+				for id = 1, db.n do if db.records[id].expunge == 'pending' then out[#out + 1] = copy(db.records[id]) end end
+				return out
+			end,
+			Warrants = function()
+				local out = {}
+				for id = 1, db.n do
+					local r = db.records[id]
+					if r.kind == 'warrant' and r.active then out[#out + 1] = copy(r) end
+				end
+				return out
+			end,
+			Request = function(id, cid, by)
+				local r = db.records[id]
+				if r == nil or r.citizen ~= cid or r.expunged or r.active or r.expunge == 'pending' then return false end
+				r.expunge, r.expungeBy = 'pending', by
+				return true
+			end,
+			Rule = function(id, approved)
+				local r = db.records[id]
+				if r == nil or r.expunge ~= 'pending' then return false end
+				r.expunge, r.expunged = approved and 'approved' or 'denied', approved
+				return true
+			end,
+			SetBail = function(id, bail)
+				local r = db.records[id]
+				if r == nil or r.kind ~= 'warrant' or not r.active then return false end
+				r.bail = bail
+				return true
+			end,
+			Lift = function(id)
+				local r = db.records[id]
+				if r == nil or r.kind ~= 'warrant' or not r.active then return false end
+				r.active = false
+				return true
+			end,
+			PayBail = function(id, cid, bail)
+				local r = db.records[id]
+				if r == nil or r.citizen ~= cid or not r.active or r.bail ~= bail or bail <= 0 then return false end
+				r.active, r.paid = false, true
+				return true
+			end,
+			Paid = function(id) if db.records[id] then db.records[id].paid = true return true end return false end,
+			Counsel = function(cid) return db.counsel[cid] and copy(db.counsel[cid]) or nil end,
+			SetCounsel = function(row) db.counsel[row.client] = copy(row) return true end,
+			DropCounsel = function(cid) local had = db.counsel[cid] ~= nil db.counsel[cid] = nil return had end,
+			Clients = function(lawyer)
+				local out = {}
+				for _, row in pairs(db.counsel) do if row.lawyer == lawyer then out[#out + 1] = copy(row) end end
+				return out
+			end,
+			OpenCase = function(row)
+				db.c = db.c + 1
+				local case = copy(row)
+				case.id, case.state = db.c, 'open'
+				db.cases[db.c] = case
+				return db.c
+			end,
+			Cases = function()
+				local out = {}
+				for id = 1, db.c do if db.cases[id].state == 'open' then out[#out + 1] = copy(db.cases[id]) end end
+				return out
+			end,
+			Case = function(id) return db.cases[id] and copy(db.cases[id]) or nil end,
+			CloseCase = function(id, verdict)
+				local case = db.cases[id]
+				if case == nil or case.state ~= 'open' then return false end
+				case.state, case.verdict = 'closed', verdict
+				return true
+			end,
+		}, { __index = realStorage })
+
+		-- The soft contracts: an inventory for the card, an accounts treasury,
+		-- later an invoices desk and a police jail.
+		local cards, removed, deposits, issued, jailed = {}, {}, {}, {}, {}
+		local fakes = {
+			inventory = {
+				AddItem = function(target, name, count, meta)
+					cards[#cards + 1] = { target = target, name = name, meta = meta }
+					return { ok = true }
+				end,
+				RemoveWhere = function(target, name, match)
+					removed[#removed + 1] = { target = target, name = name, match = match }
+					return { ok = true, value = 1 }
+				end,
+				RegisterItem = function() return { ok = true } end,
+			},
+			accounts = {
+				Deposit = function(kind, key, amount, reason, opId)
+					deposits[#deposits + 1] = { kind = kind, key = key, amount = amount, reason = reason, opId = opId }
+					return { ok = true, value = { balance = amount } }
+				end,
+			},
+		}
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if fakes[name] ~= nil then return fakes[name] end
+			return realGet(name, minimum)
+		end
+
+		local function person(P, money, job, grade, onDuty)
+			local p = standCharacter(env, control, P, OPX.CitizenId.Generate(), money)
+			p.PlayerData.metadata = {}
+			p.Functions.SetMetaData = function(k, v) p.PlayerData.metadata[k] = v end
+			p.Functions.GetMetaData = function(k)
+				if k == nil then return p.PlayerData.metadata end
+				return p.PlayerData.metadata[k]
+			end
+			p.PlayerData.job = { name = job, onDuty = onDuty ~= false, grade = { name = job, level = grade or 0 } }
+			p.PlayerData.jobs = { [job] = grade or 0 }
+			return p
+		end
+		local CIT, LAW, JUD, COP = 61, 62, 63, 64
+		local citizen = person(CIT, { BANK = 10000, EDDIES = 0 }, 'unemployed')
+		local lawyer = person(LAW, { BANK = 0, EDDIES = 0 }, 'lawyer')
+		local judgeP = person(JUD, { BANK = 0, EDDIES = 0 }, 'judge')
+		local cop = person(COP, { BANK = 0, EDDIES = 0 }, 'ncpd', 1, true)
+		local cid = citizen.PlayerData.citizenId
+		control.Stand(CIT, 500.5, 0.0, 0.0)
+		control.Stand(LAW, 501.5, 0.0, 0.0)
+		control.Stand(JUD, 900.0, 0.0, 0.0)
+		control.Stand(COP, 502.0, 0.0, 0.0)
+
+		local function last(name, player)
+			for index = #control.clientEvents, 1, -1 do
+				local event = control.clientEvents[index]
+				if event.name == name and event.source == player then return event[1] end
+			end
+			return nil
+		end
+		local function wait() control.Advance(1000) control.Pump(2) end
+
+		-- ── the desk ──
+		control.Stand(CIT, 520.0, 0.0, 0.0)
+		local ok, code = j.Buy(CIT, 'nc_city_hall', 'driving')
+		check('a citizen away from the desk is refused not_at_desk', not ok and code == 'not_at_desk', code)
+		control.Stand(CIT, 500.5, 0.0, 0.0)
+		wait()
+		ok, code = j.Buy(CIT, 'watson_council_annex', 'driving')
+		check('a disabled desk is no desk', not ok and code == 'no_desk', code)
+		wait()
+		local desk
+		ok, desk = j.OpenDesk(CIT, 'nc_city_hall')
+		check('the desk lists the four licences, none held, and a clean record', ok and #desk.licences == 4
+			and desk.licences[1].state == 'none' and #desk.record == 0 and desk.counsel == nil)
+		check('and the citizen is sent it', last(j.Event.DESK_DATA, CIT) ~= nil)
+		wait()
+		local line
+		ok, line = j.Buy(CIT, 'nc_city_hall', 'driving')
+		check('a driving licence is sold: the fee leaves the bank', ok and citizen.PlayerData.money.BANK == 9650,
+			citizen.PlayerData.money.BANK)
+		check('the licence is written on the character with its expiry and serial',
+			type(citizen.PlayerData.metadata.licences) == 'table'
+				and citizen.PlayerData.metadata.licences.driving ~= nil
+				and citizen.PlayerData.metadata.licences.driving.serial == line.serial
+				and citizen.PlayerData.metadata.licences.driving.expires > 0)
+		check('a card goes in the bag carrying the kind, the holder and the serial',
+			#cards == 1 and cards[1].target == CIT and cards[1].name == 'licence_card'
+				and cards[1].meta.kind == 'driving' and cards[1].meta.holder == cid
+				and cards[1].meta.serial == line.serial)
+		check('the fee is deposited to the city account, once, with an idempotency key', #deposits == 1
+			and deposits[1].kind == 'job' and deposits[1].key == 'judge' and deposits[1].amount == 350
+			and type(deposits[1].opId) == 'string')
+		check('the answer is bought', last(j.Event.ANSWER, CIT).code == 'bought')
+		local has, state = justice.HasLicence(cid, 'driving')
+		check('the contract says the licence is held', has == true and state == 'valid')
+		check('and another is not', justice.HasLicence(cid, 'weapons') == false)
+		wait()
+		ok, code = j.Buy(CIT, 'nc_city_hall', 'driving')
+		check('a second one while it is valid is already_held, and costs nothing',
+			not ok and code == 'already_held' and citizen.PlayerData.money.BANK == 9650)
+		wait()
+		ok, code = j.Buy(CIT, 'nc_city_hall', 'yacht')
+		check('a licence the city does not issue is refused', not ok and code == 'unknown_licence')
+
+		-- ── the police write, the clean licence refuses ──
+		local added = justice.AddRecord(cid, { code = 'nc_102_assault_deadly', fine = 5000, jail = 30,
+			officer = cop.PlayerData.citizenId, officerName = 'Off. Ramirez', source = 'police' })
+		check('the police write an arrest through the contract', added.ok and added.value.id == 1)
+		local read = justice.GetRecord(cid)
+		check('and read it back', read.ok and #read.value.rows == 1 and read.value.rows[1].felony == true
+			and read.value.rows[1].officerName == 'Off. Ramirez' and #read.value.warrants == 0)
+		wait()
+		ok, code = j.Buy(CIT, 'nc_city_hall', 'weapons')
+		check('a firearms permit is refused with a recent felony, and costs nothing',
+			not ok and code == 'record_felony' and citizen.PlayerData.money.BANK == 9650, code)
+
+		-- ── reading a record ──
+		wait()
+		ok, code = j.ViewRecord(CIT, cid)
+		check('a citizen with no role may not read records (their own is at the desk)', not ok and code == 'not_allowed')
+		wait()
+		local view
+		ok, view = j.ViewRecord(COP, CIT)
+		check('an NCPD officer on duty reads it, by player', ok and view.viewer == 'police' and #view.rows == 1
+			and last(j.Event.RECORD_DATA, COP) ~= nil)
+		cop.PlayerData.job.onDuty = false
+		wait()
+		ok, code = j.ViewRecord(COP, cid)
+		check('but not off duty', not ok and code == 'not_allowed')
+		cop.PlayerData.job.onDuty = true
+		wait()
+		ok, code = j.ViewRecord(LAW, cid)
+		check('a lawyer who does not represent the citizen is refused', not ok and code == 'not_your_client')
+
+		-- ── counsel ──
+		wait()
+		ok, code = j.Offer(COP, CIT)
+		check('only a lawyer offers representation', not ok and code == 'job_required', code)
+		wait()
+		local id
+		ok, id = j.Offer(LAW, CIT)
+		local invite = last(j.Event.INVITE, CIT)
+		check('a lawyer offers, the citizen is asked', ok and invite ~= nil and invite.id == id)
+		check('a consent for an id nobody issued is refused quietly', j.Consent(CIT, 'jc-nope', true) == false)
+		check('and nobody else may answer it', j.Consent(COP, id, true) == false)
+		j.Consent(CIT, id, true)
+		check('the citizen consents: counsel is on file', db.counsel[cid] ~= nil
+			and db.counsel[cid].lawyer == lawyer.PlayerData.citizenId
+			and last(j.Event.ANSWER, LAW).code == 'retained')
+		wait()
+		ok, view = j.ViewRecord(LAW, cid)
+		check('now the lawyer reads the client\'s record', ok and view.viewer == 'lawyer' and #view.rows == 1)
+		wait()
+		local office
+		ok, office = j.Office(LAW)
+		check('the lawyer\'s office lists the client', ok and office.role == 'lawyer' and #office.clients == 1)
+		wait()
+		ok = j.Expunge(LAW, 1)
+		check('the lawyer asks the court to expunge the arrest', ok and db.records[1].expunge == 'pending')
+		wait()
+		ok, code = j.Expunge(LAW, 1)
+		check('twice is refused', not ok and code == 'already_requested')
+
+		-- ── the bench ──
+		wait()
+		ok, code = j.Rule(LAW, 1, true)
+		check('a lawyer cannot rule', not ok and code == 'job_required', code)
+		wait()
+		ok, office = j.Office(JUD)
+		check('the judge\'s bench lists the pending request and the crimes', ok and office.role == 'judge'
+			and #office.pending == 1 and office.pending[1].citizenId == cid and #office.crimes == #j.S.crimeList)
+		wait()
+		ok = j.Rule(JUD, 1, true)
+		check('the judge approves: the entry is expunged', ok and db.records[1].expunged == true
+			and last(j.Event.ANSWER, LAW).code == 'expunge_approved')
+		check('and the contract no longer shows it', #justice.GetRecord(cid).value.rows == 0
+			and #justice.GetRecord(cid, { expunged = true }).value.rows == 1)
+		wait()
+		ok, code = j.Rule(JUD, 1, false)
+		check('a ruling twice is refused', not ok and code == 'invalid')
+
+		-- ── warrants and bail ──
+		wait()
+		ok, code = j.Warrant(COP, { citizenId = cid, reason = 'Flight risk', bail = '1000' })
+		check('an officer cannot sign a warrant', not ok and code == 'job_required' and db.n == 1, code)
+		wait()
+		ok, code = j.Warrant(JUD, { citizenId = 'nope', reason = 'x' })
+		check('a warrant for nobody is refused', not ok and code == 'no_citizen')
+		wait()
+		local warrantId
+		ok, warrantId = j.Warrant(JUD, { citizenId = cid, reason = 'Failure to appear', bail = '1000' })
+		check('the judge signs a warrant with bail', ok and db.records[warrantId].kind == 'warrant'
+			and db.records[warrantId].active and db.records[warrantId].bail == 1000)
+		check('the police see it through the contract', justice.HasWarrant(cid).value == true)
+		wait()
+		ok, code = j.Buy(CIT, 'nc_city_hall', 'netrunning')
+		check('a clean licence is refused under an active warrant', not ok and code == 'warrant_active', code)
+		wait()
+		ok, desk = j.OpenDesk(CIT, 'nc_city_hall')
+		check('the desk shows the warrant and its bail', ok and #desk.warrants == 1 and desk.warrants[1].bail == 1000
+			and desk.counsel ~= nil)
+		wait()
+		ok = j.SetBail(JUD, warrantId, '1500', false)
+		check('the judge raises the bail', ok and db.records[warrantId].bail == 1500)
+		wait()
+		local before = #deposits
+		ok = j.PayBail(CIT, 'nc_city_hall', warrantId)
+		check('the citizen pays the bail: the warrant is lifted, the city paid', ok
+			and citizen.PlayerData.money.BANK == 9650 - 1500 and not db.records[warrantId].active
+			and #deposits == before + 1 and deposits[#deposits].amount == 1500)
+		wait()
+		ok, code = j.PayBail(CIT, 'nc_city_hall', warrantId)
+		check('a replayed bail is refused and charges nothing', not ok and code == 'invalid'
+			and citizen.PlayerData.money.BANK == 8150, code)
+		check('and the warrant is gone for the police', justice.HasWarrant(cid).value == false)
+
+		-- ── a case ──
+		wait()
+		ok, code = j.OpenCase(JUD, { citizenId = cid, code = 'jaywalking' })
+		check('a case on an unknown charge is refused', not ok and code == 'bad_code')
+		wait()
+		local caseId
+		ok, caseId = j.OpenCase(JUD, { citizenId = cid, code = 'nc_201_theft', summary = 'Lifted a Kiroshi optic' })
+		check('the judge opens a case', ok and db.cases[caseId].state == 'open' and db.cases[caseId].defendant == cid)
+		wait()
+		ok, code = j.Verdict(JUD, { caseId = caseId, verdict = 'guilty', fine = '99999999999' })
+		check('a fine past MAX_FINE is refused, and the case stays open', not ok and code == 'bad_amount'
+			and db.cases[caseId].state == 'open')
+		wait()
+		local outcome
+		ok, outcome = j.Verdict(JUD, { caseId = caseId, verdict = 'guilty', fine = '2000', jail = '0', notes = 'First offence' })
+		local entry = db.records[db.n]
+		check('guilty, no invoices desk: the fine is taken from the bank and the entry is paid', ok
+			and outcome.billed == 'paid' and citizen.PlayerData.money.BANK == 6150 and entry.kind == 'verdict'
+			and entry.code == 'nc_201_theft' and entry.fine == 2000 and entry.paid == true
+			and entry.notes == 'First offence', citizen.PlayerData.money.BANK)
+		check('the case is closed', db.cases[caseId].state == 'closed' and db.cases[caseId].verdict == 'guilty')
+		wait()
+		ok, code = j.Verdict(JUD, { caseId = caseId, verdict = 'acquitted' })
+		check('a second verdict on a closed case is refused', not ok and code == 'invalid')
+
+		fakes.invoices = {
+			Issue = function(spec)
+				issued[#issued + 1] = spec
+				return { ok = true, value = { id = 77 } }
+			end,
+		}
+		fakes.police = {
+			Jail = function(target, spec) jailed[#jailed + 1] = { target = target, spec = spec } return true end,
+		}
+		wait()
+		ok, caseId = j.OpenCase(JUD, { citizenId = cid, code = 'nc_101_assault' })
+		wait()
+		ok, outcome = j.Verdict(JUD, { caseId = caseId, verdict = 'guilty', fine = '1500', jail = '10' })
+		entry = db.records[db.n]
+		check('with invoices: the fine is billed to the defendant, toward the city account, no cut',
+			ok and outcome.billed == 'invoiced' and #issued == 1 and issued[1].target == CIT
+				and issued[1].issuer == JUD and issued[1].amount == 1500 and issued[1].cutPct == 0
+				and issued[1].source == 'justice' and issued[1].account.key == 'judge'
+				and citizen.PlayerData.money.BANK == 6150 and entry.paid == false)
+		check('and the jail is asked of the police module when it is there', outcome.jailed == true
+			and #jailed == 1 and jailed[1].target == CIT and jailed[1].spec.minutes == 10)
+		env.TriggerEvent('opx:on:invoices:paid', CIT, { id = 77, amount = 1500, source = 'justice' })
+		control.Pump(2)
+		check('the paid invoice marks the fine paid on the record', db.records[db.n].paid == true)
+		fakes.invoices, fakes.police = nil, nil
+
+		-- ── revocation and dismissal ──
+		wait()
+		ok, code = j.Revoke(LAW, { citizenId = cid, kind = 'driving' })
+		check('a lawyer cannot revoke a licence', not ok and code == 'job_required')
+		wait()
+		ok = j.Revoke(JUD, { citizenId = cid, kind = 'driving', reason = 'Reckless driving' })
+		check('the judge revokes the driving licence: metadata and card go',
+			ok and citizen.PlayerData.metadata.licences.driving == nil and removed[#removed].match.kind == 'driving'
+				and removed[#removed].match.holder == cid and justice.HasLicence(cid, 'driving') == false)
+		check('the police contract revokes too, and says when nothing is held',
+			justice.RevokeLicence(cid, 'driving', 'x', 'ncpd').error == 'not_held')
+		wait()
+		ok = j.Dismiss(CIT, 'nc_city_hall')
+		check('the citizen dismisses the lawyer at the desk', ok and db.counsel[cid] == nil
+			and last(j.Event.ANSWER, LAW).code == 'client_left')
+		wait()
+		ok, code = j.ViewRecord(LAW, cid)
+		check('and the lawyer can no longer read the record', not ok and code == 'not_your_client')
+
+		local issuedLine = justice.IssueLicence(cid, 'business', 'staff')
+		check('a staff or creator issue writes a licence with no fee', issuedLine.ok
+			and justice.HasLicence(cid, 'business') == true and citizen.PlayerData.money.BANK == 6150)
+
+		-- Offers lapse, and a departure drops them.
+		wait()
+		ok, id = j.Offer(LAW, CIT)
+		control.Advance(j.S.consentMs + 2000)
+		control.Pump(4)
+		check('an unanswered offer lapses', ok and j.Consent(CIT, id, true) == false and db.counsel[cid] == nil)
+		j.Storage = realStorage
+		OPX.Api.Get = realGet
+	end
+end
+
+section('justice: the client builds its rows inside the budget')
+do
+	local function jConfig(env, file)
+		if file ~= 'config/justice.lua' then return end
+		for _, desk in pairs(env.OPX.Config.MODULES.justice.CITY_HALLS) do
+			desk.DESK.X, desk.DESK.Y, desk.DESK.Z = 500.0, 10.0, 0.0
+		end
+	end
+	local env, control, why = boot('client', nil, nil, jConfig)
+	check('the client boots with the justice module', why == nil, why)
+	if why == nil then
+		check('and it runs', env.OPX.Modules.IsRunning('justice'), env.OPX.Modules.Record('justice').Reason)
+		local fresh, freshControl = Host.Environment('client')
+		for _, file in ipairs(Host.LoadOrder('open77.lua', 'client')) do
+			local chunk = loadfile(file, 't', fresh)
+			if chunk ~= nil and pcall(chunk) then jConfig(fresh, file) end
+		end
+		local worst = resumeCost(fresh, freshControl, function()
+			freshControl.Fire('onClientResourceStart', 'opx_infinity')
+		end, 240)
+		check('a client booting with surveyed desks keeps every resume under 10,000', worst < 10000, worst)
+
+		-- A judge's bench at its fullest is drawn in chunks, not one resume.
+		local j = env.OPX.Modules.Get('justice')
+		local rows = {}
+		for index = 1, 30 do
+			rows[index] = { id = index, citizenId = 'ABC-DEFG', kind = 'offence', label = 'Grand theft auto',
+				fine = 4000, jail = 20, paid = false, felony = true, officerName = 'Judge Ito', at = 100, expunge = 'pending' }
+		end
+		local cases = {}
+		for index = 1, 30 do cases[index] = { id = index, defendant = 'ABC-DEFG', code = 'nc_201_theft', summary = 'x' } end
+		local cost = resumeCost(env, control, function()
+			control.netEvents[j.Event.OFFICE_DATA]({ role = 'judge', now = 200, pending = rows, warrants = rows,
+				cases = cases, crimes = {}, licences = {} })
+		end, 60)
+		check('a full bench menu keeps every resume under 10,000', cost < 10000, cost)
+		cost = resumeCost(env, control, function()
+			control.netEvents[j.Event.RECORD_DATA]({ citizenId = 'ABC-DEFG', name = 'V', viewer = 'lawyer', now = 200,
+				rows = rows, warrants = 0 })
+		end, 60)
+		check('a record of RECORD_ROWS entries keeps every resume under 10,000', cost < 10000, cost)
 	end
 end
 

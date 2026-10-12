@@ -770,6 +770,39 @@ log is faster or shorter than the road. `server/dispatch.lua` is the board on it
 (the medical board's pattern, copied). Contract `taxi` v1 (server): `Calls(company?)`,
 `Ride(player)`, `Companies()`; bus `opx:on:taxi:call`, `opx:on:taxi:ride`.
 
+### Justice
+
+`modules/justice` + `config/justice.lua`. Jobs `lawyer` (Associate, Partner) and
+`judge` (Judge, Chief Judge). At a **City Hall desk** (ALT sphere, `CITY_HALLS`) a
+citizen buys a **licence** of `LICENCES` (driving, weapons, business, netrunning):
+the `FEE` leaves the purse first, then the line `{ issued, expires, serial, by }` is
+written in the character metadata `licences`, then a `licence_card` (never stacked,
+not droppable) carrying `{ kind, holder, serial, expires }` goes in the bag. A
+`CLEAN` licence is refused under an active warrant or a felony newer than
+`CLEAN_DAYS`. The desk also shows the citizen's own record, takes the **bail** a
+judge set on their warrant and dismisses their lawyer. Fees, bail and court fines go
+to `CITY_ACCOUNT` through `accounts.Deposit` (burned, logged, without it).
+
+The **criminal record** is `opx77_justice_records` (kind offence|verdict|warrant,
+code, fine, jail, bail, officer, paid, active, expunged). Police (`POLICE` gate) and
+judges read anyone's (ALT on a player, or the bench's lookup); a lawyer reads only a
+**client's**: a lawyer ALTs a player, the player consents, `opx77_justice_counsel`
+holds the row. From the client file a lawyer asks to **expunge** an entry; a judge
+approves or denies it from the **bench** (self ALT row "Legal office"), signs
+**warrants** with bail, raises or lifts bail, revokes licences, opens a **case**
+(`opx77_justice_cases`) and closes it with a **verdict**: guilty writes a verdict
+entry and bills the fine through `invoices.Issue` (`source = 'justice'`, no cut,
+toward the city account; paid on `opx:on:invoices:paid`), else straight from a
+present defendant's bank, else unpaid on the record; jail minutes are asked of
+`police.Jail(player, { minutes, reason, by, source })` when that function exists.
+
+Contract `justice` v1 (server; the database calls yield): `AddRecord(citizenId,
+{ code, label?, kind?, fine?, jail?, bail?, officer?, officerName?, notes?, source?,
+paid?, felony? })`, `GetRecord(citizenId, { expunged? })`, `HasWarrant(citizenId)`,
+`HasLicence(citizenId, kind)` -> `boolean, state`, `Licences`, `IssueLicence`,
+`RevokeLicence(citizenId, kind, reason?, by?)`, `Crimes()`. Bus:
+`opx:on:justice:record|licence`. Staff: `/opx.justice.desks`, `/opx.justice.capture <key>`.
+
 ### Emotes
 
 `animations` offers **every animation the platform has** (**"toutes les animations,
