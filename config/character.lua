@@ -305,6 +305,30 @@ OPX.Config.MODULES.character = {
 				[2] = { name = 'Owner', payment = 260, isBoss = true, bankAuth = true },
 			},
 		},
+
+		-- The bar of Night City: counsel for anyone who can pay (modules/justice).
+		lawyer = {
+			label = 'Lawyer',
+			type = 'legal',
+			defaultDuty = false,
+			offDutyPay = false,
+			grades = {
+				[0] = { name = 'Associate', payment = 240 },
+				[1] = { name = 'Partner', payment = 520, isBoss = true, bankAuth = true },
+			},
+		},
+
+		-- The Night City courts: warrants, bail, verdicts (modules/justice).
+		judge = {
+			label = 'Judge',
+			type = 'legal',
+			defaultDuty = false,
+			offDutyPay = true,
+			grades = {
+				[0] = { name = 'Judge', payment = 600 },
+				[1] = { name = 'Chief Judge', payment = 900, isBoss = true, bankAuth = true },
+			},
+		},
 	},
 
 	GANGS = {

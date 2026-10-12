@@ -134,6 +134,10 @@ shared_script "config/ripperdoc.lua"
 -- Shared: the client draws the access points and brokers it reads here, and the
 -- server re-derives every one. See modules/netrunner/module.lua.
 shared_script "config/netrunner.lua"
+-- Shared: the client draws the City Hall desk spheres and the role rows from
+-- it; the server re-derives every price, gate and bound. See
+-- modules/justice/module.lua.
+shared_script "config/justice.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -605,6 +609,17 @@ shared_script "modules/netrunner/locales.lua"
 shared_script "modules/netrunner/shared/access.lua"
 server_script "modules/netrunner/server/main.lua"
 client_script "modules/netrunner/client/main.lua"
+
+-- Justice: licences at City Hall, the criminal record, counsel and the court.
+-- After `character` (required), `inventory`, `target`, `menu` and `form`
+-- (optional), every one ordered above. No new permission: it reads
+-- `players.position` and `time.unix`, neither gated.
+shared_script "modules/justice/module.lua"
+shared_script "modules/justice/locales.lua"
+shared_script "modules/justice/shared/access.lua"
+server_script "modules/justice/server/storage.lua"
+server_script "modules/justice/server/main.lua"
+client_script "modules/justice/client/main.lua"
 
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before
