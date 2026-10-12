@@ -45119,6 +45119,32 @@ do
 	end
 end
 
+-- ── weather: the ambient population of the world bucket ─────────────────────
+section('weather: the world bucket gets its crowd, traffic and police from config')
+do
+	local calls = {}
+	local env, control, why = boot('server', nil, function(env)
+		env.Open77.world = env.Open77.world or {}
+		env.Open77.world.setPopulation = function(bucket, policy)
+			calls[#calls + 1] = { bucket = bucket, policy = policy }
+			return true
+		end
+	end)
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local first = calls[1]
+		check('bucket 0 is set at boot from POPULATION: crowd 0.8, traffic on, NPC police off',
+			first ~= nil and first.bucket == 0 and first.policy.crowd == 0.8 and first.policy.traffic == 1
+				and first.policy.police == false, first and first.bucket)
+		local Population = env.OPX.Modules.Get('weather').Population
+		check('a crowd outside 0..1 is refused before the host sees it',
+			Population.Read({ CROWD = 1.5 }) == nil)
+		check('traffic is a switch: 0.3 is on', Population.Read({ CROWD = 0, TRAFFIC = 0.3 }).traffic == 1)
+		check('and 0 is off', Population.Read({ CROWD = 0, TRAFFIC = 0 }).traffic == 0)
+		check('police defaults to off', Population.Read({}).police == false)
+	end
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the

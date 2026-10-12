@@ -66,6 +66,12 @@ OPX.Locale.Register('fr', {
 	['weather.error.noPresets'] = "Aucun préréglage météo n'est configuré.",
 	['weather.error.unknown'] = "Cette action n'a pas abouti.",
 
+	['weather.help.population'] = "Lire ou régler la population ambiante d'un bucket : foule 0..1, trafic on|off, police on|off.",
+	['weather.population.usage'] = 'Usage : /opx.population <bucket> [foule 0..1] [trafic on|off] [police on|off]',
+	['weather.population.unset'] = "Bucket {bucket} : aucune règle de population (celle de l'hôte).",
+	['weather.population.status'] = 'Bucket {bucket} : foule {crowd}, trafic {traffic}, police {police}.',
+	['weather.population.set'] = 'Population du bucket {bucket} réglée : foule {crowd}, trafic {traffic}, police {police}.',
+	['weather.population.refused'] = 'Population refusée : {reason}',
 	['weather.help.status'] = "Affiche l'heure et la météo synchronisées.",
 	['weather.help.presets'] = 'Liste les préréglages météo configurés.',
 	['weather.help.set'] = 'Passe à un préréglage météo.',

@@ -74,6 +74,12 @@ OPX.Locale.Register('en', {
 	['weather.error.noPresets'] = 'No weather preset is configured.',
 	['weather.error.unknown'] = 'That could not be done.',
 
+	['weather.help.population'] = 'Read or set a bucket\'s ambient population: crowd 0..1, traffic on|off, police on|off.',
+	['weather.population.usage'] = 'Usage: /opx.population <bucket> [crowd 0..1] [traffic on|off] [police on|off]',
+	['weather.population.unset'] = 'Bucket {bucket}: no population policy set (the host\'s own).',
+	['weather.population.status'] = 'Bucket {bucket}: crowd {crowd}, traffic {traffic}, police {police}.',
+	['weather.population.set'] = 'Bucket {bucket} population set: crowd {crowd}, traffic {traffic}, police {police}.',
+	['weather.population.refused'] = 'Population refused: {reason}',
 	['weather.help.status'] = 'Show the synchronized time and weather.',
 	['weather.help.presets'] = 'List the configured weather presets.',
 	['weather.help.set'] = 'Cross to a weather preset.',

@@ -321,6 +321,7 @@ shared_script "modules/weather/module.lua"
 shared_script "modules/weather/shared/clock.lua"
 server_script "modules/weather/server/state.lua"
 server_script "modules/weather/server/commands.lua"
+server_script "modules/weather/server/population.lua"
 server_script "modules/weather/server/main.lua"
 client_script "modules/weather/client/main.lua"
 
@@ -964,6 +965,9 @@ permissions {
   -- `Open77.players.fade` (FadePlayerScreen): the fade to black around a give up
   -- in `modules/downed/server/main.lua`. The client consumes the relay itself.
   "players.screen",
+  -- `Open77.world.setPopulation`: the ambient crowd, traffic and NPC police of
+  -- the world bucket, from `config/weather.lua` POPULATION.
+  "world.population",
   "animations.presentation",
 
   -- `Open77.playerInteractions.request` and `cancel`, the platform's two-player
