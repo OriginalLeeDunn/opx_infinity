@@ -48926,6 +48926,281 @@ do
 	check('and publishes its half of the contract', contract ~= nil and contract.Active() == nil and contract.Role() == nil)
 end
 
+-- ── radio: service channels on the platform's voice ──────────────────────────
+section('radio: the config, the validator and who belongs on which channel')
+do
+	local env, control, why = boot('server', fuelBridge({}, {}))
+	check('the server boots with the radio module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local Model = OPX.Modules.Get('radio').Model
+		local shipped = Model.Build(OPX.Config.MODULES.radio)
+		check('the shipped config has no problem', #shipped.problems == 0, table.concat(shipped.problems, ' | '))
+		check('nine service channels open, five gang frequencies wait switched off',
+			#shipped.order == 9 and #shipped.disabled == 5, #shipped.order .. '/' .. #shipped.disabled)
+		check('in ORDER: NCPD dispatch first, its command net second',
+			shipped.order[1] == 'ncpd' and shipped.order[2] == 'ncpd_command')
+		check('the radio effect is carried to the platform',
+			shipped.effect.lowPassHz == 3400.0 and shipped.effect.radioNoise == 0.05)
+		check('and the handset is required', shipped.requireItem == true and shipped.item.name == 'radio')
+		check('the handset is in the bag\'s catalogue', OPX.Api.Get('inventory').GetItem('radio') ~= nil)
+
+		local config = OPX.Table.DeepCopy(OPX.Config.MODULES.radio)
+		config.CHANNELS.militech.JOBS = { militech = 'high' }
+		config.CHANNELS.party = { LABEL = 'Everybody' }
+		config.EFFECT.highPassHz = 5000.0
+		config.MAX_JOINED = 9
+		local built = Model.Build(config)
+		local said = table.concat(built.problems, '\n')
+		check('a channel with a bad grade is refused alone',
+			built.channels.militech == nil and built.channels.arasaka ~= nil
+			and said:find('CHANNELS.militech', 1, true) ~= nil)
+		check('a channel with no gate at all is refused, not opened to the city',
+			built.channels.party == nil and said:find('CHANNELS.party', 1, true) ~= nil)
+		check('a high-pass above the low-pass drops both, named',
+			built.effect.highPassHz == nil and built.effect.lowPassHz == nil)
+		check('MAX_JOINED is held to the platform\'s four routes', built.maxJoined == 4)
+
+		local now = OPX.Now()
+		local function snap(job, grade, onDuty, gang)
+			return { job = { name = job, grade = { level = grade }, onDuty = onDuty },
+				jobs = { [job] = grade }, gang = { name = gang or 'none', grade = { level = 0 } },
+				gangs = gang and { [gang] = 0 } or {}, atMs = now }
+		end
+		local allowed = Model.Allowed(shipped, snap('ncpd', 1, true), now)
+		check('an officer on duty hears dispatch and the interagency band',
+			table.concat(allowed, ',') == 'ncpd,interagency', table.concat(allowed, ','))
+		allowed = Model.Allowed(shipped, snap('ncpd', 2, true), now)
+		check('a detective is offered the command net too', table.concat(allowed, ',') == 'ncpd,ncpd_command,interagency',
+			table.concat(allowed, ','))
+		check('off duty, nothing', #Model.Allowed(shipped, snap('ncpd', 2, false), now) == 0)
+		check('a Trauma medic on duty shares the interagency band',
+			table.concat(Model.Allowed(shipped, snap('trauma', 0, true), now), ',') == 'trauma,interagency')
+		check('a Delamain driver has the dispatch', Model.Allowed(shipped, snap('cabbie', 0, true), now)[1] == 'delamain')
+		check('a stale snapshot opens nothing', #Model.Allowed(shipped,
+			{ job = { name = 'ncpd', grade = { level = 2 }, onDuty = true }, atMs = now - 60000 }, now) == 0)
+		config = OPX.Table.DeepCopy(OPX.Config.MODULES.radio)
+		config.CHANNELS.tygerclaws.ENABLED = true
+		local gangs = Model.Build(config)
+		check('an enabled gang frequency is offered to the gang, on no shift',
+			Model.Allowed(gangs, snap('unemployed', 0, true, 'tygerclaws'), now)[1] == 'tygerclaws')
+
+		allowed = Model.Allowed(shipped, snap('ncpd', 2, true), now)
+		local function keys(rows)
+			local out = {}
+			for _, row in ipairs(rows) do out[#out + 1] = row.key .. (row.listen and '' or '(muted)') end
+			return table.concat(out, ',')
+		end
+		check('AUTO channels are wanted, the command net is not',
+			keys(Model.Desired(shipped, allowed, { power = true, handset = true })) == 'ncpd,interagency')
+		check('a channel left by hand stays left, one joined by hand comes, a mute is kept',
+			keys(Model.Desired(shipped, allowed, { power = true, handset = true, off = { ncpd = true },
+				extra = { ncpd_command = true }, muted = { interagency = true } })) == 'ncpd_command,interagency(muted)')
+		check('powered off or without a handset: nothing',
+			#Model.Desired(shipped, allowed, { power = false, handset = true }) == 0
+			and #Model.Desired(shipped, allowed, { power = true, handset = false }) == 0)
+		local tight = Model.Build(OPX.Table.DeepCopy(OPX.Config.MODULES.radio))
+		tight.maxJoined = 1
+		check('a full radio keeps the selected channel',
+			keys(Model.Desired(tight, allowed, { power = true, handset = true, active = 'interagency' })) == 'interagency')
+		local desired = Model.Desired(shipped, allowed, { power = true, handset = true })
+		check('the key talks into the channel asked for, else the first',
+			Model.Active(desired, 'interagency') == 'interagency' and Model.Active(desired, 'maxtac') == 'ncpd'
+			and Model.Active({}, 'ncpd') == nil)
+	end
+end
+
+section('radio: joined on duty, left off duty, a key that lifts the right to speak')
+do
+	local env, control, why = boot('server', fuelBridge({}, {}))
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local radio = OPX.Modules.Get('radio')
+		local voice = control.voice
+		-- The stub has no `setChannelPlayerPermissions`; the card's shape, modelled.
+		env.Open77.voice.setChannelPlayerPermissions = function(channelId, playerId, options)
+			local channel = voice.channels[channelId]
+			if channel == nil then return false, 'no_such_channel' end
+			local member = channel.members[tonumber(playerId) or playerId]
+			if member == nil then return false, 'not_a_member' end
+			member.canSpeak = not (type(options) == 'table' and options.canSpeak == false)
+			member.canListen = not (type(options) == 'table' and options.canListen == false)
+			return true
+		end
+		local P, Q = 81, 82
+		local officer = standCharacter(env, control, P, 'RADI0001')
+		standCharacter(env, control, Q, 'RADI0002')
+		local held = { [P] = 0, [Q] = 1 }
+		local realGet = OPX.Api.Get
+		local bag = {
+			GetItemCount = function(player, name)
+				if name ~= 'radio' then return { ok = true, value = 0 } end
+				return { ok = true, value = held[player] or 0 }
+			end,
+		}
+		OPX.Api.Get = function(name, minimum)
+			if name == 'inventory' then return bag end
+			return realGet(name, minimum)
+		end
+		local api = realGet('radio')
+
+		local function member(player, key)
+			local id = api.VoiceChannel(key)
+			local channel = id and voice.channels[id] or nil
+			return channel and channel.members[player] or nil
+		end
+		local function lastTo(name, player) return fuelAnswer(control, name, player) end
+		local function request(player, payload)
+			control.Advance(1000)
+			return radio.Request(player, payload)
+		end
+
+		radio.Reconcile(P)
+		check('no handset in the bag: on no channel', member(P, 'ncpd') == nil)
+		local state = lastTo(radio.Event.STATE, P)
+		check('and the client is told so, with the channels it could have',
+			state ~= nil and state.handset == false and #state.channels == 3, state and #state.channels)
+
+		held[P] = 1
+		env.TriggerEvent('opx:on:inventory:items', P, { citizenId = 'RADI0001',
+			changes = { { name = 'radio', delta = 1, count = 1 } } })
+		control.Pump(3)
+		check('the handset in the bag joins dispatch and the interagency band, as a listener',
+			member(P, 'ncpd') ~= nil and member(P, 'interagency') ~= nil and member(P, 'ncpd_command') == nil
+			and member(P, 'ncpd').canSpeak == false and member(P, 'ncpd').canListen == true)
+		check('on one platform channel per config entry', api.VoiceChannel('ncpd') ~= api.VoiceChannel('interagency'))
+
+		local ok, code = radio.Talk(P, true)
+		check('the key lifts the right to speak on the selected channel only', ok and code == 'talking'
+			and member(P, 'ncpd').canSpeak == true and member(P, 'interagency').canSpeak == false)
+		check('and says so to the client', lastTo(radio.Event.KEYED, P).on == true
+			and lastTo(radio.Event.KEYED, P).channel == 'NCPD')
+		radio.Talk(P, false)
+		check('letting go puts it back', member(P, 'ncpd').canSpeak == false
+			and lastTo(radio.Event.KEYED, P).on == false)
+
+		ok, code = request(P, { verb = 'select', channel = 'interagency' })
+		control.Advance(1000)
+		radio.Talk(P, true)
+		check('a channel selected is the one keyed', ok and member(P, 'interagency').canSpeak == true
+			and member(P, 'ncpd').canSpeak == false, code)
+		ok = request(P, { verb = 'select', channel = 'ncpd' })
+		check('changing channel mid-transmission takes the old right back',
+			ok and member(P, 'interagency').canSpeak == false and lastTo(radio.Event.KEYED, P).code == 'channel_changed')
+
+		ok = request(P, { verb = 'mute', channel = 'interagency', on = true })
+		check('a mute stays on the channel without hearing it', ok and member(P, 'interagency') ~= nil
+			and member(P, 'interagency').canListen == false)
+		ok, code = request(P, { verb = 'join', channel = 'ncpd_command' })
+		check('the command net is joined on request by a detective', ok and member(P, 'ncpd_command') ~= nil, code)
+		ok, code = request(P, { verb = 'join', channel = 'maxtac' })
+		check('a channel the badge does not open is refused', not ok and code == 'not_allowed'
+			and member(P, 'maxtac') == nil, code)
+		ok, code = request(P, { verb = 'leave', channel = 'ncpd' })
+		check('dispatch can be left by hand', ok and member(P, 'ncpd') == nil, code)
+		control.Advance(1000)
+		check('and a request too soon is refused', select(2, radio.Request(P, { verb = 'ask' })) == 'done'
+			and select(2, radio.Request(P, { verb = 'ask' })) == 'too_fast')
+
+		-- Off duty: everything goes. Back on: the AUTO channels come back.
+		officer.PlayerData.job.onDuty = false
+		env.TriggerEvent('opx:on:character:job', P, { citizenId = 'RADI0001', job = officer.PlayerData.job })
+		control.Pump(3)
+		check('clocking out leaves every channel', member(P, 'ncpd_command') == nil and member(P, 'interagency') == nil)
+		officer.PlayerData.job.onDuty = true
+		env.TriggerEvent('opx:on:character:job', P, { citizenId = 'RADI0001', job = officer.PlayerData.job })
+		control.Pump(3)
+		check('clocking back in rejoins the AUTO channels, the one left by hand included',
+			member(P, 'ncpd') ~= nil and member(P, 'interagency') ~= nil and member(P, 'ncpd_command') == nil)
+		check('and the mute was kept', member(P, 'interagency').canListen == false)
+		officer.PlayerData.job = { name = 'trauma', onDuty = true, grade = { level = 0 } }
+		officer.PlayerData.jobs = { trauma = 0 }
+		env.TriggerEvent('opx:on:character:job', P, { citizenId = 'RADI0001', job = officer.PlayerData.job })
+		control.Pump(3)
+		check('a job change moves the radio to the new crew',
+			member(P, 'ncpd') == nil and member(P, 'trauma') ~= nil and member(P, 'interagency') ~= nil)
+
+		-- The key held too long, and a downed character.
+		control.Advance(1000)
+		radio.Talk(P, true)
+		check('keyed again on the trauma net', member(P, 'trauma').canSpeak == true)
+		control.Advance(61000)
+		radio.Tick()
+		check('a key held past MAX_TALK_MS is let go by the server', member(P, 'trauma').canSpeak == false
+			and lastTo(radio.Event.KEYED, P).code == 'held_too_long')
+
+		-- The handset leaves the bag.
+		held[P] = 0
+		env.TriggerEvent('opx:on:inventory:items', P, { citizenId = 'RADI0001',
+			changes = { { name = 'radio', delta = -1, count = 0 } } })
+		control.Pump(3)
+		check('the handset dropped leaves every channel', member(P, 'trauma') == nil and member(P, 'interagency') == nil)
+		control.Advance(1000)
+		ok, code = radio.Talk(P, true)
+		check('and the key reaches nothing', not ok and code == 'no_channel')
+
+		-- The contract.
+		local joined = api.Join(Q, 'ncpd_command')
+		check('Join answers a Result with the channels', joined.ok == true
+			and table.concat(joined.value.channels, ',') == 'interagency,ncpd,ncpd_command')
+		local rows = api.Channels(Q)
+		check('Channels lists every channel the character may be on', rows.ok and #rows.value.rows == 3
+			and rows.value.active == 'ncpd')
+		check('Leave answers too', api.Leave(Q, 'ncpd_command').ok and member(Q, 'ncpd_command') == nil)
+		check('and a channel the badge does not open is a refusal code',
+			api.Join(Q, 'arasaka').error == 'radio.error.not_allowed')
+
+		-- Hostile input, and leaving.
+		local survived = pcall(function()
+			for _, payload in ipairs({ 'x', 5, {}, { verb = 'join', channel = {} }, { verb = 'nuke' },
+				{ verb = 'join', channel = string.rep('a', 5000) }, { verb = 'mute', channel = 'ncpd', on = 'yes' } }) do
+				control.Advance(1000)
+				local accepted = radio.Request(Q, payload)
+				if accepted then error('accepted ' .. tostring(payload)) end
+			end
+			env.source = Q
+			control.netEvents[radio.Event.REQUEST]({ verb = {} })
+			control.netEvents[radio.Event.TALK]('garbage')
+			env.source = nil
+		end)
+		check('garbage is refused and nothing raises', survived)
+		env.TriggerEvent('onPlayerDisconnected', Q)
+		check('a player who leaves is off every channel', member(Q, 'ncpd') == nil and member(Q, 'interagency') == nil)
+		OPX.Api.Get = realGet
+	end
+end
+
+section('radio: the client draws the menu and routes the microphone only once granted')
+do
+	local env, control, why = boot('client')
+	check('the client boots with the radio module', why == nil, why)
+	if why == nil then
+		local radio = env.OPX.Modules.Get('radio')
+		control.Pump(5)
+		local mapping = control.keyMappings.byId['opx.radio.talk']
+		check('the talk key is registered on CAPSLOCK', mapping ~= nil and mapping.key == 'CAPSLOCK')
+		control.netEvents[radio.Event.STATE]({ power = true, handset = true, needsHandset = true, active = 'ncpd',
+			channels = { { key = 'ncpd', label = 'NCPD Dispatch', short = 'NCPD', joined = true, active = true },
+				{ key = 'interagency', label = 'Interagency', short = 'INTER', joined = true, muted = true } } })
+		local spec = radio.Spec()
+		check('the menu has power, the two channels and a close row',
+			spec.items[1].toggle == true and spec.items[3].label == 'NCPD Dispatch'
+			and spec.items[4].value ~= nil and spec.items[#spec.items].close == true)
+		control.voice.transmit = nil
+		control.netEvents[radio.Event.KEYED]({ on = true, channel = 'NCPD' })
+		check('a grant for a key nobody holds opens no microphone', control.voice.transmit == nil)
+		if mapping ~= nil then mapping.pressed('opx.radio.talk') end
+		check('pressing the key opens nothing by itself', control.voice.transmit == nil)
+		control.netEvents[radio.Event.KEYED]({ on = true, channel = 'NCPD' })
+		check('the grant routes the microphone into the channels and the room',
+			control.voice.transmit ~= nil and control.voice.transmit.enabled == true and control.voice.transmit.intent == 'all')
+		control.netEvents[radio.Event.KEYED]({ on = false, code = 'held_too_long' })
+		check('the server taking it back hands the route back to proximity',
+			control.voice.transmit.enabled == false and control.voice.transmit.intent == 'proximity')
+	end
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the
