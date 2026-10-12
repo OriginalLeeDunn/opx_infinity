@@ -158,6 +158,9 @@ shared_script "config/media.lua"
 -- Shared: the client reads JOBS to draw the "Send a bill" row and the form's
 -- ceiling; the server re-derives every one. See modules/invoices/module.lua.
 shared_script "config/invoices.lua"
+-- Shared: the client draws each corp's offices, drops, terminals and pickups
+-- from it; the server re-derives every one. See modules/corpo/module.lua.
+shared_script "config/corpo.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -705,6 +708,18 @@ shared_script "modules/invoices/shared/model.lua"
 server_script "modules/invoices/server/storage.lua"
 server_script "modules/invoices/server/main.lua"
 client_script "modules/invoices/client/main.lua"
+
+-- Corpo: Arasaka / Militech assignments, standing, enclave security and
+-- espionage. After `character` (required), `inventory`, `progress`, `target`
+-- and `menu` (optional), all ordered above. No new permission: the VIP is a
+-- server NPC (`world.npcs`), a detained trespasser is walked out with
+-- `players.teleport`, the waypoint is `ui.vanilla.map` -- all declared below.
+shared_script "modules/corpo/module.lua"
+shared_script "modules/corpo/locales.lua"
+shared_script "modules/corpo/shared/access.lua"
+server_script "modules/corpo/server/main.lua"
+server_script "modules/corpo/server/security.lua"
+client_script "modules/corpo/client/main.lua"
 
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before
