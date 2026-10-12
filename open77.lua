@@ -168,6 +168,10 @@ shared_script "config/radio.lua"
 -- the same reads the server re-runs. After `config/character.lua`, whose grade
 -- tables (`isBoss`, `bankAuth`) it reads. See modules/business/module.lua.
 shared_script "config/business.lua"
+-- Shared: the client draws each shop's stash and lot spheres and reads the
+-- command names here; the server re-derives every bound. See
+-- modules/mechanic/module.lua.
+shared_script "config/mechanic.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -751,6 +755,18 @@ shared_script "modules/radio/locales.lua"
 shared_script "modules/radio/shared/model.lua"
 server_script "modules/radio/server/main.lua"
 client_script "modules/radio/client/main.lua"
+
+-- Mechanic: workshop repairs, the roadside kit, the call board, the tow and the
+-- impound lot. After `character` (required), `vehicles`, `inventory`,
+-- `progress`, `target` and `menu` (optional), all ordered above. No new
+-- permission: the repair natives (`Open77.vehicles.repair`, `setHealth`) are
+-- `world.vehicles` and the call pins `ui.vanilla.map`, both declared below.
+shared_script "modules/mechanic/module.lua"
+shared_script "modules/mechanic/locales.lua"
+shared_script "modules/mechanic/shared/model.lua"
+server_script "modules/mechanic/server/dispatch.lua"
+server_script "modules/mechanic/server/main.lua"
+client_script "modules/mechanic/client/main.lua"
 
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before
