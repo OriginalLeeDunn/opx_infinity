@@ -117,6 +117,9 @@ shared_script "config/hauling.lua"
 -- draws here, and the server re-derives every one of them. Before the blips
 -- config, which pins its stations. See modules/fuel/module.lua.
 shared_script "config/fuel.lua"
+-- Shared: the client draws each clinic's stash and terminal spheres and the
+-- terminal catalogue from it; the server re-reads every row it is asked to sell.
+shared_script "config/ripperdoc.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -520,6 +523,17 @@ server_script "modules/fuel/server/tanks.lua"
 server_script "modules/fuel/server/main.lua"
 client_script "modules/fuel/client/main.lua"
 
+-- Ripperdoc: chrome installs and removals at clinics. After `character` and
+-- `inventory` (required), `progress`, `target` and `menu` (optional), all
+-- ordered above. Its four `players.cyberware.*` permissions are declared below.
+shared_script "modules/ripperdoc/module.lua"
+shared_script "modules/ripperdoc/locales.lua"
+shared_script "modules/ripperdoc/shared/model.lua"
+server_script "modules/ripperdoc/server/storage.lua"
+server_script "modules/ripperdoc/server/identity.lua"
+server_script "modules/ripperdoc/server/main.lua"
+client_script "modules/ripperdoc/client/main.lua"
+
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before
 -- `admin`, which stays last.
@@ -867,6 +881,21 @@ permissions {
   -- nothing here calls them. Needs `open77_player_interactions` running on the
   -- server; without it the native is absent and the feature says so once.
   "players.interactions.control",
+
+  -- THE RIPPERDOC'S NATIVE CHROME, `modules/ripperdoc/server/*` only, every name
+  -- out of the op77.78 catalogue (`open77_api server:Open77.cyberware.*`):
+  --   players.cyberware.define    `define`, the Gorilla Arms and Reinforced
+  --                               Tendons grades, once per start
+  --   players.cyberware.read      `current`, the record read before every
+  --                               install/removal (its revision) and on replay
+  --   players.cyberware.manage    `install`, `remove`, `newOperationId`
+  --   players.cyberware.identity  `bind`/`unbind`, ONLY while open77_appearance
+  --                               is not running (`server/identity.lua`)
+  -- No `dependency "open77_cyberware"`: without it the chrome is roleplay-only.
+  "players.cyberware.define",
+  "players.cyberware.read",
+  "players.cyberware.manage",
+  "players.cyberware.identity",
 
   "world.elevators",
   "elevators.read",

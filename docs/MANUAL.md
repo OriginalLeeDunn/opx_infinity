@@ -583,6 +583,35 @@ consumption (no RPM on the server), and real station coordinates (unsurveyed -- 
 above). Needs in-game checking: the engine cut against a driver restarting, the eye
 spheres on real pumps, the `drop_point` sprite on the big map.
 
+### Ripperdoc
+
+`ripperdoc` (`modules/ripperdoc`, `config/ripperdoc.lua`) puts chrome in and takes it
+out at **clinics**. Reviving and healing are `medical`'s, not this module's. A clinic is
+chairs, a parts stash (`inventory` stash) and a wholesale terminal; several clinics and
+every chrome live in the one config, and anything at `0,0,0` is disabled and named at
+boot (`/opx.ripperdoc.clinics` lists the state).
+
+The loop, all server-side: the doc (job `ripperdoc`, on duty where the clinic says so)
+ALTs a patient sitting in a chair -> **chart** (humanity, capacity, installed chrome, what
+can go in: new parts from the stash, the doc's bag, the patient's own bag) -> **propose**
+-> the patient gets a **consent form** (price, humanity, risk) -> **escrow** (money, then
+the part) and a receipt row in `opx77_ripperdoc_operations` -> a server-timed **bar** on
+the doc -> the **dice** (`TIERS[*].FAIL x GRADE_MOD x clinic RISK`, black parts, worn
+parts, over capacity; weighted `OUTCOMES`) -> apply and **settle** (refund, `DOC_SHARE` to
+the doc, the rest to `TILL`).
+
+Gorilla Arms (`arms`/`gorilla_arms`) and Reinforced Tendons (`legs`/`double_jump`) are
+**native**: `Open77.cyberware.install/remove` with `{ expectedRevision, operationId }`,
+completed on `onCyberwareOperationCompleted` matched by ticket. The platform needs the
+player bound to a character; `open77_appearance` binds when it runs, otherwise
+`server/identity.lua` binds the citizen id on load. Without native cyberware the chrome is
+roleplay metadata (`NATIVE.FALLBACK_RP`). The body is two character metadata keys,
+`humanity` and `cyberware`. A crash is resumed from the receipts at boot: `reserved` is
+given back, `submitted` is replayed with the same operation id when the patient loads in.
+
+Contract `ripperdoc` (server): `Body(citizenId)`, `Clinics()`, `Chrome()`,
+`Operation(player)`; bus event `opx:on:ripperdoc:operated`.
+
 ### Emotes
 
 `animations` offers **every animation the platform has** (**"toutes les animations,

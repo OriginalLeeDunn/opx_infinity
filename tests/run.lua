@@ -42138,6 +42138,557 @@ do
 	check('a client booting with 96 pumps keeps every resume under 4,500', worst < 4500, worst)
 end
 
+-- ── ripperdoc ────────────────────────────────────────────────────────────────
+-- Chrome at clinics (`modules/ripperdoc`). The model is pure and checked on its
+-- own numbers; the server is booted with two clinics surveyed after
+-- `config/ripperdoc.lua` loads, a stub `Open77.cyberware` (define, bind,
+-- current, install/remove answering a ticket), real characters
+-- (`standCharacter`) so the money really moves, the real progress module so the
+-- bar is the server's, and an inventory fake holding a stash and two bags.
+section('ripperdoc: the model, the validator and the arithmetic')
+do
+	local function rdConfig(env, file)
+		if file ~= 'config/ripperdoc.lua' then return end
+		local c = env.OPX.Config.MODULES.ripperdoc
+		local vik = c.CLINICS.vik_clinic
+		vik.CHAIRS = { { X = 300.0, Y = 0.0, Z = 0.0, RADIUS = 1.5 } }
+		vik.CHEST.X, vik.CHEST.Y, vik.CHEST.Z = 305.0, 0.0, 0.0
+		vik.SUPPLY.X, vik.SUPPLY.Y, vik.SUPPLY.Z = 308.0, 0.0, 0.0
+	end
+	local env, _, why = boot('server', nil, nil, rdConfig)
+	check('the server boots with the ripperdoc module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local rd = OPX.Modules.Get('ripperdoc')
+		local Model = rd.Model
+		check('the module is running', OPX.Modules.IsRunning('ripperdoc'), OPX.Modules.Record('ripperdoc').Reason)
+		local shipped = OPX.Table.DeepCopy(OPX.Config.MODULES.ripperdoc)
+		shipped.CLINICS.vik_clinic.CHAIRS = { { X = 0.0, Y = 0.0, Z = 0.0 } }
+		local S0 = Model.Read(shipped)
+		check('the shipped config has no problem', #S0.problems == 0, table.concat(S0.problems, '; '))
+		local disabled = {}
+		for _, key in ipairs(S0.placeholders) do disabled[key] = true end
+		check('every shipped clinic at 0,0,0 is disabled and named',
+			disabled.vik_clinic and disabled.kabuki_backalley and disabled.instant_implants_jig
+				and #S0.clinicList == 0, table.concat(S0.placeholders, ', '))
+		check('with five chrome, two of them native', #S0.chromeList == 5
+			and S0.chrome.gorilla_arms.kind == 'native' and S0.chrome.reinforced_tendons.kind == 'native'
+			and S0.chrome.mantis_blades.illegal)
+
+		local S = rd.S
+		local vik = S.clinics.vik_clinic
+		check('a surveyed clinic opens with its chair, stash and terminal', vik ~= nil and #vik.chairs == 1
+			and vik.chest ~= nil and vik.chest.name == 'ripperdoc_vik_clinic' and vik.supply ~= nil
+			and #vik.supply.catalog == 8)
+		local gorilla, kiroshi, mantis = S.chrome.gorilla_arms, S.chrome.kiroshi_optics, S.chrome.mantis_blades
+		local part, labour, total = Model.Price(S, vik, gorilla, 2, 'install', 'stash')
+		check('an install costs PRICE x tier MULT x MARKUP + LABOUR (4000 x 1.8 + 300)',
+			part == 7200 and labour == 300 and total == 7500, total)
+		local _, _, own = Model.Price(S, vik, gorilla, 2, 'install', 'patient')
+		check('the patient\'s own part is not sold: labour only', own == 300, own)
+		local _, _, removal = Model.Price(S, vik, gorilla, 2, 'remove', 'body')
+		check('a removal is LABOUR x REMOVE_LABOUR_MULT', removal == 180, removal)
+		check('humanity costs HUMANITY + PER_TIER per tier above 1',
+			Model.HumanityCost(S, gorilla, 1) == 12 and Model.HumanityCost(S, gorilla, 3) == 14)
+		check('a licensed clinic will not touch illegal chrome or black parts',
+			not Model.Allows(vik, mantis, 'legit') and not Model.Allows(vik, kiroshi, 'black')
+				and Model.Allows(vik, kiroshi, 'legit'))
+
+		local base = Model.Risk(S, { clinic = vik, chrome = gorilla, tier = 1, action = 'install', grade = 1 })
+		check('the risk is the tier FAIL x GRADE_MOD x clinic RISK', math.abs(base - 0.02) < 1e-9, base)
+		local apprentice = Model.Risk(S, { clinic = vik, chrome = gorilla, tier = 1, action = 'install', grade = 0,
+			origin = 'black', condition = 40 })
+		check('an apprentice, a black part and a worn one add up', math.abs(apprentice - (0.02 * 1.5 * 1.5 + 0.10)) < 1e-9,
+			apprentice)
+		local out = Model.Risk(S, { clinic = vik, chrome = gorilla, tier = 1, action = 'remove', grade = 2 })
+		check('a removal by a chrome surgeon is safer', math.abs(out - 0.02 * 0.6 * 0.5) < 1e-9, out)
+		check('and no risk passes MAX_RISK', Model.Risk(S, { clinic = vik, chrome = gorilla, tier = 5, grade = 0,
+			origin = 'black', condition = 0, overCapacity = true }) == S.maxRisk)
+
+		check('the outcomes are picked by weight (botched 1, rejected 3, trauma 1)',
+			Model.PickOutcome(S, 0.1).key == 'botched' and Model.PickOutcome(S, 0.5).key == 'rejected'
+				and Model.PickOutcome(S, 0.95).key == 'trauma')
+		local refund, doc, till = Model.Split(S, 1000, 50)
+		check('a split refunds first, then DOC_SHARE of the rest, the till the remainder',
+			refund == 500 and doc == 300 and till == 200, ('%d %d %d'):format(refund, doc, till))
+
+		local installed = { { chrome = 'gorilla_arms', slot = 'arms', tier = 1 } }
+		local fit, code = Model.CheckInstall(S, 100, installed, mantis, 1)
+		check('one chrome per slot: mantis blades after gorilla arms are refused', not fit and code == 'slot_taken', code)
+		fit, code = Model.CheckInstall(S, 3, {}, kiroshi, 1)
+		check('an install that would drop humanity below REFUSE_BELOW is refused', not fit and code == 'humanity_low', code)
+		fit, code = Model.CheckInstall(S, 100, { { chrome = 'mantis_blades', slot = 'x' },
+			{ chrome = 'gorilla_arms', slot = 'y' }, { chrome = 'reinforced_tendons', slot = 'z' } },
+			S.chrome.subdermal_armor, 1)
+		check('past MAX_CAPACITY it is refused', not fit and code == 'over_capacity', code)
+
+		local definition = Model.Definition(gorilla)
+		check('a native definition carries the slot, the profile and one grade per tier',
+			definition.slot == 'arms' and definition.profile == 'gorilla_arms' and #definition.grades == 3
+				and definition.grades[2].id == 'tier2' and definition.grades[2].normalDamage == 30)
+
+		local bad = OPX.Table.DeepCopy(OPX.Config.MODULES.ripperdoc)
+		bad.CHROME.gorilla_arms.NATIVE.PROFILE = 'double_jump'
+		bad.CHROME.reinforced_tendons.NATIVE.GRADES[1].normalDamage = 400
+		bad.CHROME.kiroshi_optics.ITEM = 'chrome_subdermal_armor'
+		bad.CLINICS.kabuki_backalley.CHAIRS = { { X = 1.0, Y = 1.0, Z = 1.0 } }
+		bad.CLINICS.kabuki_backalley.CHEST.NAME = 'ripperdoc_vik_clinic'
+		bad.CLINICS.kabuki_backalley.CHEST.X = 2.0
+		bad.CLINICS.vik_clinic.ALLOW = { 'gorilla_arms', 'nanowire' }
+		bad.CLINICS.vik_clinic.SUPPLY.CATALOG[1] = { CHROME = 'kiroshi_optics', TIER = 9, COST = 1 }
+		local lines = table.concat(Model.Problems(bad), '\n')
+		check('a slot/profile pair the platform does not take is named', lines:find('CHROME.gorilla_arms: SLOT/PROFILE', 1, true) ~= nil)
+		check('a grade field out of the platform bounds is named',
+			lines:find('reinforced_tendons.NATIVE.GRADES[1]: normalDamage must be 0..300', 1, true) ~= nil)
+		check('two chrome on one item are named', lines:find('ITEM chrome_subdermal_armor is already', 1, true) ~= nil)
+		check('two clinics on one stash are named', lines:find('NAME ripperdoc_vik_clinic is already', 1, true) ~= nil)
+		check('an ALLOW naming no chrome is named', lines:find('ALLOW names nanowire', 1, true) ~= nil)
+		check('a catalogue row with a tier the chrome lacks is named',
+			lines:find('SUPPLY.CATALOG[1]: TIER is not one this chrome comes in', 1, true) ~= nil)
+	end
+end
+
+section('ripperdoc: an install and a removal, from the chart to the body and the bill')
+do
+	local receipts = {}
+	local pendingRows = nil
+	local bridge = Host.Database({
+		scalar = function() return 1 end,
+		single = function() return nil end,
+		insert = function(sql, params)
+			if sql:find('opx77_ripperdoc_operations', 1, true) then
+				receipts[params.id] = { phase = params.phase, amount = params.amount, part = params.part }
+			end
+			return 1
+		end,
+		update = function(sql, params)
+			if sql:find('opx77_ripperdoc_operations', 1, true) and receipts[params.id] then
+				receipts[params.id].phase = params.phase
+				receipts[params.id].outcome = params.outcome
+				receipts[params.id].nativeOp = params.nativeOp
+			end
+			return 1
+		end,
+		query = function(sql)
+			if sql:find('FROM opx77_ripperdoc_operations', 1, true) and pendingRows ~= nil then
+				local rows = pendingRows
+				pendingRows = nil
+				return rows
+			end
+			return {}
+		end,
+		transaction = function() return true end,
+	})
+	local cw = { defined = {}, bound = {}, installs = {}, removes = {}, records = {}, n = 0 }
+	local function prelude(env)
+		env.Open77.cyberware = {
+			define = function(def) cw.defined[def.id] = def return { ok = true } end,
+			bind = function(player, key) cw.bound[player] = key return { ok = true } end,
+			unbind = function(player) cw.bound[player] = nil return { ok = true } end,
+			current = function(player) return cw.records[player] end,
+			newOperationId = function() cw.n = cw.n + 1 return ('%032d'):format(cw.n) end,
+			install = function(player, def, grade, options)
+				if cw.refuse then return nil, cw.refuse end
+				cw.installs[#cw.installs + 1] = { player = player, def = def, grade = grade, options = options }
+				cw.n = cw.n + 1
+				return { ok = true, ticket = 'T' .. cw.n }
+			end,
+			remove = function(player, options)
+				cw.removes[#cw.removes + 1] = { player = player, options = options }
+				cw.n = cw.n + 1
+				return { ok = true, ticket = 'T' .. cw.n }
+			end,
+		}
+	end
+	local function rdConfig(env, file)
+		if file ~= 'config/ripperdoc.lua' then return end
+		local vik = env.OPX.Config.MODULES.ripperdoc.CLINICS.vik_clinic
+		vik.CHAIRS = { { X = 300.0, Y = 0.0, Z = 0.0, RADIUS = 1.5 } }
+		vik.CHEST.X, vik.CHEST.Y, vik.CHEST.Z = 305.0, 0.0, 0.0
+		vik.SUPPLY.X, vik.SUPPLY.Y, vik.SUPPLY.Z = 308.0, 0.0, 0.0
+	end
+	local env, control, why = boot('server', bridge, prelude, rdConfig)
+	check('the server boots with a stub native cyberware', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local rd = OPX.Modules.Get('ripperdoc')
+		local progress = OPX.Modules.Get('progress')
+		check('both native chrome are defined at boot, grades named tier<N>',
+			cw.defined['opx.ripperdoc.gorilla_arms'] ~= nil and cw.defined['opx.ripperdoc.reinforced_tendons'] ~= nil
+				and cw.defined['opx.ripperdoc.gorilla_arms'].grades[1].id == 'tier1')
+
+		-- The inventory fake: one stash, two bags.
+		local fake = { stash = {}, bags = {}, added = {} }
+		local function same(a, b)
+			a, b = a or {}, b or {}
+			for k, v in pairs(a) do if b[k] ~= v then return false end end
+			for k, v in pairs(b) do if a[k] ~= v then return false end end
+			return true
+		end
+		local api = {
+			CountInStash = function(name, item, meta)
+				local n = 0
+				for _, e in ipairs(fake.stash[name] or {}) do
+					if e.item == item and (meta == nil or same(e.meta, meta)) then n = n + 1 end
+				end
+				return { ok = true, value = n }
+			end,
+			RemoveFromStash = function(name, item, _, meta)
+				for i, e in ipairs(fake.stash[name] or {}) do
+					if e.item == item and (meta == nil or same(e.meta, meta)) then
+						table.remove(fake.stash[name], i)
+						return { ok = true }
+					end
+				end
+				return { ok = false, error = 'not_enough' }
+			end,
+			AddToStash = function(name, item, _, meta)
+				fake.stash[name] = fake.stash[name] or {}
+				table.insert(fake.stash[name], { item = item, meta = meta })
+				return { ok = true }
+			end,
+			GetInventory = function(holder)
+				local items = {}
+				for slot, st in pairs(fake.bags[holder] or {}) do
+					items[#items + 1] = { slot = slot, name = st.name, count = 1, metadata = st.meta }
+				end
+				return { ok = true, value = { items = items } }
+			end,
+			GetSlot = function(holder, slot)
+				local st = (fake.bags[holder] or {})[slot]
+				if st == nil then return { ok = true, value = nil } end
+				return { ok = true, value = { slot = slot, name = st.name, metadata = st.meta } }
+			end,
+			RemoveFromSlot = function(holder, slot)
+				local bag = fake.bags[holder]
+				if bag and bag[slot] then bag[slot] = nil return { ok = true } end
+				return { ok = false, error = 'empty' }
+			end,
+			AddItem = function(target, name, _, meta)
+				fake.added[#fake.added + 1] = { target = target, name = name, meta = meta }
+				return { ok = true }
+			end,
+			OpenStash = function(player, name) fake.opened = { player = player, name = name } return { ok = true, value = 1 } end,
+			RegisterItem = function() return { ok = true } end,
+		}
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if name == 'inventory' then return api end
+			return realGet(name, minimum)
+		end
+		local STASH = 'ripperdoc_vik_clinic'
+		local function stock(item, meta) api.AddToStash(STASH, item, 1, meta) end
+
+		local function person(P, cid, money)
+			local p = standCharacter(env, control, P, cid, money)
+			p.PlayerData.metadata = {}
+			p.Functions.SetMetaData = function(k, v) p.PlayerData.metadata[k] = v end
+			p.Functions.GetMetaData = function(k)
+				if k == nil then return p.PlayerData.metadata end
+				return p.PlayerData.metadata[k]
+			end
+			return p
+		end
+		local DOC, PAT = 81, 82
+		local doc = person(DOC, 'RIPDOC01', { BANK = 1000, EDDIES = 0 })
+		doc.PlayerData.job = { name = 'ripperdoc', onDuty = true, grade = { name = 'Ripperdoc', level = 1 } }
+		doc.PlayerData.jobs = { ripperdoc = 1 }
+		local pat = person(PAT, 'PATIENT1', { BANK = 20000, EDDIES = 0 })
+		control.Stand(DOC, 301.0, 0.0, 0.0)
+		control.Stand(PAT, 300.0, 0.0, 0.0)
+		cw.records[PAT] = { revision = 3 }
+
+		local function last(name, player)
+			for index = #control.clientEvents, 1, -1 do
+				local event = control.clientEvents[index]
+				if event.name == name and event.source == player then return event[1] end
+			end
+			return nil
+		end
+		-- A frame moves the harness clock 100 ms on its own: 400 + 100 a step.
+		local function bar(ms, ending)
+			for _ = 1, math.floor(ms / 500) do
+				control.Advance(400)
+				control.Pump(1)
+			end
+			local started = last(progress.Event.START, DOC)
+			env.source = DOC
+			control.netEvents[progress.Event.REPORT](started.id, ending)
+			env.source = nil
+			control.Pump(4)
+		end
+		local realRandom = rd.Random
+		local function rolls(list)
+			rd.Random = function() return table.remove(list, 1) or 0.99 end
+		end
+		local function wait() control.Advance(1000) control.Pump(4) end
+
+		-- Refusals before anything moves.
+		control.Stand(PAT, 320.0, 0.0, 0.0)
+		local ok, code = rd.Chart(DOC, PAT)
+		check('a patient who is not in a clinic chair is refused not_in_chair', not ok and code == 'not_in_chair', code)
+		control.Stand(PAT, 300.0, 0.0, 0.0)
+		wait()
+		doc.PlayerData.job.onDuty = false
+		ok, code = rd.Chart(DOC, PAT)
+		check('an off-duty doc is refused off_duty (vik is ON_DUTY)', not ok and code == 'off_duty', code)
+		doc.PlayerData.job.onDuty = true
+		wait()
+		ok, code = rd.Chart(DOC, DOC)
+		check('a doc cannot cut themself', not ok and code == 'self', code)
+
+		-- The chart.
+		stock('chrome_gorilla_arms', { tier = 2, origin = 'legit', condition = 100 })
+		wait()
+		local chart
+		ok, chart = rd.Chart(DOC, PAT)
+		local offer
+		for _, row in ipairs(ok and chart.installs or {}) do
+			if row.chrome == 'gorilla_arms' and row.source == 'stash' then offer = row end
+		end
+		check('the chart offers the stashed gorilla arms T2 at 7500', offer ~= nil and offer.tier == 2
+			and offer.total == 7500 and offer.blocked == nil and chart.humanity == 100)
+		check('and the doc is sent it', last(rd.Event.CHART_DATA, DOC) ~= nil)
+
+		-- The proposal and a decline.
+		wait()
+		local request = { patient = PAT, action = 'install', chrome = 'gorilla_arms', tier = 2, origin = 'legit',
+			source = 'stash' }
+		local id
+		ok, id = rd.Propose(DOC, request)
+		local invite = last(rd.Event.INVITE, PAT)
+		check('a proposal sends the patient a consent form with the server\'s price',
+			ok and invite ~= nil and invite.id == id and invite.price == 7500 and invite.humanity == 13)
+		rd.Consent(PAT, id, false)
+		check('a decline tells the doc and moves nothing', last(rd.Event.ANSWER, DOC).code == 'declined'
+			and pat.PlayerData.money.BANK == 20000)
+
+		-- The install.
+		wait()
+		ok, id = rd.Propose(DOC, request)
+		check('a second proposal is accepted', ok, id)
+		ok, code = rd.Propose(DOC, request)
+		check('and a third, while one is pending, is busy', not ok and (code == 'busy' or code == 'too_fast'), code)
+		rd.Consent(PAT, id, true)
+		control.Pump(4)
+		check('consent takes the bill into escrow and the part out of the stash',
+			pat.PlayerData.money.BANK == 12500 and api.CountInStash(STASH, 'chrome_gorilla_arms').value == 0,
+			pat.PlayerData.money.BANK)
+		check('and writes a reserved receipt', receipts[id] ~= nil and receipts[id].phase == 'reserved'
+			and receipts[id].amount == 7500)
+		local started = last(progress.Event.START, DOC)
+		check('the doc works under a cancelable server bar of INSTALL_MS', started ~= nil and started.durationMs == 30000
+			and started.cancelable == true)
+		rolls({ 0.99 })
+		bar(30000, 'finished')
+		rd.Random = realRandom
+		local sent = cw.installs[#cw.installs]
+		check('the native install is sent with the definition, tier2, and the read revision',
+			sent ~= nil and sent.player == PAT and sent.def == 'opx.ripperdoc.gorilla_arms' and sent.grade == 'tier2'
+				and sent.options.expectedRevision == 3 and type(sent.options.operationId) == 'string',
+			tostring((last(rd.Event.ANSWER, DOC) or {}).code))
+		check('and the receipt is submitted with the native operation id', receipts[id].phase == 'submitted'
+			and receipts[id].nativeOp == sent.options.operationId)
+		check('nothing is in the body before the platform answers', pat.PlayerData.metadata.cyberware == nil)
+		env.TriggerEvent('onCyberwareOperationCompleted', tostring(PAT), 'not-ours', '{"ok":true}')
+		control.Pump(2)
+		check('a ticket that is not ours is ignored', pat.PlayerData.metadata.cyberware == nil)
+		env.TriggerEvent('onCyberwareOperationCompleted', tostring(PAT), 'T' .. cw.n, '{"ok":true}')
+		control.Pump(4)
+		local body = pat.PlayerData.metadata.cyberware
+		check('on ok the chrome is in the body, natively', type(body) == 'table' and #body == 1
+			and body[1].chrome == 'gorilla_arms' and body[1].tier == 2 and body[1].native == true
+			and type(body[1].serial) == 'string' and body[1].serial:match('^NC%-') ~= nil)
+		check('humanity drops by 13', pat.PlayerData.metadata.humanity == 87, pat.PlayerData.metadata.humanity)
+		check('the doc is paid DOC_SHARE (60%) of 7500', doc.PlayerData.money.BANK == 1000 + 4500, doc.PlayerData.money.BANK)
+		check('the receipt is committed', receipts[id].phase == 'committed' and receipts[id].outcome == 'success')
+		check('the patient is told', last(rd.Event.ANSWER, PAT).code == 'installed')
+
+		-- The removal.
+		wait()
+		cw.records[PAT] = { revision = 4, arms = { definition = 'opx.ripperdoc.gorilla_arms' } }
+		local serial = body[1].serial
+		ok, id = rd.Propose(DOC, { patient = PAT, action = 'remove', serial = serial })
+		check('a removal is proposed for the installed serial', ok, id)
+		rd.Consent(PAT, id, true)
+		control.Pump(4)
+		check('a removal bills LABOUR x 0.6 = 180', pat.PlayerData.money.BANK == 12500 - 180, pat.PlayerData.money.BANK)
+		rolls({ 0.99 })
+		bar(20000, 'finished')
+		rd.Random = realRandom
+		local removed = cw.removes[#cw.removes]
+		check('the native removal names the slot and the revision', removed ~= nil and removed.options.slot == 'arms'
+			and removed.options.expectedRevision == 4)
+		env.TriggerEvent('onCyberwareOperationCompleted', tostring(PAT), 'T' .. cw.n, '{"ok":true}')
+		control.Pump(4)
+		check('the body is empty again', #pat.PlayerData.metadata.cyberware == 0)
+		check('humanity comes back by REFUND_PCT of what it cost', pat.PlayerData.metadata.humanity == 87 + 6,
+			pat.PlayerData.metadata.humanity)
+		local given = fake.added[#fake.added]
+		check('the part comes back to the patient, used and worn by REMOVAL_WEAR', given ~= nil
+			and given.name == 'chrome_gorilla_arms' and given.meta.used == true and given.meta.condition == 90
+			and given.meta.serial == serial)
+
+		-- A failed roll: rejected, part damaged, half refunded.
+		wait()
+		stock('chrome_kiroshi_optics', { tier = 1, origin = 'legit', condition = 100 })
+		local bankBefore, docBefore = pat.PlayerData.money.BANK, doc.PlayerData.money.BANK
+		ok, id = rd.Propose(DOC, { patient = PAT, action = 'install', chrome = 'kiroshi_optics', tier = 1,
+			origin = 'legit', source = 'stash' })
+		rd.Consent(PAT, id, true)
+		control.Pump(4)
+		rolls({ 0.0, 0.5 })
+		bar(30000, 'finished')
+		rd.Random = realRandom
+		check('a rejected install refunds REFUND_PCT (50%) of 1800', pat.PlayerData.money.BANK == bankBefore - 900,
+			pat.PlayerData.money.BANK - bankBefore)
+		check('and pays the doc 60% of what was kept', doc.PlayerData.money.BANK == docBefore + 540,
+			doc.PlayerData.money.BANK - docBefore)
+		local back = fake.stash[STASH] and fake.stash[STASH][#fake.stash[STASH]]
+		check('the part goes back to the stash damaged (condition 75)', back ~= nil and back.item == 'chrome_kiroshi_optics'
+			and back.meta.condition == 75)
+		check('the body is unchanged and the receipt names the outcome', #pat.PlayerData.metadata.cyberware == 0
+			and receipts[id].outcome == 'rejected' and last(rd.Event.ANSWER, PAT).code == 'failed')
+
+		-- A cancelled bar gives everything back.
+		wait()
+		stock('chrome_kiroshi_optics', { tier = 1, origin = 'legit', condition = 100 })
+		bankBefore = pat.PlayerData.money.BANK
+		ok, id = rd.Propose(DOC, { patient = PAT, action = 'install', chrome = 'kiroshi_optics', tier = 1,
+			origin = 'legit', source = 'stash' })
+		rd.Consent(PAT, id, true)
+		control.Pump(4)
+		check('escrow took 1800', pat.PlayerData.money.BANK == bankBefore - 1800)
+		bar(5000, 'cancelled')
+		check('a cancelled bar refunds the whole bill', pat.PlayerData.money.BANK == bankBefore)
+		check('returns the part to the stash', api.CountInStash(STASH, 'chrome_kiroshi_optics',
+			{ tier = 1, origin = 'legit', condition = 100 }).value == 1)
+		check('and cancels the receipt', receipts[id].phase == 'cancelled' and receipts[id].outcome == 'cancelled')
+
+		-- A native failure gives everything back too.
+		wait()
+		stock('chrome_reinforced_tendons', { tier = 1, origin = 'legit', condition = 100 })
+		cw.records[PAT] = { revision = 5 }
+		bankBefore = pat.PlayerData.money.BANK
+		ok, id = rd.Propose(DOC, { patient = PAT, action = 'install', chrome = 'reinforced_tendons', tier = 1,
+			origin = 'legit', source = 'stash' })
+		rd.Consent(PAT, id, true)
+		control.Pump(4)
+		rolls({ 0.99 })
+		bar(30000, 'finished')
+		rd.Random = realRandom
+		env.TriggerEvent('onCyberwareOperationCompleted', tostring(PAT), 'T' .. cw.n, '{"ok":false,"error":"x"}')
+		control.Pump(4)
+		check('a native install the platform failed is refunded whole', pat.PlayerData.money.BANK == bankBefore)
+		check('and its part is back in the stash', api.CountInStash(STASH, 'chrome_reinforced_tendons').value == 1)
+		check('and nothing is in the body', #pat.PlayerData.metadata.cyberware == 0
+			and receipts[id].phase == 'cancelled')
+
+		-- The patient's own part, and the wholesale terminal.
+		wait()
+		fake.bags[PAT] = { [7] = { name = 'chrome_kiroshi_optics', meta = { tier = 2, origin = 'legit', condition = 80,
+			serial = 'NC-0001-0002' } } }
+		ok, chart = rd.Chart(DOC, PAT)
+		local own
+		for _, row in ipairs(ok and chart.installs or {}) do
+			if row.source == 'patient' then own = row end
+		end
+		check('the patient\'s own chrome is offered at labour only', own ~= nil and own.slot == 7 and own.total == 300
+			and own.tier == 2)
+		control.Stand(DOC, 308.5, 0.0, 0.0)
+		wait()
+		local docBank = doc.PlayerData.money.BANK
+		ok, code = rd.Supply(DOC, 'vik_clinic', 1)
+		check('the terminal sells a catalogue row into the stash, new', ok and doc.PlayerData.money.BANK == docBank - 1500
+			and api.CountInStash(STASH, 'chrome_gorilla_arms', { tier = 1, origin = 'legit', condition = 100 }).value == 1,
+			code)
+		wait()
+		ok, code = rd.Supply(DOC, 'vik_clinic', 3)
+		check('a row above the doc\'s grade is refused', not ok and code == 'grade_too_low', code)
+		control.Stand(DOC, 350.0, 0.0, 0.0)
+		wait()
+		ok, code = rd.Supply(DOC, 'vik_clinic', 1)
+		check('away from the terminal it is refused', not ok and code == 'not_at_terminal', code)
+		wait()
+		ok, code = rd.OpenStash(DOC, 'vik_clinic')
+		check('the stash opens for a grade at or above STOCK_GRADE', ok and fake.opened.name == STASH, code)
+		doc.PlayerData.job.grade.level = 0
+		wait()
+		ok, code = rd.OpenStash(DOC, 'vik_clinic')
+		check('and not below it', not ok and code == 'grade_too_low', code)
+		doc.PlayerData.job.grade.level = 1
+
+		-- The identity bind.
+		local LOADED = OPX.Event(OPX.Channel.INTERNAL, 'character', 'loaded')
+		env.TriggerEvent(LOADED, PAT, pat.PlayerData)
+		check('with open77_appearance stopped, a loaded character is bound by citizen id', cw.bound[PAT] == 'PATIENT1')
+		env.TriggerEvent(OPX.Event(OPX.Channel.INTERNAL, 'character', 'unloaded'), PAT, pat.PlayerData)
+		check('and released on unload', cw.bound[PAT] == nil)
+		local realState = env.GetResourceState
+		env.GetResourceState = function(name) return name == 'open77_appearance' and 'running' or 'stopped' end
+		env.TriggerEvent(LOADED, PAT, pat.PlayerData)
+		check('with open77_appearance running, this resource binds nobody', cw.bound[PAT] == nil)
+		env.GetResourceState = realState
+
+		-- Crash recovery: a reserved receipt is given back.
+		bankBefore = pat.PlayerData.money.BANK
+		local stashed = api.CountInStash(STASH, 'chrome_subdermal_armor').value
+		receipts['rd-crash'] = { phase = 'reserved' }
+		pendingRows = { { id = 'rd-crash', patient = 'PATIENT1', doc = 'RIPDOC01', clinic = 'vik_clinic',
+			action = 'install', chrome = 'subdermal_armor', tier = 1, phase = 'reserved', amount = 2800,
+			method = 'BANK', part = '{"source":"stash","meta":{"tier":1,"origin":"legit","condition":100}}' } }
+		env.CreateThread(function() rd.Recover() end)
+		control.Pump(4)
+		check('a reserved receipt left by a crash refunds the patient', pat.PlayerData.money.BANK == bankBefore + 2800,
+			pat.PlayerData.money.BANK - bankBefore)
+		check('puts the part back and cancels the receipt',
+			api.CountInStash(STASH, 'chrome_subdermal_armor').value == stashed + 1 and receipts['rd-crash'].phase == 'cancelled')
+
+		-- Hostile input.
+		wait()
+		local hostile = { 'x', 1e309, -1, { patient = 'x' }, { patient = PAT, action = 'install', chrome = ('a'):rep(500) },
+			{ patient = PAT, action = 'install', chrome = 'gorilla_arms', source = 'stash', tier = 'x', origin = 'legit' },
+			{ patient = PAT, action = 'remove', serial = { 1 } } }
+		local survived = true
+		for _, payload in ipairs(hostile) do
+			control.Advance(1000)
+			local fine = pcall(rd.Propose, DOC, payload)
+			if not fine then survived = false end
+			fine = pcall(rd.Chart, DOC, payload)
+			if not fine then survived = false end
+		end
+		check('a battery of bad proposals and charts raises nothing', survived)
+		check('and a consent for an id nobody issued is refused quietly', rd.Consent(PAT, 'rd-nope', true) == false)
+		OPX.Api.Get = realGet
+	end
+end
+
+section('ripperdoc: the client builds its rows inside the budget')
+do
+	local function rdConfig(env, file)
+		if file ~= 'config/ripperdoc.lua' then return end
+		local vik = env.OPX.Config.MODULES.ripperdoc.CLINICS.vik_clinic
+		vik.CHAIRS = { { X = 300.0, Y = 0.0, Z = 0.0, RADIUS = 1.5 } }
+		vik.CHEST.X, vik.CHEST.Y, vik.CHEST.Z = 305.0, 0.0, 0.0
+		vik.SUPPLY.X, vik.SUPPLY.Y, vik.SUPPLY.Z = 308.0, 0.0, 0.0
+	end
+	local env, control, why = boot('client', nil, nil, rdConfig)
+	check('the client boots with the ripperdoc module', why == nil, why)
+	if why == nil then
+		check('and it runs', env.OPX.Modules.IsRunning('ripperdoc'), env.OPX.Modules.Record('ripperdoc').Reason)
+		local fresh, freshControl = Host.Environment('client')
+		for _, file in ipairs(Host.LoadOrder('open77.lua', 'client')) do
+			local chunk = loadfile(file, 't', fresh)
+			if chunk ~= nil and pcall(chunk) then rdConfig(fresh, file) end
+		end
+		local worst = resumeCost(fresh, freshControl, function()
+			freshControl.Fire('onClientResourceStart', 'opx_infinity')
+		end, 240)
+		check('a client booting with a surveyed clinic keeps every resume under 10,000', worst < 10000, worst)
+		local _ = control
+	end
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the
