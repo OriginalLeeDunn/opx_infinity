@@ -718,6 +718,7 @@ false when no service holds those jobs), `OnDutyCount()` -> number, `IsCuffed(id
 `opx:on:police:call|cuffed|fined|jailed`. Staff: `/opx.police.capture <kind> <name>`
 (no args lists the stations' state), `/opx.police.release <id>`,
 `/opx.police.unimpound <plate>`.
+
 ### Bar
 
 `modules/bar` + `config/bar.lua`: bartenders, bars and food stalls. A **venue** is a
