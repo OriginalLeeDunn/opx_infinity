@@ -117,6 +117,9 @@ shared_script "config/hauling.lua"
 -- draws here, and the server re-derives every one of them. Before the blips
 -- config, which pins its stations. See modules/fuel/module.lua.
 shared_script "config/fuel.lua"
+-- Shared: the client draws the access points and brokers it reads here, and the
+-- server re-derives every one. See modules/netrunner/module.lua.
+shared_script "config/netrunner.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -519,6 +522,16 @@ shared_script "modules/fuel/shared/model.lua"
 server_script "modules/fuel/server/tanks.lua"
 server_script "modules/fuel/server/main.lua"
 client_script "modules/fuel/client/main.lua"
+
+-- Netrunner: networks, breach, daemons, shards and brokers. After `character`,
+-- `inventory` (required), `progress`, `target`, `menu`, `downed` and
+-- `doorlock` (optional), every one ordered above. No new permission: the
+-- alert waypoint is `ui.vanilla.map`, declared below for the map pins.
+shared_script "modules/netrunner/module.lua"
+shared_script "modules/netrunner/locales.lua"
+shared_script "modules/netrunner/shared/access.lua"
+server_script "modules/netrunner/server/main.lua"
+client_script "modules/netrunner/client/main.lua"
 
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before

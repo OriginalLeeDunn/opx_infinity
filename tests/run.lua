@@ -42138,6 +42138,407 @@ do
 	check('a client booting with 96 pumps keeps every resume under 4,500', worst < 4500, worst)
 end
 
+-- ── netrunner ───────────────────────────────────────────────────────────────
+-- `modules/netrunner`: the pure Access model on its own numbers, then a whole
+-- run on a booted server -- the real character contract and progress module,
+-- an inventory fake holding decks and shards by slot, and a doorlock fake --
+-- and the client's boot inside its budget with every network surveyed.
+section('netrunner: the config, the validator and the numbers a run is decided on')
+do
+	local env, control, why = boot('server', fuelBridge({}, {}))
+	check('the server boots with the netrunner module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local netrunner = OPX.Modules.Get('netrunner')
+		local Access = netrunner.Access
+		local shipped = Access.Build(OPX.Config.MODULES.netrunner)
+		check('the shipped config has no problem', #shipped.problems == 0, table.concat(shipped.problems, ' | '))
+		check('and its three networks and two brokers wait to be surveyed', #shipped.placeholders == 5
+			and next(shipped.networks) == nil, table.concat(shipped.placeholders, ', '))
+		check('four decks, six daemons and three loot tables are read',
+			shipped.decks.cyberdeck_raven_microcyber ~= nil and shipped.daemons.ice_pick ~= nil
+			and shipped.shards.blackwall ~= nil)
+		check('every deck and the shard are in the bag\'s catalogue',
+			OPX.Api.Get('inventory').GetItem('cyberdeck_militech_paraline') ~= nil
+			and OPX.Api.Get('inventory').GetItem('data_shard') ~= nil)
+
+		-- One surveyed network, one broken one: the broken one is refused alone.
+		local config = OPX.Table.DeepCopy(OPX.Config.MODULES.netrunner)
+		config.NETWORKS.arasaka_waterfront.NODES.ap_loading_dock.X = 10.0
+		config.NETWORKS.kangtao_plaza.ICE.TIER = 'high'
+		config.NETWORKS.voodoo_blackwall_relay.NODES.ap_relay.DAEMONS = { 'door_unlock' }
+		local built = Access.Build(config)
+		check('a surveyed network opens', built.networks.arasaka_waterfront ~= nil
+			and built.networks.arasaka_waterfront.accessPoints[1] == 'ap_loading_dock')
+		check('a network with a bad ICE is refused with a line naming it',
+			built.networks.kangtao_plaza == nil
+			and table.concat(built.problems, '\n'):find('NETWORKS.kangtao_plaza', 1, true) ~= nil)
+		check('and a door daemon on an access point is refused, alone',
+			table.concat(built.problems, '\n'):find('NETWORKS.voodoo_blackwall_relay', 1, true) ~= nil
+			and built.networks.arasaka_waterfront ~= nil)
+		config.NETWORKS.arasaka_waterfront.NODES.ap_loading_dock.STEPS = { 'impossible' }
+		check('a step that is no BREACH preset is refused',
+			Access.Build(config).networks.arasaka_waterfront == nil)
+
+		-- The breach: the deck's tier against the ICE's.
+		local even = Access.Steps({ 'medium' }, built.breach, 2, 2)[1]
+		local above = Access.Steps({ 'medium' }, built.breach, 1, 3)[1]
+		local below = Access.Steps({ 'medium' }, built.breach, 4, 1)[1]
+		check('an even deck rolls the preset', even.chance == 0.78 and even.durationMs == 3500)
+		check('two tiers above: better odds and a faster bar',
+			math.abs(above.chance - 0.94) < 1e-9 and above.durationMs == 2800, above.chance)
+		check('three tiers below: worse odds and a slower bar',
+			math.abs(below.chance - 0.54) < 1e-9 and below.durationMs == 4550, below.chance)
+		check('and the odds never leave MIN_CHANCE..MAX_CHANCE',
+			Access.Steps({ 'easy' }, built.breach, 1, 10)[1].chance == 0.97
+			and Access.Steps({ 'extreme' }, built.breach, 10, 1)[1].chance == 0.05)
+
+		-- RAM, from a timestamp.
+		local deck = built.decks.cyberdeck_tetratronic_rippler
+		check('a deck nobody used is full', Access.RamNow(nil, deck, 1000) == 6)
+		check('RAM comes back at REGEN a minute', Access.RamNow({ ram = 1, ramAt = 1000 }, deck, 1030) == 5)
+		check('and never past the buffer', Access.RamNow({ ram = 1, ramAt = 1000 }, deck, 5000) == 6)
+		check('a stamp in the future reads full', Access.RamNow({ ram = 0, ramAt = 9000 }, deck, 1000) == 6)
+
+		-- The trace.
+		check('a connected run reaches 100% in TRACE_MS', Access.TraceAfter(0, 180000, 180000) == 1
+			and math.abs(Access.TraceAfter(0, 90000, 180000) - 0.5) < 1e-9)
+		check('an ICE pick slows it', math.abs(Access.TraceAfter(0, 90000, 180000, 0.6) - 0.3) < 1e-9)
+
+		-- Loot and price.
+		local low = built.shards.corpo_low
+		local first = Access.Loot(low, 0, 0)
+		local last = Access.Loot(low, 0.99, 0.999)
+		check('a roll of 0 is the first row at its floor', first.kind == 'payroll' and first.value == 200)
+		check('a high roll is the rarest row near its ceiling', last.kind == 'corp' and last.value == 900, last.value)
+		local broker = { buy = { DEFAULT = 1.0, corp = 1.5, blackwall = 0 }, hotPenalty = 0.5, hotS = 1800 }
+		check('a cold shard sells at value x BUY[kind]',
+			Access.Price({ kind = 'corp', value = 1000, hot = true, at = 0 }, broker, 5000) == 1500)
+		check('a hot one at HOT_PENALTY of that', Access.Price({ kind = 'corp', value = 1000, hot = true, at = 4000 },
+			broker, 5000) == 750)
+		check('an unlisted kind uses DEFAULT', Access.Price({ kind = 'payroll', value = 300 }, broker, 0) == 300)
+		check('and a kind priced 0 is refused', Access.Price({ kind = 'blackwall', value = 5000 }, broker, 0) == nil)
+
+		-- NetWatch.
+		local netwatch = built.netwatch
+		local heat = Access.Heat({ value = 50, at = 0 }, netwatch, 3600 * 5)
+		check('heat cools by DECAY_PER_H', heat.value == 40 and heat.lock == 0, heat.value)
+		local flagged, now = Access.AddHeat(heat, 60, netwatch, 20000)
+		check('reaching FLAG_AT flags the runner for LOCKOUT_H', now == true and flagged.lock == 20000 + 24 * 3600)
+		check('and a lock that has run out reads as none', Access.Heat(flagged, netwatch, flagged.lock + 1).lock == 0)
+
+		-- The job gate.
+		local open = built.networks.arasaka_waterfront
+		check('a MIN_GRADE 0 network is open to a freelancer', Access.Requirement(open, built) == nil)
+		check('a MIN_GRADE 2 network asks the netrunner job at grade 2',
+			Access.Requirement({ minGrade = 2 }, built).jobs.netrunner == 2)
+	end
+end
+
+section('netrunner: a run on the server -- breach, daemons, trace, broker, NetWatch')
+do
+	local function survey(env, file)
+		if file ~= 'config/netrunner.lua' then return end
+		local config = env.OPX.Config.MODULES.netrunner
+		local nodes = config.NETWORKS.arasaka_waterfront.NODES
+		nodes.ap_loading_dock.X, nodes.ap_loading_dock.Y, nodes.ap_loading_dock.Z = 200.0, 0.0, 0.0
+		config.BROKERS[1].X, config.BROKERS[1].Y, config.BROKERS[1].Z = 300.0, 0.0, 0.0
+	end
+	local env, control, why = boot('server', fuelBridge({}, {}), nil, survey)
+	check('the server boots with a surveyed network', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local netrunner = OPX.Modules.Get('netrunner')
+		local progress = OPX.Modules.Get('progress')
+		local P, COP = 71, 72
+		local runner = standCharacter(env, control, P, 'NETR0001', { EDDIES = 0, BANK = 0 })
+		runner.PlayerData.job = { name = 'unemployed', onDuty = true, grade = { level = 0 } }
+		runner.PlayerData.jobs = { unemployed = 0 }
+		local meta = {}
+		runner.Functions.GetMetaData = function(key) if key == nil then return meta end return meta[key] end
+		runner.Functions.SetMetaData = function(key, value) meta[key] = value end
+		standCharacter(env, control, COP, 'NETR0002')
+		control.Stand(COP, 5000.0, 0.0, 0.0)
+
+		-- The bag and the doors, faked by slot and by name.
+		local slots, added = {}, {}
+		local doors = { arasaka_waterfront_warehouse = { id = 7, name = 'arasaka_waterfront_warehouse', state = 1 } }
+		local turned = {}
+		local bag = {
+			GetInventory = function()
+				local items = {}
+				for slot, stack in pairs(slots) do
+					items[#items + 1] = { slot = slot, name = stack.name, count = 1, metadata = stack.metadata }
+				end
+				return { ok = true, value = { items = items } }
+			end,
+			GetSlot = function(_, slot)
+				local stack = slots[slot]
+				if stack == nil then return { ok = true, value = nil } end
+				return { ok = true, value = { slot = slot, name = stack.name, count = 1, metadata = stack.metadata } }
+			end,
+			SetMetadata = function(_, slot, metadata) slots[slot].metadata = metadata; return { ok = true } end,
+			AddItem = function(_, name, _, metadata)
+				local slot = 1
+				while slots[slot] ~= nil do slot = slot + 1 end
+				slots[slot] = { name = name, metadata = metadata }
+				added[#added + 1] = { name = name, metadata = metadata }
+				return { ok = true }
+			end,
+			RemoveFromSlot = function(_, slot)
+				if slots[slot] == nil then return { ok = false, error = 'empty' } end
+				slots[slot] = nil
+				return { ok = true }
+			end,
+			CanCarry = function() return { ok = true, value = true } end,
+		}
+		local doorlock = {
+			GetFromName = function(name)
+				local door = doors[name]
+				if door == nil then return { ok = false, error = 'doorlock.unknownDoor' } end
+				return { ok = true, value = { id = door.id, name = door.name, state = door.state } }
+			end,
+			Get = function(id)
+				for _, door in pairs(doors) do
+					if door.id == id then return { ok = true, value = { id = id, state = door.state } } end
+				end
+				return { ok = false }
+			end,
+			SetState = function(id, state, by)
+				for _, door in pairs(doors) do
+					if door.id == id then door.state = state end
+				end
+				turned[#turned + 1] = { id = id, state = state, by = by }
+				return { ok = true, value = state }
+			end,
+		}
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if name == 'inventory' then return bag end
+			if name == 'doorlock' then return doorlock end
+			return realGet(name, minimum)
+		end
+		local api = function() return OPX.Api.Get('netrunner') end
+
+		local function bar() return fuelAnswer(control, progress.Event.START, P) end
+		local function report(ms, ending)
+			local current = bar()
+			for _ = 1, math.floor(ms / 500) do
+				control.Advance(500)
+				control.Pump(1)
+			end
+			env.source = P
+			control.netEvents[progress.Event.REPORT](current.id, ending or 'finished')
+			env.source = nil
+			control.Pump(2)
+		end
+		local function jack()
+			control.Advance(1000)
+			return netrunner.JackIn(P, { network = 'arasaka_waterfront', node = 'ap_loading_dock' })
+		end
+
+		control.Stand(P, 200.5, 0.0, 0.0)
+		local ok, code = jack()
+		check('no deck in the bag: refused no_deck', not ok and code == 'no_deck', code)
+		slots[1] = { name = 'cyberdeck_raven_microcyber', metadata = {} }
+		ok, code = jack()
+		check('a Blackwall Diver\'s deck in a freelancer\'s bag: refused deck_grade',
+			not ok and code == 'deck_grade', code)
+		slots[1] = { name = 'cyberdeck_militech_paraline', metadata = {} }
+		slots[2] = { name = 'cyberdeck_tetratronic_rippler', metadata = {} }
+		control.Stand(P, 230.0, 0.0, 0.0)
+		ok, code = jack()
+		check('away from the access point: refused too_far', not ok and code == 'too_far', code)
+		control.Stand(P, 200.5, 0.0, 0.0)
+		control.Advance(1000)
+		ok, code = netrunner.JackIn(P, { network = 'kangtao_plaza', node = 'ap_garage' })
+		check('a network still waiting for its survey is unknown', not ok and code == 'unknown_network', code)
+
+		-- A "finished" sent before the server's clock is not a breach.
+		ok, code = jack()
+		check('a freelancer with a deck at the access point starts the breach', ok and code == 'breaching', code)
+		local first = bar()
+		check('the first step is the easy preset, faster for a deck a tier above the ICE',
+			first ~= nil and first.durationMs == 2250 and first.cancelable == true, first and first.durationMs)
+		check('with the best deck in the bag', slots[2].metadata.serial ~= nil and slots[2].metadata.ram == 6)
+		report(500, 'finished')
+		check('a step "finished" early is refused by the server\'s clock, and the breach with it',
+			api().Session(P) == nil)
+
+		-- A failed step raises the trace and runs again; then the breach lands.
+		netrunner.Roll = function() return 0.99 end
+		jack()
+		report(2500)
+		local session = api().Session(P)
+		check('a failed step adds FAIL_TRACE and runs again', session ~= nil and session.phase == 'breach'
+			and math.abs(session.trace - 0.2) < 1e-9 and bar().durationMs == 2250, session and session.trace)
+		netrunner.Roll = function() return 0 end
+		report(2500)
+		report(3500)
+		session = api().Session(P)
+		check('every step landed: connected', session ~= nil and session.phase == 'connected', session and session.phase)
+		local state = nil
+		for index = #control.clientEvents, 1, -1 do
+			local event = control.clientEvents[index]
+			if event.name == netrunner.Event.STATE and event.source == P and event[1].open == true then
+				state = event[1]
+				break
+			end
+		end
+		check('and the runner is sent the daemons with the menu open', state ~= nil and state.phase == 'connected'
+			and #state.daemons >= 5 and state.ram == 6, state and state.ram)
+
+		-- Daemons.
+		control.Advance(1000)
+		ok, code = netrunner.Daemon(P, { node = 'ap_loading_dock', daemon = 'door_unlock' })
+		check('a daemon the node does not run is refused', not ok and code == 'unknown_daemon', code)
+		control.Advance(1000)
+		ok, code = netrunner.Daemon(P, { node = 'door_warehouse', daemon = 'door_unlock' })
+		check('door_unlock opens the door through the doorlock contract', ok and code == 'door_opened'
+			and doors.arasaka_waterfront_warehouse.state == 0 and turned[1].by == 'netrunner:NETR0001', code)
+		check('and costs its RAM off the deck\'s metadata', math.floor(slots[2].metadata.ram) == 3, slots[2].metadata.ram)
+		control.Advance(1000)
+		ok, code = netrunner.Daemon(P, { node = 'door_warehouse', daemon = 'door_unlock' })
+		check('an open door is not opened twice, and no RAM moves', not ok and code == 'door_open', code)
+		for _ = 1, 22 do
+			control.Advance(1000)
+			control.Pump(1)
+		end
+		check('the door locks again after UNLOCK_S', doors.arasaka_waterfront_warehouse.state == 1
+			and turned[#turned].by == 'netrunner:relock')
+		ok, code = netrunner.Daemon(P, { node = 'cam_yard', daemon = 'camera_loop' })
+		check('camera_loop blinds the network for the contract', ok and code == 'cameras_looped'
+			and api().CamerasBlind('arasaka_waterfront') == true, code)
+		control.Advance(1000)
+		ok, code = netrunner.Daemon(P, { node = 'ap_loading_dock', daemon = 'ice_pick' })
+		check('ice_pick runs once', ok and code == 'ice_picked', code)
+		control.Advance(1000)
+		ok, code = netrunner.Daemon(P, { node = 'ap_loading_dock', daemon = 'ice_pick' })
+		check('and not twice', not ok and code == 'already_picked', code)
+
+		-- A datamine: RAM reserved, a bar, a shard.
+		for _ = 1, 30 do
+			control.Advance(1000)
+			control.Pump(1)
+		end
+		local before = api().Session(P).trace
+		ok, code = netrunner.Daemon(P, { node = 'term_shipping', daemon = 'datamine' })
+		check('datamine starts a bar', ok and code == 'mining' and bar().durationMs == 8000, code)
+		check('and its trace lands up front', api().Session(P).trace > before)
+		report(8000)
+		check('the bar run to the end gives a data shard', #added == 1 and added[1].name == 'data_shard'
+			and added[1].metadata.network == 'arasaka_waterfront' and added[1].metadata.hot == true
+			and added[1].metadata.value >= 200)
+		control.Advance(1000)
+		ok, code = netrunner.Daemon(P, { node = 'term_shipping', daemon = 'datamine' })
+		check('the terminal is dry for its COOLDOWN_S', not ok and code == 'node_dry', code)
+		control.Advance(1000)
+		local rippler = netrunner.Built.decks.cyberdeck_tetratronic_rippler
+		local function ramNow() return netrunner.Access.RamNow(slots[2].metadata, rippler, OPX.Now() / 1000) end
+		ok, code = netrunner.Daemon(P, { node = 'ap_loading_dock', daemon = 'datamine' })
+		check('a deck drained below the daemon\'s cost is refused no_ram', not ok and code == 'no_ram', code)
+		for _ = 1, 20 do
+			control.Advance(1000)
+			control.Pump(1)
+		end
+		local ramBefore = ramNow()
+		ok = netrunner.Daemon(P, { node = 'ap_loading_dock', daemon = 'datamine' })
+		local ramDuring = ramNow()
+		report(2000, 'cancelled')
+		check('a datamine reserves its RAM before the bar', ok and math.abs(ramBefore - 4 - ramDuring) < 0.1,
+			ramDuring)
+		check('and one cut short gives it back', math.abs(ramNow() - math.min(6, ramBefore + 0.5)) < 0.5, ramNow())
+
+		-- The trace reaches 100%.
+		for _ = 1, 400 do
+			control.Advance(1000)
+			control.Pump(1)
+			if api().Session(P) == nil then break end
+		end
+		check('left alone, the trace throws the runner out', api().Session(P) == nil)
+		local alert = fuelAnswer(control, netrunner.Event.ALERT, COP)
+		check('and the on-duty NCPD officer is told where the access point is',
+			alert ~= nil and alert.level == 'traced' and alert.x == 200.0 and alert.runner == nil)
+		check('the runner is told the run is over', fuelAnswer(control, netrunner.Event.STATE, P).phase == 'offline')
+		check('and NetWatch heat rose by HEAT_ON_TRACE', type(meta.netwatch_heat) == 'table'
+			and meta.netwatch_heat.value == 10)
+		ok, code = jack()
+		check('the network is locked down for COOLDOWN_S', not ok and code == 'network_locked', code)
+
+		-- The broker.
+		control.Stand(P, 300.5, 0.0, 0.0)
+		control.Advance(1000)
+		local value = added[1].metadata.value
+		ok, code = netrunner.Sell(P, { broker = 'kabuki_fence' })
+		check('a hot shard sells at half price at the Kabuki fence', ok and code == 'sold_hot'
+			and runner.PlayerData.money.EDDIES == math.floor(value * 1.0 * 0.5), runner.PlayerData.money.EDDIES)
+		local shardsLeft = 0
+		for _, stack in pairs(slots) do
+			if stack.name == 'data_shard' then shardsLeft = shardsLeft + 1 end
+		end
+		check('and leaves the bag', shardsLeft == 0)
+		control.Advance(1000)
+		ok, code = netrunner.Sell(P, { broker = 'kabuki_fence' })
+		check('nothing left to sell is said so', not ok and code == 'nothing_to_sell', code)
+		slots[9] = { name = 'data_shard', metadata = { kind = 'blackwall', value = 5000, hot = false } }
+		control.Advance(1000)
+		ok, code = netrunner.Sell(P, { broker = 'kabuki_fence' })
+		check('a kind the broker will not touch stays in the bag', not ok and code == 'broker_refuses'
+			and slots[9] ~= nil, code)
+		check('ValidateShard answers a contract that wants Blackwall data',
+			api().ValidateShard(P, 9, { kind = 'blackwall' }).ok == true
+			and api().ValidateShard(P, 9, { network = 'kangtao_plaza' }).ok == false)
+
+		-- NetWatch's lockout, and hostile input.
+		meta.netwatch_heat = { value = 0, at = 0, lock = math.floor(OPX.Now() / 1000) + 3600 }
+		control.Stand(P, 200.5, 0.0, 0.0)
+		control.Advance(1000)
+		ok, code = netrunner.JackIn(P, { network = 'arasaka_waterfront', node = 'ap_loading_dock' })
+		check('a runner NetWatch flagged cannot jack in anywhere', not ok and code == 'netwatch_lockout', code)
+		control.Advance(1000)
+		ok, code = netrunner.Daemon(P, { node = 'door_warehouse', daemon = 'door_unlock' })
+		check('a daemon with no run is refused not_connected', not ok and code == 'not_connected', code)
+		for _, payload in ipairs({ 'x', 5, { network = {} }, { network = 'arasaka_waterfront', node = 'door_warehouse' } }) do
+			control.Advance(1000)
+			ok, code = netrunner.JackIn(P, payload)
+			check('a bad jack-in is refused: ' .. tostring(code), not ok)
+		end
+		env.source = P
+		local survived = pcall(function()
+			control.netEvents[netrunner.Event.DAEMON]({ node = string.rep('x', 5000), daemon = {} })
+			control.netEvents[netrunner.Event.SELL]('nope')
+			control.netEvents[netrunner.Event.JACK_OUT](nil)
+			control.Pump(3)
+		end)
+		env.source = nil
+		check('and the net doors survive garbage', survived)
+	end
+end
+
+section('netrunner: the client builds its rows inside the budget')
+do
+	local env, control = Host.Environment('client')
+	for _, file in ipairs(Host.LoadOrder('open77.lua', 'client')) do
+		local chunk = loadfile(file, 't', env)
+		if chunk ~= nil and pcall(chunk) and file == 'config/netrunner.lua' then
+			local networks = env.OPX.Config.MODULES.netrunner.NETWORKS
+			local n = 0
+			for _, network in pairs(networks) do
+				for _, node in pairs(network.NODES) do
+					n = n + 1
+					if node.X ~= nil then node.X, node.Y, node.Z = 100.0 + n, 0.0, 0.0 end
+				end
+			end
+		end
+	end
+	local worst = resumeCost(env, control, function()
+		control.Fire('onClientResourceStart', 'opx_infinity')
+	end, 240)
+	check('a client booting with every network surveyed keeps every resume under 4,500', worst < 4500, worst)
+	local contract = env.OPX.Api.Get('netrunner')
+	check('and publishes its half of the contract', contract ~= nil and contract.State() == nil)
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the

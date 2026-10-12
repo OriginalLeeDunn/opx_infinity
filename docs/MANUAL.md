@@ -583,6 +583,31 @@ consumption (no RPM on the server), and real station coordinates (unsurveyed -- 
 above). Needs in-game checking: the engine cut against a driver restarting, the eye
 spheres on real pumps, the `drop_point` sprite on the big map.
 
+### Netrunner
+
+`modules/netrunner` + `config/netrunner.lua`. A runner ALTs an **access point** of a
+network with a **cyberdeck** (`cyberdeck_*`, never stacked) in the bag and starts a
+**breach**: one server `progress` bar per step of the node's `STEPS`, rolled by the
+server (`M.Roll`), odds and speed moved by deck TIER against ICE TIER. A failed step
+adds `BREACH.FAIL_TRACE` and runs again. Connected, the run's menu offers the
+**daemons** of the access point and of every door, camera and terminal node of the
+network: `door_unlock` (doorlock contract `GetFromName` + `SetState(id, 0, 'netrunner:<cid>')`,
+relocked after `UNLOCK_S` if still open), `camera_loop`, `datamine` (a bar, then a
+`data_shard` with `{ network, kind, value, hot, at, serial }`), `ice_pick`, `wipe_logs`.
+RAM lives on the deck's metadata (`ram`, `ramAt`, regen computed from the wall clock),
+is reserved before a bar and refunded on cancel. The server raises the trace every
+`TICK_MS` toward 100% in `ICE.TRACE_MS`; `ALERT_AT` warns the `ON_TRACE.JOBS`, 100%
+throws the runner out, locks the network for `COOLDOWN_S`, sends an `ALERT` (toast +
+waypoint) to on-duty members and adds NetWatch heat (`netwatch_heat` metadata; a
+Blackwall connect adds more; `FLAG_AT` locks the runner out for `LOCKOUT_H`).
+**Brokers** buy every shard in the bag: value x `BUY[kind]` x `HOT_PENALTY` while hot.
+
+Contract `netrunner` v1 (server): `CamerasBlind(network)`, `Objectives()`,
+`ValidateShard(player, slot, want)`, `Verify(contract, proof)`, `Session`, `Heat`,
+`Networks`, `JackOut`. Bus: `opx:on:netrunner:objective|traced|cameras|door`.
+Staff: `/opx.netrunner.capture <network> <node> [kind]`, `/opx.netrunner.networks`.
+Every position ships as `0,0,0` and its network stays disabled until surveyed.
+
 ### Emotes
 
 `animations` offers **every animation the platform has** (**"toutes les animations,
