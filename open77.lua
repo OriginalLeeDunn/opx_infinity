@@ -155,6 +155,9 @@ shared_script "config/workplace.lua"
 -- Shared: the client draws the editor desks it reads here and the break's
 -- stingers; the server re-derives every desk and price. See modules/media/module.lua.
 shared_script "config/media.lua"
+-- Shared: the client reads JOBS to draw the "Send a bill" row and the form's
+-- ceiling; the server re-derives every one. See modules/invoices/module.lua.
+shared_script "config/invoices.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -691,6 +694,17 @@ shared_script "modules/media/locales.lua"
 shared_script "modules/media/shared/model.lua"
 server_script "modules/media/server/main.lua"
 client_script "modules/media/client/main.lua"
+
+-- Invoices: bills between players and companies, with consent. After
+-- `character` (required: the purse), `target`, `menu` and `form` (optional),
+-- all ordered above. `accounts` (module `business`) is read at run time when it
+-- runs. No new permission: `players.position` and `time.unix` need none.
+shared_script "modules/invoices/module.lua"
+shared_script "modules/invoices/locales.lua"
+shared_script "modules/invoices/shared/model.lua"
+server_script "modules/invoices/server/storage.lua"
+server_script "modules/invoices/server/main.lua"
+client_script "modules/invoices/client/main.lua"
 
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before

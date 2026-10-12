@@ -1139,6 +1139,32 @@ still holds (`valid`, `revoked`, `unverified`). Client-to-server is ONE door,
 Staff: `/opx.media.desks`, `/opx.media.capture <network> <desk>`. Every desk ships at
 `0,0,0` and is disabled, by name, until surveyed.
 
+### Invoices: bills with consent
+
+`modules/invoices` + `config/invoices.lua`. An employee whose PRIMARY job is in `JOBS`
+(grade, duty through `OPX.JobGate`) bills a player within `REACH`: ALT on them (**Send a
+bill**, then amount and reason) or `/opx.bill <id> <amount> <reason>`. The customer is
+prompted (**Pay now** / **Put it on my tab** / **Refuse**, `ANSWER_TTL_S` then expired).
+Paying takes `MONEY_TYPE` (BANK), `FALLBACK_TYPE` (cash) when the bank is short; the
+employee is paid the job's `CUT_PCT` and the rest goes to the job's company account
+through `accounts.Deposit(..., opId)` -- or to the employee when `ACCOUNT = false`, when
+`accounts` does not run (said once at boot) or when it refuses the deposit (audited).
+A bill accepted but not covered stays on the tab (`/opx.bills`, `opx77_invoices`,
+survives restarts, lapses after `UNPAID_TTL_S`, at most `MAX_UNPAID`); the employee
+withdraws an unpaid bill from the same list.
+
+Money moves like contracts: the bill is written `settling` first, each movement is a row
+`invoices:<id>:charge|cut|rest` in `opx77_invoice_ledger` (reserved, moved, committed),
+then `paid`. A restart finishes a `settling` bill from its receipts; a charge a crash left
+`reserved` is `orphaned` and the bill `disputed` for staff, never guessed at.
+
+Contract `invoices` v1 (server): `Issue{ issuer, target, amount, reason, account?, cutPct?,
+source? }` -> `Result{ id }` (yields; no reach or job check -- the caller decided),
+`Pending(player)` -> `Result{ rows }`, `Get(id)`, `Cancel(id)`. Bus
+`opx:on:invoices:issued`, `paid`, `refused`, `expired`, `cancelled` as `(source, { id,
+amount, account, source, issuerCid, targetCid })`. NCPD ships without an entry on purpose:
+a citation is a fine, not a service.
+
 ---
 
 ## For creators
@@ -1187,6 +1213,8 @@ local data = exports.opx_infinity:GetPlayerData(playerId)
 | `AddVehicle(target, record, { garage? })`, `GiveKeys(target, plate, model?)` | write |
 | `Notify(src, msg, kind?, ms?)`, `StartProgress(src, spec)`, `StopProgress(src, id?)` | write |
 | `RegisterCraftingBench(key, def)`, `UnregisterCraftingBench(key)` | write |
+| `GetInvoices(src)` (what a loaded player owes) | read |
+| `IssueInvoice(issuer, target, amount, reason, { account?, cutPct? }?)`, `CancelInvoice(id)` (only the caller's own bills) | write |
 
 `target` is a connected player id or a citizen id (an offline bag). **Who may call
 is the operator's**: `SERVER.EXPORTS.READ` (`'*'` out of the box) and
@@ -1282,7 +1310,9 @@ litres, previous, percent, capacity, reason }`, `reason` one of `refuel`, `can`,
 `empty`, `ext:<caller>` -- driving is not announced, the bag already is); `opx:on:character:created` / `deleted`;
 `opx:on:inventory:items` (`{ citizenId, changes = { { name, delta, count } } }`,
 what a bag gained and lost by item name); `opx:on:vehicles:registered` / `state`
-(an impound); `opx:on:crafting:ordered` / `collected`; `opx:on:progress:finished`.
+(an impound); `opx:on:crafting:ordered` / `collected`; `opx:on:progress:finished`;
+`opx:on:invoices:issued` / `paid` / `refused` / `expired` / `cancelled` (a bill an
+`IssueInvoice` raised carries `source = 'ext:<caller>'`).
 Payloads are closed copies built
 for the bus, never live records — PlayerData's free-form `metadata` is not on it.
 
