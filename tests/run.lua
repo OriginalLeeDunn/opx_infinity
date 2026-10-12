@@ -45119,6 +45119,460 @@ do
 	end
 end
 
+-- ── business: the treasuries and the HR terminal ────────────────────────────
+-- `modules/business`. The treasury SQL is played by an in-memory twin that
+-- keeps the same contract as the real statements -- the ledger's op_id is a
+-- UNIQUE key and a duplicate rolls the whole transaction back, a debit the
+-- balance cannot cover writes no row -- so idempotency and the overdraft guard
+-- are tested through the code that relies on them. The roster is the real
+-- character module over a twin of `opx77_character_groups`.
+
+do
+	local function businessBridge(db)
+		db.accounts, db.ledger, db.order, db.groups, db.down = {}, {}, {}, {}, false
+		local function acct(kind, group) return kind .. ':' .. group end
+		local function stamp(op)
+			local row = db.ledger[op]
+			if row then row.balance_after = db.accounts[acct(row.kind, row.group_key)] end
+		end
+		local function insertLedger(op, kind, group, delta, reason, actor)
+			if db.ledger[op] ~= nil then return false end
+			db.ledger[op] = { op_id = op, kind = kind, group_key = group, delta = delta, reason = reason,
+				actor = actor, at = 0 }
+			db.order[#db.order + 1] = op
+			return true
+		end
+		return Host.Database({
+			scalar = function() return 1 end,
+			insert = function() return 1 end,
+			transaction = function(list)
+				if db.down then return false, 'down' end
+				-- Work on copies: a failed statement rolls everything back.
+				local saved = { accounts = {}, ledger = {}, order = #db.order }
+				for k, v in pairs(db.accounts) do saved.accounts[k] = v end
+				for k, v in pairs(db.ledger) do saved.ledger[k] = v end
+				local function rollback()
+					db.accounts, db.ledger = saved.accounts, saved.ledger
+					for i = #db.order, saved.order + 1, -1 do db.order[i] = nil end
+					return false, 'Duplicate entry'
+				end
+				for _, statement in ipairs(list) do
+					local q, v = statement.query, statement.values
+					if q:find('^INSERT INTO opx77_company_ledger') and q:find('VALUES') then
+						if not insertLedger(v[1], v[2], v[3], v[4], v[5], v[6]) then return rollback() end
+					elseif q:find('^INSERT INTO opx77_company_ledger') and q:find('FROM opx77_company_accounts') then
+						local key = acct(v[5], v[6])
+						if (db.accounts[key] or -1) >= v[7] then
+							if not insertLedger(v[1], v[5], v[6], v[2], v[3], v[4]) then return rollback() end
+						end
+					elseif q:find('^INSERT INTO opx77_company_ledger') and q:find('FROM opx77_company_ledger') then
+						local out = db.ledger[v[4]]
+						if out ~= nil then
+							if not insertLedger(v[1], v[2], v[3], -out.delta, out.reason, out.actor) then
+								return rollback()
+							end
+						end
+					elseif q:find('^INSERT INTO opx77_company_accounts') and q:find('VALUES') then
+						local key = acct(v[1], v[2])
+						db.accounts[key] = (db.accounts[key] or 0) + v[3]
+					elseif q:find('^INSERT INTO opx77_company_accounts') then
+						local row = db.ledger[v[1]]
+						if row then
+							local key = acct(row.kind, row.group_key)
+							db.accounts[key] = db.accounts[key] or 0
+						end
+					elseif q:find('SET a.balance = a.balance %+ l.delta') then
+						for index = 1, #v do
+							local row = db.ledger[v[index]]
+							if row and row.applied == nil then
+								row.applied = true
+								local key = acct(row.kind, row.group_key)
+								db.accounts[key] = (db.accounts[key] or 0) + row.delta
+							end
+						end
+					elseif q:find('SET l.balance_after') then
+						stamp(v[1])
+					end
+				end
+				for op in pairs(db.ledger) do
+					local row = db.ledger[op]
+					if row.kind and row.applied == nil and row.delta > 0 then row.applied = true end
+				end
+				return true
+			end,
+			single = function(sql, params)
+				if sql:find('FROM opx77_company_ledger', 1, true) then
+					local row = db.ledger[params.op]
+					if row == nil then return nil end
+					return { kind = row.kind, group_key = row.group_key, delta = row.delta,
+						balance_after = row.balance_after }
+				end
+				if sql:find('FROM opx77_company_accounts', 1, true) then
+					local value = db.accounts[acct(params.kind, params.group)]
+					return value ~= nil and { balance = value } or nil
+				end
+				return nil
+			end,
+			query = function(sql, params)
+				if sql:find('FROM opx77_company_ledger', 1, true) then
+					local out = {}
+					for index = #db.order, 1, -1 do
+						local row = db.ledger[db.order[index]]
+						if row and row.kind == params.kind and row.group_key == params.group then
+							out[#out + 1] = { delta = row.delta, reason = row.reason, actor = row.actor, at = 1 }
+							if #out >= params.limit then break end
+						end
+					end
+					return out
+				end
+				if sql:find('opx77_character_groups g', 1, true) then
+					local out = {}
+					for cid, row in pairs(db.groups) do
+						local grade = row[params.type .. ':' .. params.name]
+						if grade ~= nil then
+							out[#out + 1] = { citizen_id = cid, grade = grade,
+								char_info = ('{"firstName":"%s","lastName":"X"}'):format(row.first or 'N') }
+						end
+					end
+					table.sort(out, function(a, b) return a.citizen_id < b.citizen_id end)
+					return out
+				end
+				return {}
+			end,
+			update = function(sql, params)
+				if sql:find('INSERT INTO opx77_character_groups', 1, true) then
+					db.groups[params.citizen] = db.groups[params.citizen] or {}
+					db.groups[params.citizen][params.type .. ':' .. params.name] = params.grade
+					return 1
+				end
+				if sql:find('DELETE FROM opx77_character_groups', 1, true) then
+					local row = db.groups[params.citizen]
+					if row then row[params.type .. ':' .. params.name] = nil end
+					return 1
+				end
+				if sql:find('INSERT IGNORE INTO opx77_company_ledger', 1, true) then
+					if db.ledger[params.op] ~= nil then return 0 end
+					insertLedger(params.op, params.kind, params.group, params.delta, params.reason, params.actor)
+					db.ledger[params.op].applied = true
+					db.ledger[params.op].balance_after = params.after
+					return 1
+				end
+				return 1
+			end,
+		})
+	end
+
+	-- A loaded character with a job, a gang, cash and a membership row.
+	local function staff(env, control, db, source, first, job, grade, gang, gangGrade, cash)
+		local cid = env.OPX.CitizenId.Generate()
+		local player = standCharacter(env, control, source, cid, { EDDIES = cash or 0, BANK = 0 })
+		local data = player.PlayerData
+		data.charInfo = { firstName = first, lastName = 'X' }
+		data.job = { name = job, onDuty = false, grade = { name = job, level = grade } }
+		data.jobs = { [job] = grade }
+		data.gang = { name = gang or 'none', grade = { name = 'g', level = gangGrade or 0 } }
+		data.gangs = gang and { [gang] = gangGrade } or {}
+		db.groups[cid] = { first = first, ['job:' .. job] = grade }
+		if gang then db.groups[cid]['gang:' .. gang] = gangGrade end
+		return player, cid
+	end
+
+	local function run(env, control, fn)
+		local answer = nil
+		env.CreateThread(function() answer = table.pack(fn()) end)
+		control.Pump(8)
+		return table.unpack(answer or {})
+	end
+
+	local function last(control, name, player)
+		for index = #control.clientEvents, 1, -1 do
+			local event = control.clientEvents[index]
+			if event.name == name and event.source == player then return event[1] end
+		end
+		return nil
+	end
+
+	section('business: the rank rules, the validators and the offices')
+	do
+		local db = {}
+		local env, control, why = boot('server', businessBridge(db))
+		check('the server boots with the business module', why == nil, why)
+		if why == nil then
+			local OPX = env.OPX
+			local business = OPX.Modules.Get('business')
+			local Access = business.Access
+			check('the module is running', OPX.Modules.IsRunning('business'),
+				OPX.Modules.Record('business').Reason)
+			check('it provides accounts v1 and business v1',
+				OPX.Api.Get('accounts', 1) ~= nil and OPX.Api.Get('business', 1) ~= nil)
+			check('the NCPD Captain (grade 3) is a boss with treasury rights, the Detective is not',
+				Access.IsBoss('job', 'ncpd', 3) and Access.BankAuth('job', 'ncpd', 3)
+					and not Access.IsBoss('job', 'ncpd', 2) and not Access.MayOpen('job', 'ncpd', 2))
+			check('a MaxTac Squad Lead is a boss without treasury rights',
+				Access.IsBoss('job', 'maxtac', 1) and not Access.BankAuth('job', 'maxtac', 1))
+			check('a fixer Broker may recruit (HIRERS = 1) without being a boss',
+				Access.MayHire('job', 'fixer', 1) and not Access.IsBoss('job', 'fixer', 1)
+					and not Access.MayHire('job', 'fixer', 0))
+			check('under the `below` rule a boss manages strictly below their grade',
+				Access.MayManage(3, 2) and not Access.MayManage(3, 3) and not Access.MayManage(2, 3))
+			check('a step stops at the edges of the grade table',
+				Access.Step('job', 'ncpd', 2, 1) == 3 and Access.Step('job', 'ncpd', 3, 1) == nil
+					and Access.Step('job', 'ncpd', 0, -1) == nil)
+			check('an amount is a whole number in 1..MAX_AMOUNT',
+				Access.Amount('1500') == 1500 and Access.Amount(0) == nil and Access.Amount(1.5) == nil
+					and Access.Amount(-3) == nil and Access.Amount('12e3') == nil
+					and Access.Amount(Access.MAX_AMOUNT + 1) == nil)
+			check('an operation id is a short printable token',
+				Access.OpId('inv:42:pay') == 'inv:42:pay' and Access.OpId('a b') == nil
+					and Access.OpId(('x'):rep(81)) == nil and Access.OpId(7) == nil)
+			check('a group must exist in config/character.lua',
+				Access.ValidGroup('gang', 'maelstrom') and not Access.ValidGroup('job', 'nope')
+					and not Access.ValidGroup('corp', 'ncpd'))
+			check('every shipped office is a placeholder, so none is usable',
+				#Access.AllOffices() == 0 and #Access.Offices('job', 'ncpd') == 0)
+			local named = false
+			for _, line in ipairs(control.log.warn) do
+				if line:find('[business] config:', 1, true) and line:find('PLACEHOLDER', 1, true)
+					and line:find('NCPD precinct', 1, true) then named = true end
+			end
+			check('and the journal names each placeholder office with its lore place at boot', named)
+			local desks = Access.Desks({ job = { name = 'ncpd', grade = { level = 3 } },
+				gang = { name = 'maelstrom', grade = { level = 3 } }, jobs = { ncpd = 3 }, gangs = { maelstrom = 3 } })
+			check('a Captain who runs Maelstrom on the side has two desks, job first',
+				#desks == 2 and desks[1].kind == 'job' and desks[2].key == 'maelstrom')
+		end
+	end
+
+	section('business: accounts v1 -- idempotent movements, the overdraft guard, history and the bus')
+	do
+		local db = {}
+		local env, control, why = boot('server', businessBridge(db))
+		check('the server boots', why == nil, why)
+		if why == nil then
+			local accounts = env.OPX.Api.Get('accounts')
+			local heard = {}
+			env.AddEventHandler('opx:on:accounts:changed', function(_, payload) heard[#heard + 1] = payload end)
+
+			local r = run(env, control, function() return accounts.Balance('job', 'ncpd') end)
+			check('an account never paid into reads 0', r.ok and r.value.balance == 0)
+			r = run(env, control, function() return accounts.Deposit('job', 'ncpd', 1000, 'seed', 'op:1') end)
+			check('a deposit lands and answers the new balance', r.ok and r.value.balance == 1000, r.error)
+			r = run(env, control, function() return accounts.Deposit('job', 'ncpd', 1000, 'seed', 'op:1') end)
+			check('the same opId twice is ONE movement, answered with the first receipt',
+				r.ok and r.value.replay and r.value.balance == 1000 and db.accounts['job:ncpd'] == 1000)
+			r = run(env, control, function() return accounts.Withdraw('job', 'ncpd', 500, 'x', 'op:1') end)
+			check('an opId reused for a different movement is refused',
+				not r.ok and r.error == 'accounts.opIdConflict' and db.accounts['job:ncpd'] == 1000)
+			r = run(env, control, function() return accounts.Withdraw('job', 'ncpd', 1500, 'too much') end)
+			check('a withdrawal the balance cannot cover is insufficient_funds and moves nothing',
+				not r.ok and r.error == 'insufficient_funds' and db.accounts['job:ncpd'] == 1000, r.error)
+			r = run(env, control, function() return accounts.Withdraw('job', 'ncpd', 400, 'gear', 'op:2') end)
+			check('a covered withdrawal lands', r.ok and r.value.balance == 600 and db.accounts['job:ncpd'] == 600)
+			r = run(env, control, function()
+				return accounts.Transfer('job', 'ncpd', 'job', 'trauma', 250, 'mutual aid', 'op:3')
+			end)
+			check('a transfer debits one and credits the other, together',
+				r.ok and db.accounts['job:ncpd'] == 350 and db.accounts['job:trauma'] == 250, r.error)
+			r = run(env, control, function()
+				return accounts.Transfer('job', 'ncpd', 'job', 'trauma', 250, 'mutual aid', 'op:3')
+			end)
+			check('and replayed it moves nothing', r.ok and r.value.replay and db.accounts['job:ncpd'] == 350)
+			r = run(env, control, function()
+				return accounts.Transfer('job', 'ncpd', 'job', 'trauma', 9999, 'broke', 'op:4')
+			end)
+			check('a transfer the payer cannot cover credits nobody',
+				not r.ok and r.error == 'insufficient_funds' and db.accounts['job:trauma'] == 250)
+			r = run(env, control, function() return accounts.Deposit('job', 'nope', 10, 'x') end)
+			local r2 = run(env, control, function() return accounts.Deposit('job', 'ncpd', 0, 'x') end)
+			local r3 = run(env, control, function() return accounts.Deposit('job', 'ncpd', 10, 'x', 'bad id!') end)
+			check('an unknown group, a zero amount and a bad opId are each refused',
+				r.error == 'accounts.badGroup' and r2.error == 'accounts.badAmount' and r3.error == 'accounts.badOpId')
+			r = run(env, control, function() return accounts.History('job', 'ncpd', 10) end)
+			check('the history lists every movement newest first with its reason',
+				r.ok and #r.value.rows == 3 and r.value.rows[1].amount == -250
+					and r.value.rows[1].reason == 'mutual aid' and r.value.rows[3].amount == 1000, r.ok and #r.value.rows)
+			check('the bus heard each real movement once, never a replay',
+				#heard == 4 and heard[1].kind == 'job' and heard[1].key == 'ncpd' and heard[1].delta == 1000
+					and heard[1].balance == 1000 and heard[1].reason == 'seed', #heard)
+			db.down = true
+			r = run(env, control, function() return accounts.Deposit('job', 'ncpd', 10, 'x', 'op:5') end)
+			check('a database that rolls back is a failure, and nothing moved',
+				not r.ok and r.error == 'accounts.failed' and db.accounts['job:ncpd'] == 350, r.error)
+			db.down = false
+			r = run(env, control, function() return accounts.Note('job', 'ncpd', 100, 'dealership:sale', 'dealer:t1') end)
+			check('a note records a sale banked elsewhere without touching the balance',
+				r.ok and db.accounts['job:ncpd'] == 350 and db.ledger['dealer:t1'] ~= nil)
+		end
+	end
+
+	section('business: the HR terminal -- recruit, promote, demote, clock, fire, bank')
+	do
+		local db = {}
+		local env, control, why = boot('server', businessBridge(db))
+		check('the server boots', why == nil, why)
+		if why == nil then
+			local OPX = env.OPX
+			local business = OPX.Modules.Get('business')
+			local Server, Event = business.Server, business.Event
+			local contract = OPX.Api.Get('business')
+			local B, D, R, O = 91, 92, 93, 94
+			local boss, bossCid = staff(env, control, db, B, 'Captain', 'ncpd', 3, nil, nil, 5000)
+			local det, detCid = staff(env, control, db, D, 'Detective', 'ncpd', 2, nil, nil, 0)
+			local rookie, rookieCid = staff(env, control, db, R, 'Rookie', 'unemployed', 0, nil, nil, 0)
+			local outsider = staff(env, control, db, O, 'Outsider', 'unemployed', 0, nil, nil, 0)
+			db.groups.OFFLINECID = { first = 'Ghost', ['job:ncpd'] = 0 }
+			for _, id in ipairs({ B, D, R, O }) do control.Stand(id, 10.0, 10.0, 0.0) end
+			control.Stand(O, 500.0, 10.0, 0.0)
+			local staffBus = {}
+			env.AddEventHandler(Event.ON_STAFF, function(_, payload) staffBus[#staffBus + 1] = payload end)
+
+			check('business.IsBoss: the Captain yes, the Detective no',
+				contract.IsBoss(B, 'ncpd') == true and contract.IsBoss(D, 'ncpd') == false)
+			local roster = run(env, control, function() return contract.Employees('ncpd') end)
+			check('the roster lists online AND offline members, highest grade first',
+				roster.ok and #roster.value.rows == 3 and roster.value.rows[1].citizenId == bossCid
+					and roster.value.rows[3].online == false, roster.ok and #roster.value.rows)
+
+			local ok, code = run(env, control, function() return Server.Terminal(D, nil, nil) end)
+			check('a Detective is refused the terminal', not ok and code == 'not_boss', code)
+			ok = run(env, control, function() return Server.Terminal(B, nil, nil) end)
+			local shown = last(control, Event.SHOW, B)
+			check('the Captain gets the terminal with the treasury and the roster',
+				ok and shown and #shown.desks == 1 and shown.desks[1].balance == 0
+					and shown.desks[1].bankAuth == true and #shown.desks[1].employees == 3)
+			local detRow
+			for _, row in ipairs(shown and shown.desks[1].employees or {}) do
+				if row.citizenId == detCid then detRow = row end
+			end
+			check('and the Detective\'s file may be fired and demoted, not promoted to Captain',
+				detRow and detRow.fire and detRow.demote and not detRow.promote)
+
+			-- Recruiting: an offer, accepted.
+			ok, code = run(env, control, function() return Server.Hire(B, 'job', 'ncpd', O) end)
+			check('a candidate out of range is refused too_far', not ok and code == 'too_far', code)
+			ok, code = run(env, control, function() return Server.Hire(B, 'job', 'ncpd', D) end)
+			check('somebody already on the payroll cannot be offered a contract',
+				not ok and code == 'already_member', code)
+			ok, code = run(env, control, function() return Server.Hire(D, 'job', 'ncpd', R) end)
+			check('a Detective cannot recruit', not ok and code == 'not_boss', code)
+			ok = run(env, control, function() return Server.Hire(B, 'job', 'ncpd', R) end)
+			local offer = last(control, Event.OFFER, R)
+			check('the Captain offers the rookie a contract, which reaches only the rookie',
+				ok and offer and offer.id and offer.closed == nil and rookie.PlayerData.job.name == 'unemployed')
+			ok, code = run(env, control, function() return Server.Answer(D, offer.id, true) end)
+			check('nobody else can sign somebody\'s offer', not ok and code == 'no_offer', code)
+			ok = run(env, control, function() return Server.Answer(R, offer.id, true) end)
+			check('the rookie signs: SetJob made ncpd their job at the hire grade',
+				ok and rookie.PlayerData.job.name == 'ncpd' and rookie.PlayerData.job.grade.level == 0
+					and db.groups[rookieCid]['job:ncpd'] == 0)
+			check('and the staff bus heard the hire', staffBus[#staffBus] and staffBus[#staffBus].verb == 'hire'
+				and staffBus[#staffBus].citizenId == rookieCid)
+			ok, code = run(env, control, function() return Server.Answer(R, offer.id, true) end)
+			check('signing twice hires once', not ok and code == 'no_offer', code)
+
+			-- A veto from a job:beforeSet hook stops a promotion.
+			ok = run(env, control, function() return Server.Manage(B, 'job', 'ncpd', rookieCid, 'promote') end)
+			check('the Captain promotes the rookie through SetJob', ok and rookie.PlayerData.job.grade.level == 1)
+			local veto = OPX.Hooks.Register('job:beforeSet', function() return false end)
+			ok, code = run(env, control, function() return Server.Manage(B, 'job', 'ncpd', rookieCid, 'promote') end)
+			check('a job:beforeSet veto refuses the promotion with job.vetoed',
+				not ok and code == 'job.vetoed' and rookie.PlayerData.job.grade.level == 1, code)
+			OPX.Hooks.Remove(veto)
+			ok, code = run(env, control, function() return Server.Manage(B, 'job', 'ncpd', detCid, 'promote') end)
+			check('nobody is promoted to the boss\'s own grade (`below`)', not ok and code == 'rank', code)
+			ok, code = run(env, control, function() return Server.Manage(B, 'job', 'ncpd', bossCid, 'fire') end)
+			check('a boss cannot act on their own file', not ok and code == 'self', code)
+			ok, code = run(env, control, function() return Server.Manage(D, 'job', 'ncpd', rookieCid, 'fire') end)
+			check('a Detective cannot fire anybody', not ok and code == 'not_boss', code)
+			ok = run(env, control, function() return Server.Manage(B, 'job', 'ncpd', detCid, 'demote') end)
+			check('a demotion lands', ok and det.PlayerData.job.grade.level == 1)
+			ok = run(env, control, function() return Server.Manage(B, 'job', 'ncpd', rookieCid, 'duty') end)
+			check('the boss clocks an online employee in', ok and rookie.PlayerData.job.onDuty == true)
+			ok = run(env, control, function() return Server.Manage(B, 'job', 'ncpd', rookieCid, 'fire') end)
+			check('a firing goes through RemovePlayerFromJob: back to the default job',
+				ok and rookie.PlayerData.job.name == 'unemployed' and db.groups[rookieCid]['job:ncpd'] == nil)
+
+			-- The treasury desk.
+			ok, code = run(env, control, function() return Server.Withdraw(B, 'job', 'ncpd', 100) end)
+			check('an empty treasury refuses a withdrawal and pays nothing',
+				not ok and code == 'insufficient_funds' and boss.PlayerData.money.EDDIES == 5000, code)
+			ok = run(env, control, function() return Server.Deposit(B, 'job', 'ncpd', '2000') end)
+			check('a deposit takes the cash and fills the treasury',
+				ok and boss.PlayerData.money.EDDIES == 3000 and db.accounts['job:ncpd'] == 2000)
+			ok, code = run(env, control, function() return Server.Deposit(B, 'job', 'ncpd', 99999) end)
+			check('a deposit beyond the cash on hand is refused and nothing moves',
+				not ok and db.accounts['job:ncpd'] == 2000 and boss.PlayerData.money.EDDIES == 3000, code)
+			ok = run(env, control, function() return Server.Withdraw(B, 'job', 'ncpd', 500) end)
+			check('a withdrawal pays the boss from the treasury',
+				ok and boss.PlayerData.money.EDDIES == 3500 and db.accounts['job:ncpd'] == 1500)
+			ok, code = run(env, control, function() return Server.Deposit(D, 'job', 'ncpd', 10) end)
+			check('a grade without bankAuth cannot touch the treasury', not ok and code == 'not_boss', code)
+			db.down = true
+			ok, code = run(env, control, function() return Server.Deposit(B, 'job', 'ncpd', 300) end)
+			check('a deposit the treasury refuses gives the cash back',
+				not ok and boss.PlayerData.money.EDDIES == 3500 and db.accounts['job:ncpd'] == 1500, code)
+			db.down = false
+
+			-- Gangs too, through SetGang.
+			local jefe = staff(env, control, db, 95, 'Jefe', 'unemployed', 0, 'valentinos', 3, 0)
+			control.Stand(95, 10.0, 10.0, 0.0)
+			ok = run(env, control, function() return Server.Hire(95, 'gang', 'valentinos', R) end)
+			offer = last(control, Event.OFFER, R)
+			ok = ok and run(env, control, function() return Server.Answer(R, offer.id, true) end)
+			check('a gang boss recruits through SetGang', ok and rookie.PlayerData.gang.name == 'valentinos'
+				and contract.IsBoss(95, 'valentinos', 'gang') and jefe ~= nil)
+			ok = run(env, control, function() return Server.Hire(95, 'gang', 'valentinos', O) end)
+			check('(the outsider stays out of range)', not ok)
+
+			-- The offer lapses.
+			control.Stand(D, 10.0, 10.0, 0.0)
+			local temp = staff(env, control, db, 96, 'Temp', 'unemployed', 0, nil, nil, 0)
+			control.Stand(96, 10.0, 10.0, 0.0)
+			run(env, control, function() return Server.Hire(B, 'job', 'ncpd', 96) end)
+			control.Advance(120000)
+			Server.Sweep()
+			check('an unanswered offer lapses and its screen is closed',
+				next(Server.Offers()) == nil and (last(control, Event.OFFER, 96) or {}).closed == true
+					and temp.PlayerData.job.name == 'unemployed')
+
+			-- What a hostile client gets.
+			ok, code = run(env, control, function()
+				return Server.Act(B, { verb = 'fire', kind = 'job', key = 'ncpd', citizenId = { 'x' } })
+			end)
+			check('a citizen id that is not text is refused', not ok and code == 'no_target', code)
+			ok, code = run(env, control, function() return Server.Act(B, { verb = 'launder', kind = 'job', key = 'ncpd' }) end)
+			check('an unknown verb is refused', not ok and code == 'bad_request', code)
+			ok, code = run(env, control, function() return Server.Act(B, { verb = 'deposit', kind = 'job', key = 'ncpd', amount = -50 }) end)
+			check('a negative amount is refused', not ok and code == 'bad_amount', code)
+		end
+	end
+
+	section('business: the client builds the terminal inside its budget')
+	do
+		local env, control, why = boot('client')
+		check('the client boots with the business module', why == nil, why)
+		if why == nil then
+			local business = env.OPX.Modules.Get('business')
+			local employees = {}
+			for index = 1, 30 do
+				employees[index] = { citizenId = 'C' .. index, name = 'Employee ' .. index, grade = 0,
+					gradeName = 'Cadet', online = index % 2 == 0, promote = true, demote = false,
+					fire = true, duty = index % 2 == 0 }
+			end
+			local desk = { kind = 'job', key = 'ncpd', label = 'NCPD', level = 3, gradeName = 'Captain',
+				isBoss = true, bankAuth = true, mayHire = true, balance = 1000, max = 60, count = 40,
+				history = { { amount = 100, reason = 'seed', at = 1 } }, employees = employees }
+			control.netEvents[business.Event.SHOW]({ desks = { desk, desk } })
+			settle(control, function() return false end, 30)
+			local mine = {}
+			for _, line in ipairs(control.log.error) do
+				if line:find('business', 1, true) or line:find('thread died', 1, true) then mine[#mine + 1] = line end
+			end
+			check('two desks of thirty employees open without a raise', #mine == 0, mine[1])
+		end
+	end
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the

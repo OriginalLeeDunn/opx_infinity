@@ -134,6 +134,10 @@ shared_script "config/ripperdoc.lua"
 -- Shared: the client draws the access points and brokers it reads here, and the
 -- server re-derives every one. See modules/netrunner/module.lua.
 shared_script "config/netrunner.lua"
+-- Shared: the client draws the office terminals and filters its eye rows with
+-- the same reads the server re-runs. After `config/character.lua`, whose grade
+-- tables (`isBoss`, `bankAuth`) it reads. See modules/business/module.lua.
+shared_script "config/business.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -543,6 +547,20 @@ shared_script "modules/fuel/shared/model.lua"
 server_script "modules/fuel/server/tanks.lua"
 server_script "modules/fuel/server/main.lua"
 client_script "modules/fuel/client/main.lua"
+
+-- Business: the company / gang treasuries (`accounts` v1, which takes over the
+-- dealership's `opx77_company_accounts` table as it is) and the boss's HR
+-- terminal (`business` v1). After `character` (required: the grades, the
+-- roster, SetJob / SetGang and the cash), `menu`, `form` and `target`, all
+-- optional and all ordered above. No new permission: the distances are
+-- `Open77.players.position`, already declared.
+shared_script "modules/business/module.lua"
+shared_script "modules/business/locales.lua"
+shared_script "modules/business/shared/access.lua"
+server_script "modules/business/server/storage.lua"
+server_script "modules/business/server/accounts.lua"
+server_script "modules/business/server/main.lua"
+client_script "modules/business/client/main.lua"
 
 -- Medical services: Trauma Team, the street doc, whoever else a config names.
 -- After `downed`, whose bus opens the calls and whose `Revive` stands a patient

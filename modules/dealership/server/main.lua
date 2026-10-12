@@ -681,6 +681,33 @@ local function companyOf(source)
 	return Access.CompanyOf(job, gang)
 end
 
+--- Tells the treasury about a deposit this module has already banked.
+-- @author dop42
+--
+-- THE TREASURY'S HISTORY. With the `business` module running, the money in
+-- `opx77_company_accounts` is a treasury with a ledger and a public bus
+-- (`accounts` v1). This module keeps settling its own deposits exactly as
+-- below -- the pending row is still the token that makes a retry pay nothing
+-- twice -- and then TELLS the treasury, which files the line under the same
+-- token and raises `opx:on:accounts:changed`. After the money landed and best
+-- effort: a note that fails is a missing history line, never a wrong balance.
+-- Without the module there is no contract and nothing changes.
+-- @param kind string
+-- @param group string
+-- @param amount integer
+-- @param token string
+-- @param plate any
+local function noteBanked(kind, group, amount, token, plate)
+	local accounts = OPX.Api.Get('accounts')
+	if accounts == nil or type(accounts.Note) ~= 'function' then return end
+	local opId = (('dealer:%s'):format(tostring(token)):gsub('[^%w_:%.%-]', '-')):sub(1, 80)
+	local ok, failure = pcall(accounts.Note, kind, group, amount,
+		('dealership:sale:%s'):format(tostring(plate or '?')), opId, 'dealership')
+	if not ok then
+		Open77.log.warn('[dealership] the treasury note raised: ' .. safe(failure))
+	end
+end
+
 --- Pays a sale into a company's account, answering what actually landed.
 -- @author XEROX710
 --
@@ -731,6 +758,7 @@ local function bank(kind, group, amount, plate)
 		end
 		return false
 	end
+	noteBanked(kind, group, amount, token, owed.plate)
 	return true
 end
 
@@ -766,6 +794,7 @@ function M.SettlePending()
 				local paid = Store.SettleOwed('id', row.id)
 				if paid ~= nil and paid.ok then
 					settled = settled + 1
+					noteBanked(row.kind, row.group_key, amount, row.token, row.plate)
 					Open77.log.info(('[dealership] paid %d owed from the sale of %s into the %s ' ..
 						'account of %s'):format(amount, safe(row.plate), tostring(row.kind),
 							safe(row.group_key)))

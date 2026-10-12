@@ -52,6 +52,11 @@ M.Storage = {}
 -- BIGINT so that a bug that overdraws one is visible as a negative number rather
 -- than as a wrap to something astronomical.
 --
+-- THE TABLE BELONGS TO THE TREASURY NOW (`modules/business`, the `accounts`
+-- contract), which declares the same CREATE byte for byte and keeps its ledger
+-- beside it. The statement stays here so this module still boots with the
+-- business module disabled; two `IF NOT EXISTS` for one table are one table.
+--
 -- `opx77_company_pending` is the ledger of deposits that did not land. A sale
 -- whose deposit failed used to be a log line asking somebody to settle it by
 -- hand, and nobody reads a log line at three in the morning. Each row is one
