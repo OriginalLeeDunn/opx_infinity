@@ -11,9 +11,13 @@ OPX.Config.MODULES.downed = {
 	--              They flatline (really die) on a finishing blow WOUNDED.FINISH
 	--              allows, when the bleed-out runs out, or from anything that went
 	--              round the arbiter; from there it is the 'death' screen.
-	--   'death'    the body dies and the screen opens on the dead body, as before.
-	--              The rollback: switch this and restart, nothing else changes.
-	MODE = 'wounded',
+	--   'death'    the body dies and the screen opens on the dead body: a lethal
+	--              hit is death, straight away, with no stage in between.
+	--
+	-- SHIPS 'death' -- THE OWNER'S CALL (2026-10-13): "quand tu meurs c'est
+	-- directement dead". 'wounded' stays in the code, switched off, for a server
+	-- that wants finishing blows and carrying the wounded.
+	MODE = 'death',
 
 	WOUNDED = {
 		-- Health points a held hit leaves, and what a wounded body is kept at.

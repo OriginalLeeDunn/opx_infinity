@@ -42690,7 +42690,9 @@ do
 	if why == nil then
 		local OPX = env.OPX
 		local downedModule = OPX.Modules.Get('downed')
-		check('the shipped mode is wounded', downedModule.Settings.MODE == 'wounded')
+		check('the shipped mode is death: a lethal hit kills, no wounded stage', downedModule.Settings.MODE == 'death')
+		-- The wounded machinery below is still exercised directly: it stays in the
+		-- code for a server that switches MODE back to 'wounded'.
 		local VICTIM, SHOOTER = 91, 92
 		control.Admit(VICTIM, 'user-wounded')
 		control.Admit(SHOOTER, 'user-shooter')

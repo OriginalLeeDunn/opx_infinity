@@ -585,7 +585,8 @@ spheres on real pumps, the `drop_point` sprite on the big map.
 
 ### Down, wounded, and dead
 
-`modules/downed` + `config/downed.lua`. With `MODE = 'wounded'` (shipped) the server's
+`modules/downed` + `config/downed.lua`. `MODE = 'death'` ships: a lethal hit kills and the
+down screen opens on the dead body. With `MODE = 'wounded'` (off by default) the server's
 damage arbiter (`Open77.combat.onDamage`) holds a hit that would kill a player with a
 character loaded at `WOUNDED.HEALTH`: the player goes down **alive** -- frozen where they
 fell, regeneration off, the `WOUNDED.POSE` workspot -- and every hit they deal is refused.
@@ -593,7 +594,7 @@ They **flatline** (the dead stage, the screen as before) on a finishing blow
 `WOUNDED.FINISH` allows (players yes, NPCs and the world no, by default), when
 `BLEED_OUT_S` runs out, or from any death that went round the arbiter. A revive of a
 wounded body is a heal past the floor; GIVE UP teleports and patches instead of
-respawning the living, behind a fade (`FADE`). `MODE = 'death'` is the rollback.
+respawning the living, behind a fade (`FADE`).
 
 Contract `downed` (server): `IsDown(id)` and `List()` carry `stage` (`wounded` / `dead`),
 `Revive(id, caller, why, { health?, graceMs? })`, `SetCarried(id, caller, carried)` lifts
