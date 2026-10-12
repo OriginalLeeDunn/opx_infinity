@@ -120,6 +120,10 @@ shared_script "config/hauling.lua"
 -- draws here, and the server re-derives every one of them. Before the blips
 -- config, which pins its stations. See modules/fuel/module.lua.
 shared_script "config/fuel.lua"
+-- Shared: the client reads the desks it pins on the eye, the treatment labels and
+-- the dispatch key here; the server re-derives every bound. See
+-- modules/medical/module.lua.
+shared_script "config/medical.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -529,6 +533,19 @@ shared_script "modules/fuel/shared/model.lua"
 server_script "modules/fuel/server/tanks.lua"
 server_script "modules/fuel/server/main.lua"
 client_script "modules/fuel/client/main.lua"
+
+-- Medical services: Trauma Team, the street doc, whoever else a config names.
+-- After `downed`, whose bus opens the calls and whose `Revive` stands a patient
+-- up, and after `character`, `inventory`, `progress`, `target` and `menu`. The
+-- heal goes through `Open77.playerInteractions` (`players.interactions.control`)
+-- and the host's health (`players.stats.read` / `players.stats.apply`), all
+-- declared below already; the call pins use `ui.vanilla.map`, declared too.
+shared_script "modules/medical/module.lua"
+shared_script "modules/medical/locales.lua"
+shared_script "modules/medical/shared/model.lua"
+server_script "modules/medical/server/dispatch.lua"
+server_script "modules/medical/server/main.lua"
+client_script "modules/medical/client/main.lua"
 
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before

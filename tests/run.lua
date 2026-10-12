@@ -42310,6 +42310,221 @@ do
 	end
 end
 
+-- ── medical: Trauma Team, the street doc, and the bill ───────────────────────
+-- The services are config, the board is table arithmetic, and every treatment is
+-- judged by the server twice: before the work and when it ends.
+local function medicalConfig(env, file)
+	if file ~= 'config/medical.lua' then return end
+	local trauma = env.OPX.Config.MODULES.medical.SERVICES.trauma
+	trauma.SUBSCRIPTION.DESKS = { { LABEL = 'Test desk', X = 300.0, Y = 0.0, Z = 0.0, RADIUS = 2.0 } }
+end
+
+-- A loaded character with a job, money and a metadata table the module can write.
+local function medicalCharacter(env, control, source, citizenId, job, grade, money)
+	local player = standCharacter(env, control, source, citizenId, money)
+	local data = player.PlayerData
+	data.job = { name = job, onDuty = true, grade = { name = job, level = grade } }
+	data.jobs = { [job] = grade }
+	data.metadata = {}
+	player.Functions.GetMetaData = function(key)
+		if key == nil then return data.metadata end
+		return data.metadata[key]
+	end
+	player.Functions.SetMetaData = function(key, value) data.metadata[key] = value end
+	return player
+end
+
+section('medical: the model -- services, fees, who answers whom')
+do
+	local env, _, why = boot('server', nil, nil, medicalConfig)
+	check('the server boots with the medical module', why == nil, why)
+	if why == nil then
+		local medical = env.OPX.Modules.Get('medical')
+		local Model = medical.Model
+		local settings = Model.Settings(env.OPX.Config.MODULES.medical)
+		check('both shipped services are read: trauma and ripperdoc',
+			settings.services.trauma ~= nil and settings.services.ripperdoc ~= nil)
+		local trauma, doc = settings.services.trauma, settings.services.ripperdoc
+		local revive = trauma.treatments.revive
+		check('a platinum client pays nothing', Model.Fee(trauma, revive, trauma.subscription.tiers.platinum, false) == 0)
+		check('a gold client pays half', Model.Fee(trauma, revive, trauma.subscription.tiers.gold, false) == 1500)
+		check('a stranger TTI comes for anyway pays triple', Model.Fee(trauma, revive, nil, true) == 9000)
+		check('the street doc charges its own fee, no premium', Model.Fee(doc, doc.treatments.revive, nil, false) == 1200)
+
+		local gold, silver = trauma.subscription.tiers.gold, trauma.subscription.tiers.silver
+		check('the biomonitor calls TTI for a gold client', (Model.Answers(trauma, gold, 'biomonitor')))
+		check('but not for a silver one, who must ask', not Model.Answers(trauma, silver, 'biomonitor'))
+		local opens, off = Model.Answers(trauma, nil, 'distress')
+		check('a stranger asking for help is an off-contract call for TTI', opens and off)
+		check('and the biomonitor of a stranger calls nobody', not Model.Answers(trauma, nil, 'biomonitor'))
+		check('the street doc answers anyone who asks', (Model.Answers(doc, nil, 'distress')))
+
+		check('a tier is active until it expires',
+			Model.ActiveTier(trauma, { tier = 'gold', expiresAt = 2000 }, 1000) ~= nil
+			and Model.ActiveTier(trauma, { tier = 'gold', expiresAt = 2000 }, 2000) == nil)
+		local jobs = Model.Jobs(doc, 1)
+		check('a treatment grade raises the gate floor', jobs.ripperdoc == 1)
+
+		local shipped = Model.Problems(env.OPX.Config.MODULES.medical)
+		check('the shipped config is clean once its desk is surveyed', #shipped == 0, table.concat(shipped, ' | '))
+		local bad = Model.Problems({ SERVICES = { x = { JOBS = {}, DISPATCH = { ANSWERS = 'nobody' },
+			TREATMENTS = { a = { KIND = 'teleport' } } } } })
+		check('a broken service is named, line by line', #bad >= 3, table.concat(bad, ' | '))
+	end
+end
+
+section('medical: the board -- one call per service and body, a limit, a lapse')
+do
+	local env, _, why = boot('server', nil, nil, medicalConfig)
+	if why == nil then
+		local Dispatch = env.OPX.Modules.Get('medical').Dispatch
+		Dispatch.Reset()
+		local spec = { service = 'trauma', patient = 5, reason = 'distress', priority = 0,
+			offContract = true, ttlMs = 1000, nowMs = 0 }
+		local call, fresh = Dispatch.Open(spec)
+		local again, second = Dispatch.Open({ service = 'trauma', patient = 5, reason = 'biomonitor',
+			priority = 2, tier = 'gold', offContract = false, ttlMs = 1000, nowMs = 10 })
+		check('a second signal on the same body is the same call', fresh and not second and again == call)
+		check('and keeps the better footing', call.priority == 2 and call.offContract == false)
+		check('a responder takes it', Dispatch.Take(call.id, 9, 1, 20) ~= nil)
+		local _, full = Dispatch.Take(call.id, 10, 1, 20)
+		check('a second one is refused call_full', full == 'call_full', full)
+		check('a call somebody is on does not lapse', #Dispatch.Expire(5000) == 0)
+		Dispatch.Drop(call.id, 9)
+		check('an untaken call lapses', #Dispatch.Expire(5000) == 1 and Dispatch.Get(call.id) == nil)
+	end
+end
+
+section('medical: a call, a revive, a bill nobody could pay')
+do
+	local env, control, why = boot('server', nil, nil, medicalConfig)
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local medical = OPX.Modules.Get('medical')
+		local progress = OPX.Modules.Get('progress')
+		local Event = medical.Event
+		local MEDIC, PATIENT, STRANGER = 71, 72, 73
+		local medic = medicalCharacter(env, control, MEDIC, 'MEDC0001', 'trauma', 1, { EDDIES = 0, BANK = 0 })
+		local patient = medicalCharacter(env, control, PATIENT, 'PATI0001', 'unemployed', 0,
+			{ EDDIES = 0, BANK = 100 })
+		medicalCharacter(env, control, STRANGER, 'STRA0001', 'unemployed', 0, { EDDIES = 0, BANK = 0 })
+		control.Stand(MEDIC, 10.0, 0.0, 0.0)
+		control.Stand(PATIENT, 11.0, 0.0, 0.0)
+		control.Stand(STRANGER, 11.0, 1.0, 0.0)
+		-- The wall clock a contract expires on; the host stub has only the monotonic one.
+		env.Open77.time.unix = function() return 1760000000 end
+
+		-- The downed contract and the bag, faked: what is down, what was revived.
+		local isDown, revived, bag, removed = { [PATIENT] = true }, {}, { maxdoc = 2 }, {}
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if name == 'downed' then
+				return {
+					IsDown = function(id) return { ok = true, value = { down = isDown[id] == true } } end,
+					Revive = function(id, caller, reason, options)
+						revived[#revived + 1] = { id = id, caller = caller, options = options }
+						isDown[id] = nil
+						return { ok = true, value = true }
+					end,
+				}
+			end
+			if name == 'inventory' then
+				return {
+					GetItemCount = function(_, item) return { ok = true, value = bag[item] or 0 } end,
+					RemoveItem = function(_, item, count)
+						bag[item] = (bag[item] or 0) - count
+						removed[#removed + 1] = { item = item, count = count }
+						return { ok = true }
+					end,
+				}
+			end
+			return realGet(name, minimum)
+		end
+
+		-- The patient asks for help.
+		medical.Server.OnDownedChanged(PATIENT, { citizenId = 'PATI0001', down = true, waiting = true })
+		control.Pump(4)
+		local alert = fuelAnswer(control, Event.ALERT, MEDIC)
+		check('the on-duty TTI medic is alerted', alert ~= nil and alert.service == 'trauma', alert and alert.service)
+		check('as an off-contract call: the patient holds no contract', alert ~= nil and alert.offContract == true)
+		check('nobody without the job is alerted', fuelAnswer(control, Event.ALERT, STRANGER) == nil)
+
+		-- A stranger cannot take it.
+		medical.Server.OnTake(STRANGER, { callId = alert.id })
+		local refused = fuelAnswer(control, Event.ANSWER, STRANGER)
+		check('a stranger taking a call is refused not_member', refused and refused.code == 'not_member')
+
+		medical.Server.OnTake(MEDIC, { callId = alert.id })
+		check('the medic takes the call and is handed a waypoint',
+			fuelAnswer(control, Event.WAYPOINT, MEDIC) ~= nil)
+
+		-- Too far: refused before anything starts.
+		control.Stand(MEDIC, 60.0, 0.0, 0.0)
+		medical.Server.OnTreat(MEDIC, { target = PATIENT, service = 'trauma', treatment = 'revive' })
+		local far = fuelAnswer(control, Event.ANSWER, MEDIC)
+		check('a revive from 50 m is refused too_far', far and far.code == 'too_far', far and far.code)
+		control.Stand(MEDIC, 10.0, 0.0, 0.0)
+
+		medical.Server.OnTreat(MEDIC, { target = PATIENT, service = 'trauma', treatment = 'revive' })
+		local bar = fuelAnswer(control, progress.Event.START, MEDIC)
+		check('at the body the server puts up the revive bar, for the configured length',
+			bar ~= nil and bar.durationMs == 10000, bar and bar.durationMs)
+		check('nothing is taken from the bag before the work', #removed == 0)
+		for _ = 1, 21 do control.Advance(500); control.Pump(1) end
+		env.source = MEDIC
+		control.netEvents[progress.Event.REPORT](bar.id, 'finished')
+		env.source = nil
+		control.Pump(4)
+
+		check('the patient is revived through the downed contract, with TTI\'s own share',
+			#revived == 1 and revived[1].caller == 'medical' and revived[1].options.health == 0.6,
+			#revived)
+		check('one MaxDoc left the medic\'s bag', bag.maxdoc == 1)
+		local money = patient.PlayerData.money
+		check('a stranger who cannot pay 9000 keeps their 100', money.BANK == 100, money.BANK)
+		local record = patient.PlayerData.metadata.medical
+		check('and owes TTI the whole bill', type(record) == 'table' and record.debt and record.debt.trauma == 9000)
+		check('the medic is paid', medic.PlayerData.money.BANK == 600, medic.PlayerData.money.BANK)
+		check('and the call is closed', medical.Dispatch.Of('trauma', PATIENT) == nil)
+
+		-- The debt stands between the patient and a new contract.
+		control.Stand(PATIENT, 300.0, 0.0, 0.0)
+		control.Advance(2000)
+		medical.Server.OnSubscribe(PATIENT, { service = 'trauma', desk = 1, tier = 'gold' })
+		local blocked = fuelAnswer(control, Event.ANSWER, PATIENT)
+		check('a debtor cannot sign a new contract', blocked and blocked.code == 'debt_outstanding',
+			blocked and blocked.code)
+
+		-- Settled, and signed.
+		money.BANK = 20000
+		control.Advance(2000)
+		medical.Server.OnSubscribe(PATIENT, { service = 'trauma', desk = 1, payDebt = true })
+		record = patient.PlayerData.metadata.medical
+		check('the desk settles the bill', money.BANK == 11000 and record.debt.trauma == nil, money.BANK)
+		control.Advance(2000)
+		medical.Server.OnSubscribe(PATIENT, { service = 'trauma', desk = 1, tier = 'gold' })
+		local signed = fuelAnswer(control, Event.ANSWER, PATIENT)
+		check('and sells a gold contract', signed and signed.code == 'subscribed' and money.BANK == 3500,
+			money.BANK)
+		record = patient.PlayerData.metadata.medical
+		check('written to the character with an expiry',
+			record.subs and record.subs.trauma and record.subs.trauma.tier == 'gold')
+
+		-- Now the biomonitor calls on its own, on contract.
+		isDown[PATIENT] = true
+		medical.Server.OnDownedChanged(PATIENT, { citizenId = 'PATI0001', down = true, waiting = false })
+		control.Pump(4)
+		local call = medical.Dispatch.Of('trauma', PATIENT)
+		check('a gold client flatlining opens a TTI call without asking',
+			call ~= nil and call.reason == 'biomonitor' and call.offContract == false and call.priority == 2)
+		check('while the street doc, who has no contract, waits for a distress signal',
+			medical.Dispatch.Of('ripperdoc', PATIENT) == nil)
+		medical.Server.OnDownedChanged(PATIENT, { citizenId = 'PATI0001', down = false })
+		check('a patient up by any other means closes the call', medical.Dispatch.Of('trauma', PATIENT) == nil)
+	end
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the

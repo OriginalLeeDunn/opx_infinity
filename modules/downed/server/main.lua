@@ -348,15 +348,18 @@ local function nearestHospital(origin)
 end
 
 -- Revives a downed player where the body lies: the one path every revive takes.
-local function reviveNow(playerId, why)
+-- `options` may carry the caller's own `health` share and `graceMs`, bounded the
+-- same way as REVIVE; what it leaves out comes from REVIVE.
+local function reviveNow(playerId, why, options)
 	if not isDead(playerId) then return false, 'not_down' end
 	local admitted, code = admit(playerId)
 	if not admitted then return false, code end
 
 	local revive = type(M.Settings.REVIVE) == 'table' and M.Settings.REVIVE or {}
+	options = type(options) == 'table' and options or {}
 	local ok, reason = Open77.players.revive(playerId, {
-		health = clamp(revive.HEALTH, 0.01, 1.0, 0.35),
-		graceMs = math.floor(clamp(revive.GRACE_MS, 0, 60000, 3000)),
+		health = clamp(options.health or revive.HEALTH, 0.01, 1.0, 0.35),
+		graceMs = math.floor(clamp(options.graceMs or revive.GRACE_MS, 0, 60000, 3000)),
 	})
 	if not ok then
 		audit('downed.revive', playerId, false, why .. ': ' .. tostring(reason))
@@ -401,6 +404,14 @@ local function onWait()
 		record.waiting = true
 		record.waitingSinceMs = OPX.Now()
 		audit('downed.wait', playerId, true, nameOf(playerId))
+		-- THE DISTRESS SIGNAL IS PUBLIC. It used to stop at this record, so a
+		-- player asking for help reached nobody: `medical` hears it here and turns
+		-- it into a call on the board of every service that answers them.
+		OPX.Publish(EVENT_CHANGED, playerId, {
+			citizenId = record.citizenId,
+			down = true,
+			waiting = true,
+		})
 	end
 	pushState(playerId)
 end
@@ -493,8 +504,10 @@ end
 -- @param playerId integer
 -- @param caller string the name the caller is audited under
 -- @param why string|nil a short reason, audited after the caller's name
+-- @param options table|nil { health = 0.01..1, graceMs = 0..60000 }, a medical
+--   service's own share; REVIVE fills what it leaves out
 -- @return Result
-local function revive(playerId, caller, why)
+local function revive(playerId, caller, why, options)
 	local by = callerOf(caller)
 	if by == nil then return Result.Err('invalid_caller') end
 	if not mayRevive(by) then
@@ -507,7 +520,7 @@ local function revive(playerId, caller, why)
 	if type(why) == 'string' and why ~= '' then
 		said = by .. ': ' .. (OPX.Text.Clean(why, 64, '...') or '-')
 	end
-	local ok, reason = reviveNow(target, said)
+	local ok, reason = reviveNow(target, said, options)
 	if not ok then return Result.Err(reason) end
 	return Result.Ok(true)
 end
