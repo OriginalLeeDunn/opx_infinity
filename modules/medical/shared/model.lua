@@ -182,6 +182,9 @@ local function service(key, raw, globals)
 		jobs = type(raw.JOBS) == 'table' and raw.JOBS or nil,
 		onDuty = raw.ON_DUTY == true,
 		blipSprite = text(blip.SPRITE, globals.blipSprite),
+		blipIcon = Model.Icon(blip.ICON) or globals.blipIcon,
+		blipSize = whole(blip.SIZE, 16, 128, globals.blipSize),
+		blipColor = Model.Color(blip.COLOR) or globals.blipColor,
 		dispatch = {
 			enabled = dispatch.ENABLED ~= false,
 			answers = ANSWERS[dispatch.ANSWERS] and dispatch.ANSWERS or 'anyone',
@@ -215,6 +218,23 @@ local function service(key, raw, globals)
 	}
 end
 
+--- An icon name as the declared asset path in `web/blips/`, or nil.
+-- @author dop42
+function Model.Icon(value)
+	if type(value) ~= 'string' or value == '' then return nil end
+	local file = value:find('%.svg$') and value or (value .. '.svg')
+	if not file:find('/', 1, true) then file = 'web/blips/' .. file end
+	return file:match('^[%w_%-/]+%.svg$') and file or nil
+end
+
+--- A '#RRGGBB' or '#RRGGBBAA' colour, or nil.
+-- @author dop42
+function Model.Color(value)
+	if type(value) ~= 'string' then return nil end
+	if value:match('^#%x%x%x%x%x%x$') or value:match('^#%x%x%x%x%x%x%x%x$') then return value end
+	return nil
+end
+
 --- The whole config, normalised: globals and every usable service.
 -- @author dop42
 -- @param raw table|nil OPX.Config.MODULES.medical
@@ -230,6 +250,9 @@ function Model.Settings(raw)
 		alertMs = whole(raw.ALERT_MS, 1000, 60000, 8000),
 		metadataKey = text(raw.METADATA_KEY, 'medical'),
 		blipSprite = text(blip.SPRITE, 'objective'),
+		blipIcon = Model.Icon(blip.ICON),
+		blipSize = whole(blip.SIZE, 16, 128, 48),
+		blipColor = Model.Color(blip.COLOR),
 		blipWalls = blip.WALLS ~= false,
 		services = {},
 		serviceOrder = {},

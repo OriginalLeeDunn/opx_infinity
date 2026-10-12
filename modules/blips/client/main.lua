@@ -25,6 +25,9 @@ local Runtime = M.Runtime
 -- What this module calls itself in a log line and in an `OPX.Note`.
 local TAG = 'blips'
 
+-- Categories whose icon a create refused, said once each rather than per pin.
+local iconRefused = {}
+
 -- Blip ids, keyed by the stable point id. THE VALUES ARE 64-BIT DECIMAL STRINGS
 -- AND ARE NEVER PUT THROUGH `tonumber`: the platform guide says so in as many
 -- words, and a 64-bit handle through a double comes back a different handle.
@@ -135,7 +138,7 @@ local function category(name, raw, problems)
 		if instead ~= nil then
 			problems[#problems + 1] = ('%s: %s is refused by the engine ' ..
 				'(`unsupported_option:%s`) and cannot be honoured -- a mappin has no ' ..
-				'such field. Use %s instead; a Cyberpunk sprite carries its own colour.')
+				'such field. Use %s instead.')
 				:format(name, tostring(key), tostring(key):lower(), instead)
 		end
 	end
@@ -168,12 +171,50 @@ local function category(name, raw, problems)
 		return nil
 	end
 
+	-- THE ICON AND ITS COLOUR, on top of the sprite and never instead of it: the
+	-- sprite still decides where the pin is visible (a HUD-only profile does not
+	-- reach the world map because it wears an SVG) and is what a client without
+	-- the native SVG adapter draws. A fault here costs the icon, not the pin.
+	local icon, size, color = nil, M.DEFAULT_ICON, nil
+	if raw.ICON ~= nil and raw.ICON ~= false and raw.ICON ~= '' then
+		local file = type(raw.ICON) == 'string' and raw.ICON or nil
+		if file ~= nil and not file:find('%.svg$') then file = file .. '.svg' end
+		if file ~= nil and not file:find('/', 1, true) then file = M.ICON_DIR .. file end
+		if file == nil or not file:match('^[%w_%-/]+%.svg$') then
+			problems[#problems + 1] = ('%s: ICON must be the name of an .svg in %s, e.g. ' ..
+				"'garage'; the native sprite is drawn instead"):format(name, M.ICON_DIR)
+		else
+			icon = file
+		end
+	end
+	if raw.SIZE ~= nil then
+		local wanted = tonumber(raw.SIZE)
+		if wanted == nil or wanted ~= wanted or wanted < M.MIN_ICON or wanted > M.MAX_ICON then
+			problems[#problems + 1] = ('%s: SIZE must be %d to %d native units; using %d')
+				:format(name, M.MIN_ICON, M.MAX_ICON, M.DEFAULT_ICON)
+		else
+			size = math.floor(wanted)
+		end
+	end
+	if raw.COLOR ~= nil and raw.COLOR ~= false then
+		if type(raw.COLOR) == 'string' and (raw.COLOR:match('^#%x%x%x%x%x%x$')
+			or raw.COLOR:match('^#%x%x%x%x%x%x%x%x$')) then
+			color = raw.COLOR
+		else
+			problems[#problems + 1] = ("%s: COLOR must be '#RRGGBB' or '#RRGGBBAA', or false " ..
+				'for the icon\'s own colours'):format(name)
+		end
+	end
+
 	return {
 		name = name,
 		sprite = sprite,
 		label = (type(label) == 'string' and label ~= '') and label or name,
 		range = range,
 		walls = raw.WALLS == true,
+		icon = icon,
+		size = size,
+		color = color,
 	}
 end
 
@@ -616,7 +657,35 @@ local function create(entry, block)
 	-- then be indistinguishable from a gate that was set and cleared.
 	if block.range > 0 then options.range = block.range end
 
+	-- THE SVG ADAPTER IS ASKED FOR, NOT ASSUMED. It is a native client piece a
+	-- Lua update cannot bring, and the platform's own test for it is whether
+	-- `setColor` exists. A client without it gets the sprite alone, which is
+	-- exactly what every pin was before this.
+	local styled = (block.icon ~= nil or block.color ~= nil) and type(native.setColor) == 'function'
+	if styled then
+		if block.icon ~= nil then options.icon = { asset = block.icon, size = block.size } end
+		if block.color ~= nil then options.color = block.color end
+	end
+
 	local read, id, reason = pcall(native.create, options)
+	if read and styled and (type(id) ~= 'string' or id == '') then
+		-- An icon this client cannot draw -- too complex, undeclared, an adapter
+		-- missing after all -- is a pin without its icon, never a missing pin.
+		local why = tostring(reason or '')
+		local iconFault = false
+		for _, fragment in ipairs(M.ICON_REFUSALS) do
+			if why:find(fragment, 1, true) then iconFault = true end
+		end
+		if iconFault then
+			if not iconRefused[block.name] then
+				iconRefused[block.name] = true
+				OPX.Note(TAG, ('the %s icon was refused (%s): the native sprite is drawn instead')
+					:format(block.name, why))
+			end
+			options.icon, options.color = nil, nil
+			read, id, reason = pcall(native.create, options)
+		end
+	end
 	if not read then return nil, tostring(id) end
 	if type(id) ~= 'string' or id == '' then return nil, tostring(reason or 'refused') end
 	return id, nil

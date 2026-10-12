@@ -46,8 +46,10 @@ OPX.Config.MODULES.medical = {
 	DISPATCH_KEY = { ID = 'opx.medical.dispatch', NAME = 'medical.key.dispatch', DEFAULT = 'F6' },
 
 	-- What a call looks like on a responder's map. SPRITE is a blips alias (see
-	-- `config/blips.lua` for the vocabulary); a service may carry its own.
-	BLIP = { SPRITE = 'objective', WALLS = true },
+	-- `config/blips.lua` for the vocabulary) and stays the fallback; ICON is an
+	-- .svg in `web/blips/` and COLOR its '#RRGGBB' tint, drawn by clients with
+	-- the native SVG adapter. A service may carry its own of each.
+	BLIP = { SPRITE = 'objective', WALLS = true, ICON = 'medical', SIZE = 48, COLOR = '#FF3B47' },
 
 	-- The toast a new call raises on a responder's screen, in milliseconds.
 	ALERT_MS = 8000,
@@ -66,7 +68,7 @@ OPX.Config.MODULES.medical = {
 			SHORT = 'TTI',
 			JOBS = { trauma = 0 },
 			ON_DUTY = true,
-			BLIP = { SPRITE = 'objective' },
+			BLIP = { SPRITE = 'objective', ICON = 'trauma', COLOR = '#FF3B47' },
 
 			DISPATCH = {
 				ENABLED = true,
@@ -176,6 +178,7 @@ OPX.Config.MODULES.medical = {
 			SHORT = 'DOC',
 			JOBS = { ripperdoc = 0 },
 			ON_DUTY = true,
+			BLIP = { SPRITE = 'objective', ICON = 'ripperdoc', COLOR = '#5EF6FF' },
 
 			DISPATCH = {
 				ENABLED = true,

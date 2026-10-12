@@ -159,12 +159,26 @@ local function onAlert(call)
 	local native = Open77.blips
 	if blips[call.id] == nil and call.x and type(native) == 'table' and type(native.create) == 'function' then
 		local svc = config().services[call.service]
-		local read, id = pcall(native.create, {
+		local options = {
 			position = { x = call.x, y = call.y, z = call.z },
 			sprite = svc and svc.blipSprite or config().blipSprite,
 			title = callLabel(call), description = locale('medical.alert.title'),
 			active = true, visibleThroughWalls = config().blipWalls,
-		})
+		}
+		-- The service's icon and tint where the client has the native SVG adapter
+		-- (its test: `setColor` exists); the sprite alone everywhere else, and
+		-- again if this client refuses the icon.
+		local icon = svc and svc.blipIcon or config().blipIcon
+		local color = svc and svc.blipColor or config().blipColor
+		if type(native.setColor) == 'function' then
+			if icon then options.icon = { asset = icon, size = svc and svc.blipSize or 48 } end
+			if color then options.color = color end
+		end
+		local read, id = pcall(native.create, options)
+		if (not read or type(id) ~= 'string' or id == '') and (options.icon or options.color) then
+			options.icon, options.color = nil, nil
+			read, id = pcall(native.create, options)
+		end
 		if read and type(id) == 'string' and id ~= '' then blips[call.id] = id end
 	end
 end

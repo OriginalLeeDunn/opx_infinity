@@ -71,29 +71,29 @@
 -- answer is in the server journal rather than in somebody's memory.
 --
 -- ============================================================================
--- COLOUR: THE ENGINE REFUSES IT BY NAME, AND THE SPRITE IS THE COLOUR
+-- COLOUR AND ICONS: THE NATIVE SVG ADAPTER
 -- ============================================================================
 --
--- There is no colour setting below and there cannot be one. `Open77.blips`
--- REFUSES `color` and `colour` by name, with their own reason token
--- (`unsupported_option:color`), on `create` and `update` alike. So does
--- `alpha`, `opacity`, `scale`, `shortRange`, `category` and `kind = "radius"`.
+-- This section used to say there could be no colour here: `Open77.blips`
+-- refused `color` by name (`unsupported_option:color`), because a vanilla
+-- mappin carries no colour field and its look lives on a UI profile every pin
+-- of the same sprite shares. That was true of the platform this was written
+-- against and is no longer the whole story.
 --
--- It is not an oversight. A Cyberpunk mappin (`gamemappinsMappinData`) carries
--- seven fields and not one is a colour; opacity and scale live on the UI
--- RUNTIME PROFILE, which is resolved FROM THE SPRITE and shared by every pin
--- using it -- so a per-blip colour would restyle every other resource's blips
--- of the same sprite at the same time.
+-- THE NATIVE SVG ADAPTER (an OPEN//77 client piece, experimental) draws a
+-- declared SVG in place of the sprite's graphic as native Ink geometry, and
+-- takes a per-blip `#RRGGBB` / `#RRGGBBAA` -- for THIS pin only, nobody else's.
+-- The mappin underneath is still the vanilla one: selection, tooltips, tracking
+-- and the visibility the SPRITE's profile gives all stay. So every category
+-- below carries both: SPRITE for where it shows and for the clients without
+-- the adapter, ICON + COLOR for what it looks like on the ones with it.
 --
--- WHAT IS PER-BLIP IS THE SPRITE, AND CYBERPUNK'S SPRITES CARRY THEIR OWN
--- COLOURS. Picking `danger` over `objective` is how a blip becomes red here.
--- So `SPRITE` below IS the colour setting, and it is named for what it does.
---
--- An operator who writes `COLOUR = '#ff0000'` anyway gets a BOOT WARNING naming
--- the category and saying this, rather than a key that is quietly dropped. The
--- platform's own guide makes the argument for that better than this comment
--- can: "A property accepted and silently discarded is worse than one that is
--- missing, because nothing in the resource can tell the difference."
+-- WHICH CLIENT HAS IT is asked, not assumed: the module sends an icon only
+-- where `Open77.blips.setColor` exists (the platform's own test for the
+-- adapter), and a create refused for the icon is made again with the sprite
+-- alone and noted once. `COLOUR` (British), `ALPHA`, `OPACITY` and `SCALE` are
+-- still not fields and are still refused at boot, each pointing at the one
+-- that does the job: COLOR, or SIZE.
 --
 -- ============================================================================
 -- SPRITES, AND WHICH ONES ARE ACTUALLY ON THE BIG MAP
@@ -181,9 +181,23 @@ OPX.Config.MODULES.blips = {
 	-- and the cap instead of a silent refusal on the 129th create.
 	MAX = 128,
 
-	-- Each category: whether it is drawn, which vanilla sprite it wears (which,
-	-- per the long note above, IS its colour), the words that name it, and how
-	-- far away it stays visible.
+	-- Each category: whether it is drawn, which vanilla sprite it wears, the
+	-- words that name it, how far away it stays visible -- and, since the native
+	-- SVG adapter, a real icon and its colour.
+	--
+	-- ICON is the name of an .svg in `web/blips/` ('garage' or 'garage.svg'; the
+	-- manifest declares the folder with `files`). SIZE is 16..128 native Ink
+	-- units (48 by default). COLOR is '#RRGGBB' or '#RRGGBBAA' and recolours the
+	-- whole icon; false keeps the SVG's own colours. The shipped icons are Lucide
+	-- line icons (`web/blips/LICENSE-LUCIDE.txt`), drawn white and tinted here.
+	--
+	-- THE SPRITE STAYS, AND STILL MATTERS. It decides where the pin is visible
+	-- (an icon does not lift a HUD-only profile onto the world map) and it is what
+	-- a client without the SVG adapter draws, so keep a map-capable one. An icon
+	-- the client refuses -- too complex, undeclared -- is logged once and the pin
+	-- falls back to the sprite; it is never lost. To add an icon: drop the .svg in
+	-- `ui/public/blips/` (the build copies it to `web/blips/`), keep every stroke
+	-- inside its viewBox, no text, gradients, masks or filters.
 	--
 	-- RANGE is metres, 0..4000, and 0 MEANS NO GATE -- always visible. It is
 	-- Open77's own doing rather than an engine field: it measures the distance
@@ -204,6 +218,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Garage',
 			RANGE = 0,
 			WALLS = false,
+			ICON = 'garage',
+			SIZE = 48,
+			COLOR = '#5EF6FF',
 		},
 
 		-- Where cars are bought. `objective` rather than `vehicle` so a dealer is
@@ -215,6 +232,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Vehicle Dealer',
 			RANGE = 0,
 			WALLS = false,
+			ICON = 'dealer',
+			SIZE = 48,
+			COLOR = '#FFD400',
 		},
 
 		-- Clothing shops. `clothes` is the `ServicePoint*` variant for exactly
@@ -231,6 +251,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Clothing Shop',
 			RANGE = 400,
 			WALLS = false,
+			ICON = 'clothes',
+			SIZE = 48,
+			COLOR = '#FF6AD5',
 		},
 
 		-- The shortcuts to places you cannot walk to. `fast_travel` is the
@@ -247,6 +270,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Shortcut',
 			RANGE = 0,
 			WALLS = false,
+			ICON = 'shortcut',
+			SIZE = 48,
+			COLOR = '#B38CFF',
 		},
 
 		-- Job sites: every gunsmith BENCH, every hauling yard and every hauling
@@ -258,6 +284,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Job Site',
 			RANGE = 0,
 			WALLS = false,
+			ICON = 'job',
+			SIZE = 48,
+			COLOR = '#FF9F1C',
 		},
 
 		-- Gas stations (`modules/fuel`), one pin per surveyed station: ox's
@@ -273,6 +302,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Gas Station',
 			RANGE = 0,
 			WALLS = false,
+			ICON = 'fuel',
+			SIZE = 48,
+			COLOR = '#FFE14D',
 		},
 	},
 }

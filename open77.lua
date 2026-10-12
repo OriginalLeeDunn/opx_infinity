@@ -772,6 +772,10 @@ loadscreen "web/loading.html"
 web_ui_page "web/index.html"
 web_ui_auto_create false
 web_files { "web/**" }
+-- The blip icons, as plain client files: `Open77.blips` takes an SVG only from a
+-- path the manifest names in `files`, never a web file or a URL. See
+-- `config/blips.lua` (ICON) and `web/blips/LICENSE-LUCIDE.txt`.
+files { "web/blips/*.svg" }
 
 permissions {
   "network.events",

@@ -90,9 +90,27 @@ M.QUOTA = 128
 -- handed back a perfectly good blip that was not red and never said so. This
 -- table is that refusal moved one level earlier, to boot, where it can name the
 -- file the operator has open.
+--
+-- COLOR LEFT THIS LIST with the native SVG adapter: a blip now takes its own
+-- `#RRGGBB` / `#RRGGBBAA` (see `ICON` and `COLOR` in `config/blips.lua`). The
+-- British spelling, an alpha or a scale on its own are still not fields, and
+-- each is pointed at the one that does the job.
 M.REFUSED_KEYS = {
-	COLOR = 'SPRITE', COLOUR = 'SPRITE',
-	ALPHA = 'SPRITE', OPACITY = 'SPRITE', SCALE = 'SPRITE',
+	COLOUR = 'COLOR',
+	ALPHA = 'COLOR', OPACITY = 'COLOR', SCALE = 'SIZE',
 	CATEGORY = 'SPRITE',
 	SHORTRANGE = 'RANGE', SHORT_RANGE = 'RANGE',
 }
+
+--- Where the blip icons live, as the manifest declares them (`files`). A
+--- category's ICON is a file name in here, `garage` or `garage.svg`.
+M.ICON_DIR = 'web/blips/'
+
+--- The SVG adapter's bounds on an icon's size, in native Ink units.
+M.MIN_ICON, M.MAX_ICON, M.DEFAULT_ICON = 16, 128, 48
+
+--- The refusals that mean "this client cannot draw that icon", after which the
+--- pin is created again with its native sprite alone rather than not at all.
+M.ICON_REFUSALS = { 'svg_', 'blip_icon', 'asset_not_declared', 'native_unavailable',
+	'blip_visual_budget', 'invalid_icon', 'invalid_color', 'unsupported_option:color',
+	'unsupported_option:icon' }

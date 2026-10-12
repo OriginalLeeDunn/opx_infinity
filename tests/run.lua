@@ -31315,7 +31315,7 @@ do
 		for index = 1, #problems do
 			local line = problems[index]
 			if line:find('shops', 1, true) and line:find('COLOUR', 1, true)
-				and line:find('SPRITE', 1, true) then saidColour = true end
+				and line:find('COLOR', 1, true) then saidColour = true end
 			if line:find('garages', 1, true) and line:find('RANGE', 1, true) then
 				saidRange = true
 			end
@@ -45019,6 +45019,104 @@ do
 	check('a client booting with every network surveyed keeps every resume under 4,500', worst < 4500, worst)
 	local contract = env.OPX.Api.Get('netrunner')
 	check('and publishes its half of the contract', contract ~= nil and contract.State() == nil)
+end
+
+-- ── blips: real icons where the client has the native SVG adapter ────────────
+section('blips: an SVG icon and a colour where the adapter is, the sprite where it is not')
+do
+	local env, control, why = boot('client')
+	check('the client boots for the icons', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local blips = OPX.Modules.Get('blips')
+		local garages = OPX.Modules.Get('garages')
+
+		local shipped = blips.Runtime.Categories()
+		check('every shipped category carries an icon in web/blips/ and a colour',
+			shipped.garages.icon == 'web/blips/garage.svg' and shipped.garages.size == 48
+				and shipped.garages.color == '#5EF6FF' and shipped.fuel.icon == 'web/blips/fuel.svg')
+		for name, block in pairs(shipped) do
+			local file = io.open(block.icon, 'r')
+			check(('the %s icon exists on disk, under the manifest\'s files glob'):format(name), file ~= nil,
+				block.icon)
+			if file then file:close() end
+		end
+
+		local function pinned(label)
+			for _, options in pairs(control.blips.byId) do
+				if options.title == label then return options end
+			end
+			return nil
+		end
+		garages.Runtime.Spots = function()
+			return { g1 = { key = 'g1', label = 'Plain', x = 10.0, y = 20.0, z = 30.0 } }
+		end
+
+		-- A client WITHOUT the adapter (no setColor): the sprite alone, as before.
+		blips.Runtime.Sync()
+		control.Pump(50)
+		local plain = pinned('Plain')
+		check('without the adapter the pin is the sprite alone',
+			plain ~= nil and plain.icon == nil and plain.color == nil and plain.sprite == 'vehicle')
+
+		-- A client WITH it: the icon and the colour ride the create.
+		local native = env.Open77.blips
+		local realCreate = native.create
+		local styledSeen = {}
+		native.setColor = function() return true end
+		native.create = function(options)
+			if options.icon ~= nil or options.color ~= nil then
+				styledSeen[#styledSeen + 1] = { icon = options.icon, color = options.color }
+				local copy = {}
+				for key, value in pairs(options) do copy[key] = value end
+				copy.icon, copy.color = nil, nil
+				return realCreate(copy)
+			end
+			return realCreate(options)
+		end
+		garages.Runtime.Spots = function()
+			return { g2 = { key = 'g2', label = 'Styled', x = 11.0, y = 20.0, z = 30.0 } }
+		end
+		blips.Runtime.Sync()
+		control.Pump(50)
+		local styled
+		for _, seen in ipairs(styledSeen) do
+			if seen.icon and seen.icon.asset == 'web/blips/garage.svg' then styled = seen end
+		end
+		check('with the adapter the garage pin asks for its SVG at its size, tinted',
+			styled ~= nil and styled.icon.size == 48 and styled.color == '#5EF6FF')
+		check('and the pin exists', pinned('Styled') ~= nil)
+
+		-- An icon this client refuses: the pin is made again with the sprite.
+		native.create = function(options)
+			if options.icon ~= nil then return nil, 'svg_polygon_limit' end
+			return realCreate(options)
+		end
+		garages.Runtime.Spots = function()
+			return { g3 = { key = 'g3', label = 'Refused', x = 12.0, y = 20.0, z = 30.0 } }
+		end
+		blips.Runtime.Sync()
+		control.Pump(50)
+		local fallback = pinned('Refused')
+		check('an icon the client refuses costs the icon, never the pin',
+			fallback ~= nil and fallback.sprite == 'vehicle' and fallback.icon == nil)
+		native.create, native.setColor = realCreate, nil
+
+		-- A bad ICON, SIZE or COLOR is named at boot and costs only the styling.
+		OPX.Config.MODULES.blips.CATEGORIES.garages.ICON = 'https://example.com/x.svg'
+		OPX.Config.MODULES.blips.CATEGORIES.garages.SIZE = 400
+		OPX.Config.MODULES.blips.CATEGORIES.garages.COLOR = 'red'
+		local categories, problems = blips.Runtime.Categories()
+		local said = 0
+		for _, line in ipairs(problems) do
+			if line:find('garages', 1, true) and (line:find('ICON', 1, true) or line:find('SIZE', 1, true)
+				or line:find('COLOR', 1, true)) then said = said + 1 end
+		end
+		check('a bad ICON, SIZE and COLOR are each named with their category', said == 3,
+			table.concat(problems, ' / '))
+		check('and the category still draws, with its sprite',
+			categories.garages ~= nil and categories.garages.icon == nil and categories.garages.color == nil)
+	end
 end
 
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
