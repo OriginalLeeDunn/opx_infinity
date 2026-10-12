@@ -41237,6 +41237,14 @@ do
 		local growing = {}
 		for _, name in ipairs(names) do
 			local delta = grows(name) - baseline
+			-- MEASURED TWICE BEFORE IT IS A FINDING. A one-time ~255 KB allocation
+			-- lands at a fixed point of the battery's clock whatever door is being
+			-- measured then (measured with a do-nothing door: it appears there too
+			-- once the battery is long enough -- the interpreter's string table
+			-- doubling is the likely suspect). Adding a module's doors moved it
+			-- onto a real door. A leak grows again on the second pass; a one-time
+			-- resize does not.
+			if delta > 48 then delta = math.min(delta, grows(name) - baseline) end
 			if delta > 48 then growing[#growing + 1] = ('%s +%.0f KB'):format(name, delta) end
 		end
 		check('no door keeps more state the more distinct payloads it is sent', #growing == 0,
@@ -46173,6 +46181,346 @@ do
 		end, 240)
 		check('a client booting with two surveyed venues keeps every resume under 10,000', worst < 10000, worst)
 		local _ = control
+	end
+end
+
+-- ── taxi ─────────────────────────────────────────────────────────────────────
+-- `modules/taxi`: the pure model on its own numbers, then the server booted with
+-- surveyed street-fare points patched in after `config/taxi.lua` loads, a seat
+-- ledger fake (`Open77.vehicles.getPlayerSeat`) the tests move people through,
+-- and fakes of the soft `invoices`, `accounts` and `weather` contracts.
+local function taxiConfig(env, file)
+	if file ~= 'config/taxi.lua' then return end
+	local npc = env.OPX.Config.MODULES.taxi.COMPANIES.delamain.NPC_FARES
+	npc.PICKUPS = { { LABEL = 'Test pickup', X = 1000.0, Y = 0.0, Z = 0.0 } }
+	npc.DESTINATIONS = { { LABEL = 'Test drop-off', X = 3000.0, Y = 0.0, Z = 0.0 } }
+	npc.HOURLY_CAP = 100
+end
+
+section('taxi: the model -- fares, the night surge, the meter step, the street cap')
+do
+	local env, _, why = boot('server', nil, nil, taxiConfig)
+	check('the server boots with the taxi module', why == nil, why)
+	if why == nil then
+		local Model = env.OPX.Modules.Get('taxi').Model
+		local settings = Model.Settings(env.OPX.Config.MODULES.taxi)
+		check('Delamain is read; the indie example ships disabled',
+			settings.companies.delamain ~= nil and settings.companies.nccab == nil)
+		local dlmn = settings.companies.delamain
+		check('a 5 km day ride is flag fall plus distance', Model.Fare(dlmn, 5000, 12, 50) == 190,
+			Model.Fare(dlmn, 5000, 12, 50))
+		local night, surged = Model.Fare(dlmn, 5000, 23, 50)
+		check('the same ride at 23:00 pays the night rate', night == 247 and surged, night)
+		check('the night window wraps midnight', Model.IsNight(dlmn.fare.night, 2)
+			and not Model.IsNight(dlmn.fare.night, 5) and Model.IsNight(dlmn.fare.night, 22))
+		check('no clock, no surge', select(2, Model.Fare(dlmn, 5000, nil, 50)) == false)
+		check('a short hop is floored at MIN', Model.Fare(dlmn, 100, 12, 50) == 60)
+		check('a ride under MIN_RIDE_M is free', Model.Fare(dlmn, 20, 12, 50) == 0)
+		check('a huge ride is capped at MAX', Model.Fare(dlmn, 900000, 12, 50) == 4000)
+		local driver, company = Model.Split(133, 70)
+		check('a split is whole and sums to the fare', driver == 93 and company == 40, driver)
+		check('a meter step is the straight line',
+			Model.Step({ x = 0, y = 0, z = 0, atMs = 0 }, { x = 30, y = 40, z = 0, atMs = 1000 }, 75) == 50)
+		check('a teleport is clamped to what a car can do in the time',
+			Model.Step({ x = 0, y = 0, z = 0, atMs = 0 }, { x = 5000, y = 0, z = 0, atMs = 1000 }, 75) == 75)
+		check('another routing bucket adds nothing',
+			Model.Step({ x = 0, y = 0, z = 0, atMs = 0 }, { x = 10, y = 0, z = 0, bucket = 3, atMs = 1000 }, 75) == 0)
+		check('the street pay is on the straight line', Model.StreetPay(dlmn.npc, 2000) == 65)
+		local history = { { atMs = 0, amount = 60 }, { atMs = 3000000, amount = 30 } }
+		check('the hourly cap counts the last hour only',
+			Model.CapRemaining(history, 3700000, 100) == 70 and #history == 1)
+		local pickup, drop = Model.PickTrip(dlmn.npc, function() return 1 end)
+		check('a street trip is drawn from the surveyed points',
+			pickup and pickup.label == 'Test pickup' and drop and drop.label == 'Test drop-off')
+
+		local shipped = Model.Problems(env.OPX.Config.MODULES.taxi)
+		check('the shipped config is clean once its street points are surveyed', #shipped == 0,
+			table.concat(shipped, ' | '))
+		local blank = Model.Problems({ COMPANIES = { a = { JOBS = { cabbie = 0 }, FARE = { PER_KM = 1 },
+			NPC_FARES = { ENABLED = true, HOURLY_CAP = 1, PICKUPS = { { X = 0, Y = 0, Z = 0 } },
+				DESTINATIONS = { { X = 0, Y = 0, Z = 0 } } } } } })
+		check('placeholder street points are named at boot', #blank == 2, table.concat(blank, ' | '))
+		local bad = Model.Problems({ COMPANIES = { x = { JOBS = {}, VOICE = 'robot', FARE = { NIGHT = { FROM = 3 } } } } })
+		check('a broken company is named, line by line', #bad >= 4, table.concat(bad, ' | '))
+	end
+end
+
+section('taxi: a call, a seat, a meter, a fare -- direct, invoiced, refused')
+do
+	local env, control, why = boot('server', nil, nil, taxiConfig)
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local taxi = OPX.Modules.Get('taxi')
+		local Event, S = taxi.Event, taxi.Server
+		local DRIVER, CUSTOMER, STRANGER, OTHER = 81, 82, 83, 84
+		local driver = medicalCharacter(env, control, DRIVER, 'CABB0001', 'cabbie', 0, { EDDIES = 0, BANK = 0 })
+		local customer = medicalCharacter(env, control, CUSTOMER, 'CUST0001', 'unemployed', 0,
+			{ EDDIES = 0, BANK = 1000 })
+		medicalCharacter(env, control, STRANGER, 'STRA0002', 'unemployed', 0, { EDDIES = 0, BANK = 0 })
+		medicalCharacter(env, control, OTHER, 'CABB0002', 'cabbie', 0, { EDDIES = 0, BANK = 0 })
+		control.Stand(DRIVER, 0.0, 0.0, 0.0)
+		control.Stand(OTHER, 0.0, 50.0, 0.0)
+		control.Stand(CUSTOMER, 700.0, 0.0, 0.0)
+		control.Stand(STRANGER, 10.0, 0.0, 0.0)
+
+		local seats = {}
+		env.Open77.vehicles.getPlayerSeat = function(id) return seats[id] end
+		local realVehicleGet = env.Open77.vehicles.get
+		env.Open77.vehicles.get = function(id)
+			if id == 500 then return { id = 500, record = 'Vehicle.v_standard2_villefort_cortes_delamain_player' } end
+			return realVehicleGet(id)
+		end
+		local hour, deposits, invoices, useInvoices = 12, {}, {}, false
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if name == 'weather' then return { Status = function() return { hour = hour } end } end
+			if name == 'accounts' then
+				return { Deposit = function(kind, key, amount, reason, opId)
+					deposits[#deposits + 1] = { kind = kind, key = key, amount = amount, opId = opId }
+					return { ok = true, value = { balance = amount } }
+				end }
+			end
+			if name == 'invoices' and useInvoices then
+				return { Issue = function(spec)
+					invoices[#invoices + 1] = spec
+					return { ok = true, value = { id = #invoices } }
+				end }
+			end
+			return realGet(name, minimum)
+		end
+		local function told(player, needle)
+			for index = #control.notices, 1, -1 do
+				local notice = control.notices[index]
+				if notice.playerId == player and tostring(notice.message):find(needle, 1, true) then return notice end
+			end
+			return nil
+		end
+		local function drive(from, to, step)
+			local x = from
+			while x < to do
+				x = math.min(to, x + step)
+				control.Stand(DRIVER, x, 0.0, 0.0)
+				control.Advance(1000)
+				S.Sweep()
+			end
+		end
+
+		-- A cab is called.
+		S.CallCab(CUSTOMER, nil)
+		local alert = fuelAnswer(control, Event.ALERT, DRIVER)
+		check('the on-duty Delamain driver is alerted', alert ~= nil and alert.distance == 700, alert and alert.distance)
+		check('nobody without the job is', fuelAnswer(control, Event.ALERT, STRANGER) == nil)
+		check('the customer hears the AI', told(CUSTOMER, 'Welcome to Delamain') ~= nil)
+		S.CallCab(CUSTOMER, nil)
+		local twice = fuelAnswer(control, Event.ANSWER, CUSTOMER)
+		check('a second call is refused already_called', twice and twice.code == 'already_called')
+		S.CallCab(STRANGER, 'arasaka')
+		local unknown = fuelAnswer(control, Event.ANSWER, STRANGER)
+		check('a company nobody configured is refused', unknown and unknown.code == 'no_such_company')
+
+		S.OnTake(STRANGER, { callId = alert.id })
+		local refused = fuelAnswer(control, Event.ANSWER, STRANGER)
+		check('a stranger cannot take a fare', refused and refused.code == 'not_member')
+		seats[DRIVER] = { vehicleId = 500, seat = 'seat_front_left' }
+		S.OnTake(DRIVER, { callId = alert.id })
+		local routed = fuelAnswer(control, Event.WAYPOINT, DRIVER)
+		check('the driver takes it and is routed to the customer', routed ~= nil and routed.x == 700)
+		local enRoute = told(CUSTOMER, 'en route')
+		check('the customer is told the car and the ETA',
+			enRoute ~= nil and enRoute.message:find('v_standard2_villefort_cortes_delamain_player', 1, true)
+			and enRoute.message:find('1 min', 1, true), enRoute and enRoute.message)
+		S.OnTake(OTHER, { callId = alert.id })
+		local late = fuelAnswer(control, Event.ANSWER, OTHER)
+		check('a second driver finds it taken', late and late.code == 'taken', late and late.code)
+
+		-- The customer climbs in: the meter starts on the server's sweep.
+		control.Advance(1000)
+		S.Sweep()
+		check('no meter before the customer sits', S.Rides()[DRIVER].phase == 'enroute')
+		seats[CUSTOMER] = { vehicleId = 500, seat = 'seat_back_right' }
+		control.Advance(1000)
+		S.Sweep()
+		check('a customer in the driver\'s car starts the meter',
+			S.Rides()[DRIVER].phase == 'riding' and taxi.Dispatch.Of(CUSTOMER) == nil)
+		check('and the AI welcomes them aboard', told(CUSTOMER, 'Welcome aboard') ~= nil)
+
+		drive(0, 3000, 25)
+		-- A warp: the meter takes what a car can do in a second, not 5 km.
+		control.Stand(DRIVER, 8000.0, 0.0, 0.0)
+		control.Advance(1000)
+		S.Sweep()
+		local metres = S.Rides()[DRIVER].metres
+		check('the server measured 3 km, plus a clamped warp', math.abs(metres - 3075) < 1, metres)
+
+		-- Out of the car: one missed sample is a seat change, two end the ride.
+		seats[CUSTOMER] = nil
+		control.Advance(1000)
+		S.Sweep()
+		check('one sample out does not end the ride', S.Rides()[DRIVER] ~= nil)
+		control.Advance(1000)
+		S.Sweep()
+		check('the second ends it', S.Rides()[DRIVER] == nil)
+		-- 40 + 30 x 3.075 = 132.25 -> 132; the driver's 70 % is 92, Delamain's 40.
+		check('the fare is taken from the customer', customer.PlayerData.money.BANK == 868,
+			customer.PlayerData.money.BANK)
+		check('the driver is paid their cut', driver.PlayerData.money.BANK == 92, driver.PlayerData.money.BANK)
+		check('and the company share lands in the Delamain account',
+			#deposits == 1 and deposits[1].kind == 'job' and deposits[1].key == 'cabbie' and deposits[1].amount == 40,
+			deposits[1] and deposits[1].amount)
+		local paid = fuelAnswer(control, Event.ANSWER, DRIVER)
+		check('the driver hears it', paid and paid.code == 'fare_paid', paid and paid.code)
+		check('the customer is thanked by Delamain', told(CUSTOMER, 'Thank you for choosing Delamain') ~= nil)
+
+		-- A hailed fare billed through invoices, at night.
+		useInvoices, hour = true, 23
+		seats[CUSTOMER] = { vehicleId = 500, seat = 'seat_front_right' }
+		control.Stand(DRIVER, 0.0, 0.0, 0.0)
+		S.OnHail(DRIVER)
+		local started = fuelAnswer(control, Event.ANSWER, DRIVER)
+		check('a driver starts the meter for whoever sits in the cab', started and started.code == 'meter_started',
+			started and started.code)
+		drive(0, 2000, 25)
+		seats[CUSTOMER] = nil
+		control.Advance(1000); S.Sweep()
+		control.Advance(1000); S.Sweep()
+		local bill = invoices[1]
+		-- (40 + 30 x 2) x 1.3 = 130
+		check('the fare is billed through invoices, night rate included',
+			bill ~= nil and bill.amount == 130 and bill.target == CUSTOMER and bill.issuer == DRIVER, bill and bill.amount)
+		check('with the company account and the driver cut on the bill',
+			bill and bill.account and bill.account.key == 'cabbie' and bill.cutPct == 70 and bill.source == 'taxi')
+		check('and no money moves until the customer accepts', customer.PlayerData.money.BANK == 868)
+
+		-- A hop: free.
+		useInvoices, hour = false, 12
+		seats[CUSTOMER] = { vehicleId = 500, seat = 'seat_front_right' }
+		S.OnHail(DRIVER)
+		seats[CUSTOMER] = nil
+		control.Advance(1000); S.Sweep()
+		control.Advance(1000); S.Sweep()
+		local free = fuelAnswer(control, Event.ANSWER, DRIVER)
+		check('a ride under the minimum is free', free and free.code == 'fare_free', free and free.code)
+
+		-- A customer who cannot pay.
+		customer.PlayerData.money.BANK = 0
+		seats[CUSTOMER] = { vehicleId = 500, seat = 'seat_front_right' }
+		control.Stand(DRIVER, 0.0, 0.0, 0.0)
+		S.OnHail(DRIVER)
+		drive(0, 2000, 25)
+		seats[CUSTOMER] = nil
+		control.Advance(1000); S.Sweep()
+		control.Advance(1000); S.Sweep()
+		local unpaid = fuelAnswer(control, Event.ANSWER, DRIVER)
+		check('a fare nobody can pay is refused, and the driver is told', unpaid and unpaid.code == 'fare_unpaid',
+			unpaid and unpaid.code)
+		check('and is paid nothing for it', driver.PlayerData.money.BANK == 92, driver.PlayerData.money.BANK)
+
+		-- Cancel, and a driver leaving puts the fare back on the board.
+		S.CallCab(CUSTOMER, nil)
+		S.Cancel(CUSTOMER)
+		check('a customer cancels their call', taxi.Dispatch.Of(CUSTOMER) == nil)
+		S.CallCab(CUSTOMER, 'delamain')
+		local call = taxi.Dispatch.Of(CUSTOMER)
+		S.OnTake(OTHER, { callId = call.id })
+		check('another driver takes it', call.driver == OTHER)
+		S.Departed(OTHER)
+		check('a driver who disconnects puts the fare back on the board',
+			call.driver == nil and taxi.Dispatch.Of(CUSTOMER) == call)
+		check('and the customer hears it', told(CUSTOMER, 'reassigned') ~= nil)
+
+		-- Hostile shapes.
+		S.OnTake(DRIVER, { callId = { 1 } })
+		local hostile = fuelAnswer(control, Event.ANSWER, DRIVER)
+		check('a table for a call id is no call', hostile and hostile.code == 'no_such_call', hostile and hostile.code)
+		S.OnStreet(DRIVER, { company = 'nccab' })
+		local wrong = fuelAnswer(control, Event.ANSWER, DRIVER)
+		check('a disabled company is no company', wrong and wrong.code == 'not_member')
+		S.OnStop(STRANGER)
+		local nothing = fuelAnswer(control, Event.ANSWER, STRANGER)
+		check('stopping a meter you are not in does nothing', nothing and nothing.code == 'no_ride')
+		S.Cancel(CUSTOMER)
+
+		-- Street fares: minted by the company, capped per hour, refused on a warp.
+		seats[DRIVER] = { vehicleId = 500, seat = 'seat_front_left' }
+		local before = driver.PlayerData.money.BANK
+		S.OnStreet(DRIVER, { company = 'delamain' })
+		local route = fuelAnswer(control, Event.WAYPOINT, DRIVER)
+		check('a street fare routes the driver to its pickup', route and route.x == 1000, route and route.x)
+		control.Stand(DRIVER, 1000.0, 0.0, 0.0)
+		control.Advance(1000); S.Sweep()
+		check('at the pickup the passenger boards', S.Rides()[DRIVER] and S.Rides()[DRIVER].phase == 'riding')
+		drive(1000, 3000, 25)
+		check('at the drop-off the company pays the straight distance: 25 + 20 x 2 = 65',
+			driver.PlayerData.money.BANK == before + 65, driver.PlayerData.money.BANK - before)
+
+		S.OnStreet(DRIVER, { company = 'delamain' })
+		control.Stand(DRIVER, 1000.0, 0.0, 0.0)
+		control.Advance(1000); S.Sweep()
+		control.Stand(DRIVER, 3000.0, 0.0, 0.0)
+		control.Advance(1000); S.Sweep()
+		local warp = fuelAnswer(control, Event.ANSWER, DRIVER)
+		check('a warp to the drop-off is not a fare', warp and warp.code == 'street_suspicious', warp and warp.code)
+		check('and pays nothing', driver.PlayerData.money.BANK == before + 65)
+
+		S.OnStreet(DRIVER, { company = 'delamain' })
+		control.Stand(DRIVER, 1000.0, 0.0, 0.0)
+		control.Advance(1000); S.Sweep()
+		drive(1000, 3000, 25)
+		check('the hourly cap clips the next one to what is left: 35',
+			driver.PlayerData.money.BANK == before + 100, driver.PlayerData.money.BANK - before)
+		S.OnStreet(DRIVER, { company = 'delamain' })
+		local capped = fuelAnswer(control, Event.ANSWER, DRIVER)
+		check('and a capped driver is offered no more', capped and capped.code == 'street_capped')
+
+		-- A call on the board comes before a street fare.
+		control.Advance(3600000)
+		S.CallCab(CUSTOMER, nil)
+		S.OnStreet(DRIVER, { company = 'delamain' })
+		local waiting = fuelAnswer(control, Event.ANSWER, DRIVER)
+		check('no street fare while a customer waits', waiting and waiting.code == 'calls_waiting',
+			waiting and waiting.code)
+		S.OnBoard(DRIVER)
+		local board = fuelAnswer(control, Event.BOARD_VIEW, DRIVER)
+		check('the board lists the call and greys the street fare',
+			board and #board.calls == 1 and board.street[1] and board.street[1].available == false and board.driving)
+
+		-- An untaken call lapses, and the AI apologises.
+		control.Advance(400000)
+		S.Sweep()
+		check('an untaken call lapses', taxi.Dispatch.Of(CUSTOMER) == nil)
+		check('and Delamain regrets it', told(CUSTOMER, 'regret') ~= nil)
+		check('the commands are registered', control.commands['taxi'] ~= nil and control.commands['cab'] ~= nil)
+	end
+end
+
+section('taxi: the client draws the board and the meter inside its budget')
+do
+	local env, control, why = boot('client', nil)
+	check('the client boots with the taxi module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local taxi = OPX.Modules.Get('taxi')
+		check('the client half is running', OPX.Modules.IsRunning('taxi'), OPX.Modules.Record('taxi').Reason)
+		local calls = {}
+		for index = 1, 32 do
+			calls[index] = { id = index, company = index % 2 == 0 and 'delamain' or nil, short = 'DLMN',
+				x = index, y = 0, z = 0, distance = index * 10, ageS = 120 }
+		end
+		local worst = resumeCost(env, control, function()
+			control.netEvents[taxi.Event.BOARD_VIEW]({ calls = calls, driving = true,
+				street = { { company = 'delamain', short = 'DLMN', available = true } } })
+		end, 40)
+		local state = OPX.Api.Get('menu').State().value
+		check('a full board opens the dispatch menu', state.open == true and state.menu == 'taxi.board', state.menu)
+		check('and no resume passes 8,000 instructions', worst < 8000, worst)
+		local cost = callCost(control.netEvents[taxi.Event.ALERT], calls[1])
+		check('an alert and its pin fit the budget', cost < 9000, cost)
+		control.netEvents[taxi.Event.METER]({ company = 'DLMN', metres = 1234, fare = 77, moneyType = 'BANK',
+			state = 'running' })
+		control.netEvents[taxi.Event.CLOSED]({ id = 1 })
+		control.netEvents[taxi.Event.ANSWER]({ ok = false, code = 'nonsense' })
+		check('the meter, a closed call and an unknown code are taken without a raise', true)
 	end
 end
 

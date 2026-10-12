@@ -142,6 +142,9 @@ shared_script "config/police.lua"
 -- pins it reads here; the server re-derives every price, recipe and gate. See
 -- modules/bar/module.lua.
 shared_script "config/bar.lua"
+-- Shared: the client reads the company labels and pin colours it draws; the
+-- server re-derives every fare, distance and seat. See modules/taxi/module.lua.
+shared_script "config/taxi.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -552,6 +555,18 @@ shared_script "modules/fuel/shared/model.lua"
 server_script "modules/fuel/server/tanks.lua"
 server_script "modules/fuel/server/main.lua"
 client_script "modules/fuel/client/main.lua"
+
+-- Taxi: Delamain and indie cab companies, the dispatch board, the server-side
+-- meter and street fares. After `character` (required) and `menu` (optional).
+-- The seat ledger (`Open77.vehicles.getPlayerSeat`, `vehicles.get`) is
+-- `world.vehicles` and the call pins / waypoint `ui.vanilla.map`, both declared
+-- below already. `invoices`, `accounts` and `weather` are asked at run time.
+shared_script "modules/taxi/module.lua"
+shared_script "modules/taxi/locales.lua"
+shared_script "modules/taxi/shared/model.lua"
+server_script "modules/taxi/server/dispatch.lua"
+server_script "modules/taxi/server/main.lua"
+client_script "modules/taxi/client/main.lua"
 
 -- Medical services: Trauma Team, the street doc, whoever else a config names.
 -- After `downed`, whose bus opens the calls and whose `Revive` stands a patient

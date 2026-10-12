@@ -748,6 +748,28 @@ server-side drunk level played with `Open77.effects.screen('drunk')` on the drin
 Contract `bar` v1 (server): `Venues()`, `Items()`, `DrunkLevel(player)`. Bus:
 `opx:on:bar:mixed|bought|served`.
 
+### Taxi
+
+`modules/taxi` + `config/taxi.lua`. A **company** is a config entry (`delamain` ships on
+job `cabbie`; `nccab`, an indie example, ships disabled until its job exists): job gate,
+`DISPATCH`, `FARE` (`BASE`, `PER_KM`, `MIN`, `MAX`, a `NIGHT` surge read off the weather
+clock), `DRIVER_CUT_PCT`, `ACCOUNT`, optional `VEHICLES` allow-list and `NPC_FARES`.
+Anybody types **`/taxi`** (`/taxi <company>`, `/taxi cancel`, `/taxi stop`): the call goes
+on the board of every on-duty driver (toast + map pin); a driver opens it with **`/cab`**,
+takes the call (waypoint; the customer is told the car record and an ETA in the
+company's voice -- the Delamain AI or a human dispatcher). The **meter is the server's**:
+it starts when the customer sits in the vehicle whose driver's seat the driver holds
+(`Open77.vehicles.getPlayerSeat`), adds one clamped segment of the driver's position per
+`SCAN_MS` (`MAX_SPEED`), and stops after `EXIT_SAMPLES` samples with the customer out. The
+fare is billed through `invoices` when it runs (company share to `accounts`), else taken
+with `RemoveMoney` and split (`accounts.Deposit` or all to the driver). A driver may also
+start the meter for whoever already sits in the cab (**hail**), or, with the board empty,
+take a **street fare**: drive to a pickup, then to a destination; paid by the company on
+the straight distance, minted, capped per driver per rolling hour, refused when the trip
+log is faster or shorter than the road. `server/dispatch.lua` is the board on its own
+(the medical board's pattern, copied). Contract `taxi` v1 (server): `Calls(company?)`,
+`Ride(player)`, `Companies()`; bus `opx:on:taxi:call`, `opx:on:taxi:ride`.
+
 ### Emotes
 
 `animations` offers **every animation the platform has** (**"toutes les animations,
