@@ -685,6 +685,40 @@ Contract `netrunner` v1 (server): `CamerasBlind(network)`, `Objectives()`,
 Staff: `/opx.netrunner.capture <network> <node> [kind]`, `/opx.netrunner.networks`.
 Every position ships as `0,0,0` and its network stays disabled until surveyed.
 
+### Police
+
+`modules/police` + `config/police.lua`. A **service** is a config entry (`ncpd`,
+`maxtac`, `arasaka_sec` ship): its job gate, `CAPABILITIES` (`cuff`, `escort`, `frisk`,
+`fine`, `jail`, `impound`, each with a minimum grade -- a verb not listed is not held),
+`DISPATCH.RECEIVES` (crime codes from `CRIMES`, `'*'` for all), `ACCOUNT`, and for
+corpo security `ENCLAVES` (no authority outside a surveyed sphere). `STATIONS` hold
+the building (jail only inside), `DESK` (pay fines), `EVIDENCE` (stash
+`police_evidence_<station>`), `CELLS` and `RELEASE`.
+
+Calls: `/911 <text>` (any player, cooldown), alarms through the contract, and a 10-00
+when an on-duty member goes down; members get a toast and an SVG pin, the board is
+**F5** (F6 is medical's), take -> waypoint. ALT on a player: cuff (item `handcuffs`,
+registered at boot; a wounded suspect at once, a standing one after a 3 s server bar
+he can walk out of), uncuff, escort (`playerInteractions` `escort`, no consent;
+`downed.SetCarried` around a wounded suspect), frisk (bag listed, a stack confiscated
+into the nearest locker), fine (form; paid from `BANK`, the rest becomes `debt` on the
+record, `OFFICER_CUT_PERCENT` of what was paid to the officer, the rest to `accounts`
+when it exists), jail (form; inside a station, a cell, a leash, released at
+`RELEASE`). ALT on a car: impound (`vehicles.SetState(plate, 'impounded', GARAGE)`, or
+the wreck removed). Cuffs, sentence and debt live in character metadata `police` and are
+re-applied on load; a cuffed player's hits are refused by a `combat.onDamage` arbiter
+and his client holds `allowWeapons/Shoot/Aim/Dodge/Jump/Interaction` false, re-applied
+every second.
+
+Contract `police` v1 (server): `Report{ crime, label?, position?, radius?,
+description?, source?, priority?, dedupe? }` -> Result (underworld's alarms),
+`Alert{ kind, jobs, label, coords, level, runner }` -> boolean (netrunner's trace;
+false when no service holds those jobs), `OnDutyCount()` -> number, `IsCuffed(id)`,
+`IsJailed(id)` -> bool, seconds, `Calls(service?)`, `Services()`. Bus
+`opx:on:police:call|cuffed|fined|jailed`. Staff: `/opx.police.capture <kind> <name>`
+(no args lists the stations' state), `/opx.police.release <id>`,
+`/opx.police.unimpound <plate>`.
+
 ### Emotes
 
 `animations` offers **every animation the platform has** (**"toutes les animations,
