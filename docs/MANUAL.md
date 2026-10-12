@@ -583,6 +583,54 @@ consumption (no RPM on the server), and real station coordinates (unsurveyed -- 
 above). Needs in-game checking: the engine cut against a driver restarting, the eye
 spheres on real pumps, the `drop_point` sprite on the big map.
 
+### Down, wounded, and dead
+
+`modules/downed` + `config/downed.lua`. With `MODE = 'wounded'` (shipped) the server's
+damage arbiter (`Open77.combat.onDamage`) holds a hit that would kill a player with a
+character loaded at `WOUNDED.HEALTH`: the player goes down **alive** -- frozen where they
+fell, regeneration off, the `WOUNDED.POSE` workspot -- and every hit they deal is refused.
+They **flatline** (the dead stage, the screen as before) on a finishing blow
+`WOUNDED.FINISH` allows (players yes, NPCs and the world no, by default), when
+`BLEED_OUT_S` runs out, or from any death that went round the arbiter. A revive of a
+wounded body is a heal past the floor; GIVE UP teleports and patches instead of
+respawning the living, behind a fade (`FADE`). `MODE = 'death'` is the rollback.
+
+Contract `downed` (server): `IsDown(id)` and `List()` carry `stage` (`wounded` / `dead`),
+`Revive(id, caller, why, { health?, graceMs? })`, `SetCarried(id, caller, carried)` lifts
+the hold on a wounded body for a carry. Bus: `opx:on:downed:changed` also fires when a
+downed player asks for help (`waiting = true`).
+
+### Medical services
+
+`modules/medical` + `config/medical.lua`. A **service** is a config entry (`trauma`,
+`ripperdoc` ship): its job gate, `DISPATCH`, `SUBSCRIPTION` tiers and desks, `TREATMENTS`
+(`revive` / `heal`, items from the medic's bag, `FEE`, `PAY`, `ANIMATION`, `PROP`),
+`CARRY`, `BEDS` and `BILLING`. A downed player who asks for help -- or a subscriber whose
+tier has `AUTO_ALERT` the moment they go down -- becomes a call on the board of every
+service that answers them; members on duty get a toast and a map pin, take a call from
+the board (**F6**) and get a waypoint. ALT on a player opens what the medic may do: revive
+(a server-timed bar), heal (the platform's two-player `heal`, after the patient agrees;
+on a `BEDS` entry the patient is laid down instead), carry (the platform's `carry`, also
+on a wounded patient). The patient is billed, unpaid bills become debt settled at the
+desk, and a subscribers-only service treating a stranger charges
+`OFF_CONTRACT_MULTIPLIER`. `server/dispatch.lua` is the board on its own, no host call
+in it. Contract `medical` (server): `Subscription(id, service)`, `Calls(service?)`,
+`Services()`; bus `opx:on:medical:call`, `treated`, `subscribed`.
+
+### Underworld
+
+`modules/underworld` + `config/underworld.lua`. Dirty money is the `dirty_eddies` item
+(never a balance); every valued action goes through `server/op.lua` -- check, escrow the
+inputs before the bar, server-timed bar, re-check, destroy the escrow, create the value
+last, refund once on any other ending -- with a ledger row per movement
+(`/opx.underworld.ledger <cid>`) and per-hour mint caps. Black-market dealers rotate
+between spots, sell for dirty or (dearer) clean money and fence stolen goods; stores
+hold regrowing register charges, need a weapon in hand and police on duty, and raise
+an alarm (`police.Report` when that contract exists, else on-duty NCPD and MaxTac);
+fronts launder by batch under a daily cap; gang-gated crafting labs heat up; drugs
+use, addict and overdose; a street deal is the platform's two-player `give`. Gang gates
+use `OPX.JobGate.EvaluateGroups`. Survey every entry with `/opx.underworld.capture`.
+
 ### Ripperdoc
 
 `ripperdoc` (`modules/ripperdoc`, `config/ripperdoc.lua`) puts chrome in and takes it
@@ -611,6 +659,7 @@ given back, `submitted` is replayed with the same operation id when the patient 
 
 Contract `ripperdoc` (server): `Body(citizenId)`, `Clinics()`, `Chrome()`,
 `Operation(player)`; bus event `opx:on:ripperdoc:operated`.
+
 ### Netrunner
 
 `modules/netrunner` + `config/netrunner.lua`. A runner ALTs an **access point** of a
