@@ -45119,6 +45119,425 @@ do
 	end
 end
 
+-- ── invoices ─────────────────────────────────────────────────────────────────
+-- `modules/invoices`: the pure model, then the server with an in-memory twin of
+-- its two tables and a fake `accounts` contract, then the client surfaces.
+section('invoices: the model -- bounds, split, who may bill')
+do
+	local env, _, why = boot('server', contractsBridge())
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local Model = OPX.Modules.Get('invoices').Model
+		local s = Model.Settings(OPX.Config.MODULES.invoices)
+		check('bills are taken from the bank, cash as the fallback',
+			s.moneyType == 'BANK' and s.fallbackType == 'EDDIES')
+		check('a job ceiling never passes the global one', s.jobs.cabbie.maxAmount == 2500
+			and s.jobs.trauma.maxAmount <= s.maxAmount)
+		check('a job with ACCOUNT bills into its own company account',
+			s.jobs.bartender.account.kind == 'job' and s.jobs.bartender.account.key == 'bartender')
+		check('a freelancer job keeps the whole bill (no account)', s.jobs.fixer.account == nil)
+		local cut, rest = Model.Split(1000, 30, true)
+		check('the split: the cut rounds down, the rest is the company\'s', cut == 300 and rest == 700)
+		cut, rest = Model.Split(999, 15, true)
+		check('nothing is lost to rounding', cut + rest == 999 and cut == 149)
+		cut, rest = Model.Split(1000, 30, false)
+		check('without an account there is no split', cut == 0 and rest == 1000)
+		check('an amount is a whole positive number under the ceiling', Model.Amount('250', 300) == 250
+			and select(2, Model.Amount(301, 300)) == 'over_limit' and select(2, Model.Amount(1.5, 300)) == 'bad_amount'
+			and select(2, Model.Amount(0 / 0, 300)) == 'bad_amount' and select(2, Model.Amount(-5, 300)) == 'bad_amount'
+			and select(2, Model.Amount(math.huge, 300)) == 'bad_amount')
+		check('a reason is cleaned, cut and never empty', Model.Reason('  Ride\nWatson  ', 64) == 'Ride Watson'
+			and Model.Reason('   ', 64) == nil and #Model.Reason(('x'):rep(200), 64) == 64 and Model.Reason({}, 64) == nil)
+		check('an account is kind job|gang and a plain key', Model.Account({ kind = 'job', key = 'mechanic' }) ~= nil
+			and Model.Account({ kind = 'corp', key = 'x' }) == nil and Model.Account({ kind = 'job', key = 'a b' }) == nil
+			and Model.Account('job') == nil)
+		check('a cut is 0..100, the default when absent', Model.Cut(nil, 10) == 10 and Model.Cut(101, 10) == nil
+			and Model.Cut(0, 10) == 0)
+		local now = 1000
+		local entry = Model.Biller(s, { name = 'cabbie', onDuty = true, grade = { level = 0 } }, nil, now)
+		check('an on-duty cabbie may bill', entry ~= nil and entry.name == 'cabbie')
+		check('off duty, the gate says so', select(2, Model.Biller(s, { name = 'cabbie', onDuty = false,
+			grade = { level = 0 } }, nil, now)) == 'off_duty')
+		check('a trauma trainee (grade 0) is under MIN_GRADE', select(2, Model.Biller(s, { name = 'trauma',
+			onDuty = true, grade = { level = 0 } }, nil, now)) == 'grade_too_low')
+		check('a job the config does not list cannot bill (NCPD ships without)', select(2, Model.Biller(s,
+			{ name = 'ncpd', onDuty = true, grade = { level = 4 } }, nil, now)) == 'not_allowed')
+		local problems = Model.Problems({ MONEY_TYPE = 'GOLD', MAX_AMOUNT = 100, DEFAULT_CUT_PCT = 120,
+			MAX_UNPAID = 5, JOBS = { mechanic = { MAX_AMOUNT = 500 }, cabbie = { MAX_AMOUNT = 0 } } },
+			OPX.Config.MODULES.character.JOBS)
+		local text = table.concat(problems, ' / ')
+		check('the validator names a bad money type, a bad cut, an unknown job, a job with no ceiling',
+			text:find('MONEY_TYPE', 1, true) and text:find('DEFAULT_CUT_PCT', 1, true)
+				and text:find('JOBS.mechanic names no job', 1, true) and text:find('JOBS.cabbie has no MAX_AMOUNT', 1, true)
+				and text:find('above MAX_AMOUNT', 1, true), text)
+		check('the shipped config is clean', #Model.Problems(OPX.Config.MODULES.invoices,
+			OPX.Config.MODULES.character.JOBS) == 0, table.concat(Model.Problems(OPX.Config.MODULES.invoices,
+			OPX.Config.MODULES.character.JOBS), ' / '))
+	end
+end
+
+section('invoices: a bill raised, answered, paid and split -- and every other ending')
+do
+-- The in-memory twin of the two invoice tables: the same answers, the same CAS.
+local function invoicesStore(env, file)
+	if file ~= 'modules/invoices/server/storage.lua' then return end
+	local store = { rows = {}, ledger = {}, nextId = 0 }
+	local function copy(t)
+		local out = {}
+		for k, v in pairs(t) do out[k] = v end
+		return out
+	end
+	local S = env.OPX.Modules.Get('invoices').Storage
+	S.Insert = function(record)
+		store.nextId = store.nextId + 1
+		local row = copy(record)
+		row.id = store.nextId
+		store.rows[row.id] = row
+		return { ok = true, value = row.id }
+	end
+	S.Move = function(record, from, rev)
+		local row = store.rows[record.id]
+		if row == nil or row.state ~= from or row.rev ~= rev then return { ok = true, value = false } end
+		store.rows[record.id] = copy(record)
+		return { ok = true, value = true }
+	end
+	S.LoadOpen = function()
+		local out = {}
+		for _, row in pairs(store.rows) do
+			if row.state == 'asked' or row.state == 'unpaid' or row.state == 'settling' then out[#out + 1] = copy(row) end
+		end
+		table.sort(out, function(a, b) return a.id < b.id end)
+		return { ok = true, value = out }
+	end
+	S.Reserve = function(op)
+		local row = store.ledger[op.id]
+		if row then return { ok = true, value = { fresh = false, state = row.state } } end
+		store.ledger[op.id] = { state = 'reserved', amount = op.amount, citizenId = op.citizenId,
+			phase = op.phase, invoiceId = op.invoiceId }
+		return { ok = true, value = { fresh = true, state = 'reserved' } }
+	end
+	S.OpState = function(id) return { ok = true, value = store.ledger[id] and store.ledger[id].state or nil } end
+	S.Settle = function(id, state)
+		local row = store.ledger[id]
+		if row and row.state == 'reserved' then row.state = state end
+		return { ok = true, value = 1 }
+	end
+	S.Rearm = function(id)
+		local row = store.ledger[id]
+		if row and row.state == 'cancelled' then row.state = 'reserved' return { ok = true, value = true } end
+		return { ok = true, value = false }
+	end
+	S.Pending = function()
+		local out = {}
+		for id, row in pairs(store.ledger) do
+			if row.state == 'reserved' then
+				out[#out + 1] = { id = id, invoiceId = row.invoiceId, phase = row.phase,
+					citizenId = row.citizenId, amount = row.amount }
+			end
+		end
+		return { ok = true, value = out }
+	end
+	env.invoicesStore = store
+end
+
+	local env, control, why = boot('server', contractsBridge(), nil, invoicesStore)
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local invoices = OPX.Modules.Get('invoices')
+		local Server, Event = invoices.Server, invoices.Event
+		local store = env.invoicesStore
+		check('the open bills loaded from storage', Server.IsLoaded())
+		check('/opx.bill and /opx.bills are registered', control.commands['opx.bill'] ~= nil
+			and control.commands['opx.bills'] ~= nil)
+
+		-- A fake `accounts`: deposits by op id, idempotent like the real one.
+		local deposits, realGet = {}, OPX.Api.Get
+		local accountsUp = true
+		local fakeAccounts = {
+			Deposit = function(kind, key, amount, reason, opId)
+				if deposits[opId] == nil then
+					deposits[opId] = { kind = kind, key = key, amount = amount, reason = reason }
+				end
+				return { ok = true, value = { balance = amount } }
+			end,
+		}
+		OPX.Api.Get = function(name, minimum)
+			if name == 'accounts' then return accountsUp and fakeAccounts or nil end
+			return realGet(name, minimum)
+		end
+
+		local D, C, X = 121, 122, 123
+		local driver = contractsCharacter(env, control, D, 'DRV', 'cabbie', 0, 0)
+		local customer = contractsCharacter(env, control, C, 'CUS', 'merc', 0, 0)
+		local stranger = contractsCharacter(env, control, X, 'STR', 'merc', 0, 0)
+		driver.PlayerData.money.BANK, customer.PlayerData.money.BANK = 0, 1000
+		local heard = {}
+		for _, name in ipairs({ 'ON_ISSUED', 'ON_PAID', 'ON_REFUSED', 'ON_EXPIRED', 'ON_CANCELLED' }) do
+			env.AddEventHandler(Event[name], function(_, payload)
+				heard[#heard + 1] = { name = name, payload = payload }
+			end)
+		end
+		local function lastHeard(name)
+			for index = #heard, 1, -1 do if heard[index].name == name then return heard[index].payload end end
+			return nil
+		end
+		local function run(fn) return contractsRun(env, control, fn) end
+		local function cool() control.Advance(5000) end
+
+		control.Stand(D, 0.0, 0.0, 0.0)
+		control.Stand(C, 30.0, 0.0, 0.0)
+		control.Stand(X, 1.0, 0.0, 0.0)
+		local ok
+		ok, why = run(function() return Server.PlayerIssue(D, C, 500, 'Ride') end)
+		check('a customer across the street is too far to bill', not ok and why == 'too_far', why)
+		control.Stand(C, 2.0, 0.0, 0.0)
+		ok, why = run(function() return Server.PlayerIssue(D, C, 3000, 'Ride') end)
+		check('above the job\'s ceiling is refused', not ok and why == 'over_limit', why)
+		ok, why = run(function() return Server.PlayerIssue(C, D, 100, 'Ride') end)
+		check('a merc cannot bill (not in JOBS)', not ok and why == 'not_allowed', why)
+		ok, why = run(function() return Server.PlayerIssue(D, D, 100, 'Ride') end)
+		check('nobody bills themselves', not ok and why == 'self', why)
+
+		ok, why = run(function() return Server.PlayerIssue(D, C, 500, 'Ride Japantown -> Watson') end)
+		check('an on-duty driver bills a fare standing beside them', ok == true, why)
+		local id = store.nextId
+		local inv = Server.Invoices()[id]
+		check('the bill is filed, asked, frozen on both citizen ids', inv ~= nil and inv.state == 'asked'
+			and inv.issuerCid == driver.PlayerData.citizenId and inv.targetCid == customer.PlayerData.citizenId
+			and store.rows[id].state == 'asked')
+		check('the company account and the cut come from the job', inv.account.key == 'cabbie'
+			and inv.cutPct == 30 and inv.company == 'Delamain Cab Co.' and inv.source == 'taxi')
+		local ask = contractsLast(control, Event.ASK, C)
+		check('the customer is asked, with the amount, the reason and the clock',
+			type(ask) == 'table' and ask.id == id and ask.amount == 500 and ask.ttlS == 45
+				and ask.reason == 'Ride Japantown -> Watson')
+		check('the bus hears it issued', lastHeard('ON_ISSUED') and lastHeard('ON_ISSUED').id == id)
+
+		ok, why = run(function() return Server.PlayerIssue(D, C, 100, 'Again') end)
+		check('a second bill from the same driver straight away is too fast', not ok and why == 'too_fast', why)
+		cool()
+		local api = OPX.Api.Get('invoices')
+		local issued = run(function() return api.Issue({ issuer = X, target = C, amount = 50, reason = 'x' }) end)
+		check('one prompt at a time per customer', issued.ok == false and issued.error == 'target_busy', issued.error)
+		ok, why = run(function() return Server.Respond(X, id, 'pay') end)
+		check('nobody but the customer answers the bill', not ok and why == 'no_such_bill', why)
+
+		ok, why = run(function() return Server.Respond(C, id, 'pay') end)
+		check('the customer pays', ok == true, why)
+		check('the bill left their BANK', customer.PlayerData.money.BANK == 500, customer.PlayerData.money.BANK)
+		check('the driver gets their 30% cut', driver.PlayerData.money.BANK == 150, driver.PlayerData.money.BANK)
+		local deposit = deposits[('invoices:%d:rest'):format(id)]
+		check('the rest goes into the Delamain account, keyed by the ledger op id',
+			deposit ~= nil and deposit.kind == 'job' and deposit.key == 'cabbie' and deposit.amount == 350)
+		check('the bill is paid and leaves memory', store.rows[id].state == 'paid' and Server.Invoices()[id] == nil
+			and store.rows[id].paidWith == 'BANK')
+		check('three committed ledger rows: charge, cut, rest',
+			store.ledger[('invoices:%d:charge'):format(id)].state == 'committed'
+				and store.ledger[('invoices:%d:cut'):format(id)].amount == 150
+				and store.ledger[('invoices:%d:rest'):format(id)].state == 'committed')
+		local paid = lastHeard('ON_PAID')
+		check('the bus hears it paid: id, amount, account, source', paid and paid.id == id and paid.amount == 500
+			and paid.account.key == 'cabbie' and paid.source == 'taxi')
+		check('and the prompt is closed on the customer\'s screen', (contractsLast(control, Event.ASK_CLOSED, C)
+			or {}).id == id)
+		ok, why = run(function() return Server.Respond(C, id, 'pay') end)
+		check('a replayed answer finds no bill and charges nothing', not ok and customer.PlayerData.money.BANK == 500, why)
+
+		-- Without `accounts`: the whole bill is the driver's.
+		accountsUp = false
+		cool()
+		run(function() return Server.PlayerIssue(D, C, 200, 'Short ride') end)
+		local second = store.nextId
+		ok = run(function() return Server.Respond(C, second, 'pay') end)
+		check('without the accounts contract the employee is paid the whole bill',
+			ok == true and driver.PlayerData.money.BANK == 350 and customer.PlayerData.money.BANK == 300,
+			driver.PlayerData.money.BANK)
+		accountsUp = true
+
+		-- Bank short, cash covers it.
+		customer.PlayerData.money.BANK, customer.PlayerData.money.EDDIES = 10, 600
+		cool()
+		run(function() return Server.PlayerIssue(D, C, 400, 'Night fare') end)
+		local third = store.nextId
+		ok = run(function() return Server.Respond(C, third, 'pay') end)
+		check('a bank that cannot cover it falls back to cash', ok == true and customer.PlayerData.money.EDDIES == 200
+			and customer.PlayerData.money.BANK == 10 and store.rows[third].paidWith == 'EDDIES')
+
+		-- Broke: on the tab, paid later.
+		customer.PlayerData.money.BANK, customer.PlayerData.money.EDDIES = 0, 0
+		cool()
+		run(function() return Server.PlayerIssue(D, C, 300, 'Airport run') end)
+		local fourth = store.nextId
+		local before = driver.PlayerData.money.BANK
+		ok, why = run(function() return Server.Respond(C, fourth, 'pay') end)
+		check('a customer who cannot pay is put on the tab', not ok and why == 'not_enough_money'
+			and Server.Invoices()[fourth].state == 'unpaid' and store.rows[fourth].state == 'unpaid', why)
+		check('nothing moved, and the charge is a cancelled ledger row', driver.PlayerData.money.BANK == before
+			and store.ledger[('invoices:%d:charge'):format(fourth)].state == 'cancelled')
+		check('the tab shows it, with a lapse date', #Server.Owed(customer.PlayerData.citizenId) == 1
+			and store.rows[fourth].expiresAt > 0)
+		local pending = api.Pending(C)
+		check('the contract lists it', pending.ok and #pending.value.rows == 1 and pending.value.rows[1].id == fourth)
+		ok, why = run(function() return Server.Pay(X, fourth) end)
+		check('a stranger cannot pay somebody else\'s tab', not ok and why == 'no_such_bill', why)
+		customer.PlayerData.money.BANK = 1000
+		ok, why = run(function() return Server.Pay(C, fourth) end)
+		check('paid later from the tab: the cancelled charge is taken again, once', ok == true
+			and customer.PlayerData.money.BANK == 700 and store.rows[fourth].state == 'paid', why)
+
+		-- Refused, put on the tab and withdrawn, expired.
+		cool()
+		run(function() return Server.PlayerIssue(D, C, 100, 'Tip') end)
+		local fifth = store.nextId
+		ok = run(function() return Server.Respond(C, fifth, 'refuse') end)
+		check('a refused bill ends refused, on the bus, nothing charged', ok and store.rows[fifth].state == 'refused'
+			and (lastHeard('ON_REFUSED') or {}).id == fifth and customer.PlayerData.money.BANK == 700)
+		cool()
+		run(function() return Server.PlayerIssue(D, C, 100, 'Later') end)
+		local sixth = store.nextId
+		ok = run(function() return Server.Respond(C, sixth, 'later') end)
+		check('"put it on my tab" files it unpaid without charging', ok and store.rows[sixth].state == 'unpaid'
+			and customer.PlayerData.money.BANK == 700)
+		ok, why = run(function() return Server.Cancel(sixth, customer.PlayerData.citizenId) end)
+		check('only the employee who raised it may withdraw it', not ok and why == 'not_yours', why)
+		ok = run(function() return Server.Cancel(sixth, driver.PlayerData.citizenId) end)
+		check('the employee withdraws it: cancelled, on the bus', ok and store.rows[sixth].state == 'cancelled'
+			and (lastHeard('ON_CANCELLED') or {}).id == sixth)
+		cool()
+		run(function() return Server.PlayerIssue(D, C, 100, 'Ignored') end)
+		local seventh = store.nextId
+		control.Advance(46000)
+		Server.Sweep()
+		control.Pump(3)
+		check('a prompt nobody answers expires, on the bus', store.rows[seventh].state == 'expired'
+			and (lastHeard('ON_EXPIRED') or {}).id == seventh)
+
+		driver.PlayerData.job.onDuty = false
+		cool()
+		ok, why = run(function() return Server.PlayerIssue(D, C, 100, 'Off the clock') end)
+		check('off duty, the driver cannot bill', not ok and why == 'off_duty', why)
+		driver.PlayerData.job.onDuty = true
+
+		-- The contract: another module names the account and the cut.
+		customer.PlayerData.money.BANK = 5000
+		issued = run(function() return api.Issue({ issuer = X, target = C, amount = 1000, reason = 'Brakes',
+			account = { kind = 'job', key = 'mechanic' }, cutPct = 20, source = 'mechanic' }) end)
+		check('a module bills through the contract with its own account', issued.ok and type(issued.value.id) == 'number')
+		ok = run(function() return Server.Respond(C, issued.value.id, 'pay') end)
+		check('and the split follows its cut', ok and stranger.PlayerData.money.BANK == 200
+			and deposits[('invoices:%d:rest'):format(issued.value.id)].amount == 800)
+		issued = run(function() return api.Issue({ issuer = X, target = C, amount = 10, reason = 'x',
+			account = { kind = 'corp', key = 'x' } }) end)
+		check('a malformed account is refused', not issued.ok and issued.error == 'bad_account', issued.error)
+		issued = run(function() return api.Issue({ issuer = X, target = C, amount = 10, reason = 'x', cutPct = 300 }) end)
+		check('a cut above 100 is refused', not issued.ok and issued.error == 'bad_cut', issued.error)
+		issued = run(function() return api.Issue({ issuer = X, target = C, amount = 10 ^ 9, reason = 'x' }) end)
+		check('the global ceiling holds for the contract too', not issued.ok and issued.error == 'over_limit')
+
+		-- The creator surface: another resource bills, reads the tab, withdraws its own.
+		OPX.Config.SERVER.EXPORTS.WRITERS = { my_garage = true }
+		local call = control.CallExport
+		check('a reader may not raise a bill', call('my_hud', 'IssueInvoice', X, C, 100, 'x').error
+			== 'export.callerDenied')
+		local ext = call('my_garage', 'IssueInvoice', X, C, 400, 'Tyres',
+			{ account = { kind = 'job', key = 'mechanic' }, cutPct = 25 })
+		check('a writer raises a bill with its own account and cut', ext ~= nil and ext.ok
+			and Server.Invoices()[ext.value.id].source == 'ext:my_garage', ext and tostring(ext.error))
+		local tab = call('my_garage', 'GetInvoices', C)
+		check('the tab reads it back', tab.ok and #tab.value.rows == 1 and tab.value.rows[1].id == ext.value.id)
+		check('another resource cannot withdraw it', call('rival', 'CancelInvoice', ext.value.id).error
+			~= nil and Server.Invoices()[ext.value.id] ~= nil)
+		local pulled = call('my_garage', 'CancelInvoice', ext.value.id)
+		check('its own caller withdraws it', pulled.ok and store.rows[ext.value.id].state == 'cancelled',
+			pulled and tostring(pulled.error))
+		check('bad arguments are refused', call('my_garage', 'IssueInvoice', X, C, '100', 'x').error
+			== 'export.badArgument')
+
+		-- A restart, three ways.
+		Server.Reset()
+		local cidD, cidC = driver.PlayerData.citizenId, customer.PlayerData.citizenId
+		local function row(n, state)
+			store.rows[n] = { id = n, state = state, rev = 3, issuerCid = cidD, issuerName = 'D', targetCid = cidC,
+				targetName = 'C', amount = 1000, reason = 'r', account = { kind = 'job', key = 'cabbie' }, cutPct = 30,
+				source = 'taxi', issuedAt = 0, expiresAt = 0 }
+		end
+		row(901, 'settling')
+		store.ledger['invoices:901:charge'] = { state = 'committed', amount = 1000, phase = 'charge', invoiceId = 901 }
+		row(902, 'asked')
+		row(903, 'settling')
+		store.ledger['invoices:903:charge'] = { state = 'reserved', amount = 1000, phase = 'charge', invoiceId = 903 }
+		local driverBefore, customerBefore = driver.PlayerData.money.BANK, customer.PlayerData.money.BANK
+		run(function() return Server.Reconcile() end)
+		check('a settlement cut short is finished from its receipts: cut and rest once, no new charge',
+			store.rows[901].state == 'paid' and driver.PlayerData.money.BANK == driverBefore + 300
+				and deposits['invoices:901:rest'].amount == 700 and customer.PlayerData.money.BANK == customerBefore)
+		check('a prompt the restart killed expires', store.rows[902].state == 'expired')
+		check('a charge left reserved by a crash is orphaned and the bill held for staff, nothing paid out',
+			store.ledger['invoices:903:charge'].state == 'orphaned' and store.rows[903].state == 'disputed'
+				and store.ledger['invoices:903:cut'] == nil)
+		run(function() return Server.Reconcile() end)
+		check('a second reconcile moves nothing more', driver.PlayerData.money.BANK == driverBefore + 300)
+
+		-- What a hostile client gets.
+		local raised = 0
+		local junk = { 'x', 12, true, {}, { id = {}, choice = 'pay' }, { id = 1e300, choice = 'pay' },
+			{ target = C, amount = 0 / 0, reason = 'x' }, { target = C, amount = '1e9', reason = {} },
+			{ id = 1, choice = 'nope' }, { verb = 'respond', id = {}, choice = 'pay' }, { verb = 'list' },
+			{ verb = 'pay', id = 0 / 0 }, { verb = {}, id = 1 } }
+		for _, payload in ipairs(junk) do
+			for _, name in ipairs({ 'ISSUE', 'ACT' }) do
+				env.source = X
+				if not pcall(control.netEvents[Event[name]], payload) then raised = raised + 1 end
+			end
+			env.source = nil
+			control.Advance(600)
+			control.Pump(2)
+		end
+		check('no junk payload raises inside a handler', raised == 0, raised)
+		OPX.Api.Get = realGet
+	end
+end
+
+section('invoices: the client draws the prompt and the tab inside its budget')
+do
+	local env, control, why = boot('client', nil)
+	check('the client boots with the invoices module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local invoices = OPX.Modules.Get('invoices')
+		check('the client half is running', OPX.Modules.IsRunning('invoices'),
+			OPX.Modules.Record('invoices').Reason)
+		local Event = invoices.Event
+		local errors = #control.log.error
+		local cost = callCost(control.netEvents[Event.ASK], { id = 7, company = 'Delamain Cab Co.', issuer = 'Vik',
+			amount = 500, reason = 'Ride', moneyType = 'BANK', fallbackType = 'EDDIES', ttlS = 45 })
+		local menu = OPX.Api.Get('menu')
+		local state = menu.State().value
+		check('the prompt opens as a menu', state.open == true and state.menu == 'invoices.ask', state.menu)
+		check('inside one resume\'s budget', cost < 9000, cost)
+		control.netEvents[Event.ASK_CLOSED]({ id = 7 })
+		check('the server closing the prompt takes the menu down', menu.State().value.open ~= true)
+		local owed = {}
+		for index = 1, 10 do owed[index] = { id = index, amount = 100, reason = 'r', company = 'Afterlife Bar' } end
+		local worst = resumeCost(env, control, function()
+			control.netEvents[Event.SHOW_LIST]({ owed = owed, issued = owed, moneyType = 'BANK' })
+		end, 80)
+		check('a full tab opens as a menu, built paced on a thread', menu.State().value.menu == 'invoices.list',
+			menu.State().value.menu)
+		check('and no resume of it passes 9,000 instructions', worst < 9000, worst)
+		local raised = 0
+		for _, payload in ipairs({ 'junk', 12, {}, { id = 'x' }, { owed = 'x', issued = { 1, 2 } } }) do
+			if not pcall(control.netEvents[Event.ASK], payload) then raised = raised + 1 end
+			if not pcall(control.netEvents[Event.SHOW_LIST], payload) then raised = raised + 1 end
+			if not pcall(control.netEvents[Event.ASK_CLOSED], payload) then raised = raised + 1 end
+		end
+		check('nothing a server could send raises or logs an error', raised == 0 and #control.log.error == errors,
+			table.concat(control.log.error, ' / '))
+	end
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the

@@ -42,7 +42,7 @@
 -- synchronous form fails a callee that yields with `export_yielded`. Those
 -- exports (AddMoneyOffline, SetJob, SetGang, RemoveJob, RemoveGang, the stash
 -- and key exports, SetVehicleState, the door writes, OpenStash, GetVehicle,
--- GetOwnedVehicles, AddVehicle, GiveKeys, and an item, metadata or HasKeys
+-- GetOwnedVehicles, AddVehicle, GiveKeys, IssueInvoice, CancelInvoice, and an item, metadata or HasKeys
 -- export naming a citizen id) take one tick before touching anything, so a
 -- synchronous call fails there with nothing begun, and then run on a thread of
 -- this resource that a cancelled caller cannot leave half-done. The reads of a
@@ -1342,6 +1342,56 @@ AddEventHandler(OPX.Host.RESOURCE_STOP, function(name)
 		for player, barId in pairs(held) do progress.Stop(player, name, barId) end
 	end
 end)
+
+-- ── invoices ─────────────────────────────────────────────────────────────────
+-- A BILL WITH CONSENT, on the invoices module's own rules (`modules/invoices`):
+-- the customer is prompted, pays from the bank (cash as the fallback), the
+-- issuer gets `cutPct` and the company account the rest -- or everything when
+-- no account is named or `accounts` does not run. The caller names the account;
+-- the bill's `source` on the bus is `ext:<caller>`, and a caller withdraws only
+-- the bills it raised. The answer is the bill's id; the outcome arrives on
+-- `opx:on:invoices:paid|refused|expired|cancelled`.
+
+local function invoicesApi()
+	local invoices = OPX.Api.Get('invoices')
+	if invoices == nil or invoices.Issue == nil then return nil end
+	return invoices
+end
+
+local function invoiceSource(caller) return ('ext:' .. caller):sub(1, 32) end
+
+publish('IssueInvoice', 'write', function(caller, issuer, target, amount, reason, options)
+	local invoices = invoicesApi()
+	if invoices == nil then return refuse('error.unavailable') end
+	local from, to = playerOf(issuer), playerOf(target)
+	if from == nil or to == nil or type(amount) ~= 'number' or type(reason) ~= 'string'
+		or (options ~= nil and type(options) ~= 'table') then
+		return refuse('export.badArgument')
+	end
+	options = options or {}
+	return answered(invoices.Issue({ issuer = from, target = to, amount = amount, reason = reason,
+		account = options.account, cutPct = options.cutPct, source = invoiceSource(caller) }))
+end, true)
+
+-- What a loaded player owes: `{ rows = { { id, state, amount, reason, ... } } }`.
+publish('GetInvoices', 'read', function(_, source)
+	local invoices = invoicesApi()
+	if invoices == nil then return refuse('error.unavailable') end
+	local id = playerOf(source)
+	if id == nil then return refuse('export.badArgument') end
+	return answered(invoices.Pending(id))
+end)
+
+publish('CancelInvoice', 'write', function(caller, invoiceId)
+	local invoices = invoicesApi()
+	if invoices == nil then return refuse('error.unavailable') end
+	if math.type(invoiceId) ~= 'integer' then return refuse('export.badArgument') end
+	local read = invoices.Get(invoiceId)
+	if not read.ok or read.value == nil or read.value.source ~= invoiceSource(caller) then
+		return refuse('invoice.notYours')
+	end
+	return answered(invoices.Cancel(invoiceId))
+end, true)
 
 if not hasExports() then
 	Open77.log.warn('[exports] this host has no `exports`: the creator surface is not published')
