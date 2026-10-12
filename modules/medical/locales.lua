@@ -14,6 +14,8 @@ local EN = {
 	['medical.treat.revive'] = 'Stabilise and revive',
 	['medical.treat.heal'] = 'Patch up',
 	['medical.treat.bandage'] = 'Bandage the wounds',
+	['medical.treat.carry'] = 'Carry the patient',
+	['medical.treat.putdown'] = 'Put the patient down',
 	['medical.bar.revive'] = 'Bringing the patient back',
 	['medical.bar.heal'] = 'Treating the patient',
 
@@ -59,6 +61,8 @@ local EN = {
 	['medical.answer.treated'] = 'Patient treated. You earned {amount}.',
 	['medical.answer.subscribed'] = '{tier} contract signed with {service}.',
 	['medical.answer.debt_paid'] = 'Bill settled: {amount}.',
+	['medical.answer.carrying'] = 'You are carrying the patient. Treat again to put them down.',
+	['medical.answer.put_down'] = 'The patient is back on their feet.',
 
 	['medical.error.unavailable'] = 'The medical service is unavailable.',
 	['medical.error.no_menu'] = 'The menu is unavailable.',
@@ -90,6 +94,8 @@ local EN = {
 	['medical.error.cannot_afford'] = 'Not enough money.',
 	['medical.error.no_debt'] = 'Nothing is owed.',
 	['medical.error.debt_outstanding'] = 'Settle your outstanding bill before signing a new contract.',
+	['medical.error.not_carrying'] = 'You are not carrying anybody.',
+	['medical.error.carry_refused'] = 'You cannot pick them up here.',
 }
 
 local FR = {
@@ -102,6 +108,8 @@ local FR = {
 	['medical.treat.revive'] = 'Stabiliser et réanimer',
 	['medical.treat.heal'] = 'Rafistoler',
 	['medical.treat.bandage'] = 'Bander les plaies',
+	['medical.treat.carry'] = 'Porter le patient',
+	['medical.treat.putdown'] = 'Poser le patient',
 	['medical.bar.revive'] = 'Réanimation du patient',
 	['medical.bar.heal'] = 'Soins du patient',
 
@@ -147,6 +155,8 @@ local FR = {
 	['medical.answer.treated'] = 'Patient soigné. Vous gagnez {amount}.',
 	['medical.answer.subscribed'] = 'Contrat {tier} signé avec {service}.',
 	['medical.answer.debt_paid'] = 'Facture réglée : {amount}.',
+	['medical.answer.carrying'] = 'Vous portez le patient. Soignez à nouveau pour le poser.',
+	['medical.answer.put_down'] = 'Le patient est de nouveau sur ses pieds.',
 
 	['medical.error.unavailable'] = "Le service médical n'est pas disponible.",
 	['medical.error.no_menu'] = "Le menu n'est pas disponible.",
@@ -178,6 +188,8 @@ local FR = {
 	['medical.error.cannot_afford'] = "Pas assez d'argent.",
 	['medical.error.no_debt'] = "Rien n'est dû.",
 	['medical.error.debt_outstanding'] = 'Réglez votre facture impayée avant de signer un nouveau contrat.',
+	['medical.error.not_carrying'] = 'Vous ne portez personne.',
+	['medical.error.carry_refused'] = 'Impossible de le soulever ici.',
 }
 
 OPX.Locale.Register('en', EN)

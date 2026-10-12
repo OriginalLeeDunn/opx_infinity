@@ -16771,9 +16771,13 @@ do
 			end
 		end
 
-		local respawns, revives = {}, {}
+		local respawns, revives, fades = {}, {}, {}
 		env.Open77.players.respawn = function(playerId, options)
-			respawns[#respawns + 1] = { playerId = playerId, options = options }
+			respawns[#respawns + 1] = { playerId = playerId, options = options, fadesBefore = #fades }
+			return true
+		end
+		env.Open77.players.fade = function(playerId, out, ms)
+			fades[#fades + 1] = { playerId = playerId, out = out, ms = ms }
 			return true
 		end
 		env.Open77.players.revive = function(playerId, options)
@@ -16831,6 +16835,11 @@ do
 			respawns[1] and tostring(respawns[1].options.health))
 		check('and the record is closed', contract.IsDown(PLAYER).value.down == false)
 		check('with nothing new refused', #refusals() == 1, #refusals())
+		check('the screen went black before the body moved',
+			respawns[1] ~= nil and respawns[1].fadesBefore == 1 and fades[1].out == true)
+		control.Pump(30)
+		check('and comes back once they stand at the medical center',
+			#fades == 2 and fades[2].out == false, #fades)
 
 		-- ── the other way up ──
 		control.Fire('onPlayerLifeStateChanged', PLAYER)
@@ -42317,6 +42326,9 @@ local function medicalConfig(env, file)
 	if file ~= 'config/medical.lua' then return end
 	local trauma = env.OPX.Config.MODULES.medical.SERVICES.trauma
 	trauma.SUBSCRIPTION.DESKS = { { LABEL = 'Test desk', X = 300.0, Y = 0.0, Z = 0.0, RADIUS = 2.0 } }
+	trauma.BEDS = { { LABEL = 'Test bed', X = 400.0, Y = 0.0, Z = 0.0, YAW = 90.0, RADIUS = 1.5, POSE = 'lie' } }
+	env.OPX.Config.MODULES.medical.SERVICES.ripperdoc.BEDS = {}
+	trauma.TREATMENTS.heal.PROP = 'Items.TestMedkit'
 end
 
 -- A loaded character with a job, money and a metadata table the module can write.
@@ -42522,6 +42534,107 @@ do
 			medical.Dispatch.Of('ripperdoc', PATIENT) == nil)
 		medical.Server.OnDownedChanged(PATIENT, { citizenId = 'PATI0001', down = false })
 		check('a patient up by any other means closes the call', medical.Dispatch.Of('trauma', PATIENT) == nil)
+	end
+end
+
+
+section('medical: a carry, a bed, a medkit in hand')
+do
+	local env, control, why = boot('server', nil, nil, medicalConfig)
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local medical = OPX.Modules.Get('medical')
+		local progress = OPX.Modules.Get('progress')
+		local Event = medical.Event
+		local MEDIC, PATIENT = 81, 82
+		medicalCharacter(env, control, MEDIC, 'MEDC0002', 'trauma', 1, { EDDIES = 0, BANK = 0 })
+		medicalCharacter(env, control, PATIENT, 'PATI0002', 'unemployed', 0, { EDDIES = 0, BANK = 5000 })
+		env.Open77.time.unix = function() return 1760000000 end
+		control.Stand(MEDIC, 401.0, 0.0, 0.0)
+		control.Stand(PATIENT, 400.2, 0.0, 0.0)
+
+		local health = { [PATIENT] = 100 }
+		env.Open77.players.getHealth = function(id) return { health = health[id] or 250, maxHealth = 250 } end
+		env.Open77.players.setHealth = function(id, value) health[id] = value; return true end
+		local requests, cancels, placed, stopped, held, released = {}, {}, {}, {}, {}, {}
+		env.Open77.playerInteractions = {
+			request = function(actor, target, kind, options)
+				local state = { id = ('%032d'):format(#requests + 1), kind = kind, actor = tostring(actor),
+					target = tostring(target), phase = 'offered' }
+				requests[#requests + 1] = { state = state, options = options }
+				return state
+			end,
+			cancel = function(id, reason) cancels[#cancels + 1] = { id = id, reason = reason }; return {} end,
+		}
+		env.Open77.animations = env.Open77.animations or {}
+		env.Open77.animations.playAt = function(id, profile, at, yaw, options)
+			placed[#placed + 1] = { id = id, profile = profile, at = at, yaw = yaw }
+			return { playbackId = 'bed-' .. #placed }
+		end
+		env.Open77.animations.stopAt = function(handle) stopped[#stopped + 1] = handle; return true end
+		env.Open77.heldItems = {
+			hold = function(id, record) held[#held + 1] = { id = id, record = record }; return 'req-1' end,
+			release = function(id) released[#released + 1] = id; return 'req-2' end,
+		}
+		local bag = { bounce_back = 3 }
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if name == 'downed' then
+				return { IsDown = function() return { ok = true, value = { down = false } } end }
+			end
+			if name == 'inventory' then
+				return {
+					GetItemCount = function(_, item) return { ok = true, value = bag[item] or 0 } end,
+					RemoveItem = function(_, item, count) bag[item] = bag[item] - count; return { ok = true } end,
+				}
+			end
+			return realGet(name, minimum)
+		end
+
+		-- A heal at the trauma bay: the patient agrees, lies down, the medic holds the kit.
+		medical.Server.OnTreat(MEDIC, { target = PATIENT, service = 'trauma', treatment = 'heal' })
+		local ask = fuelAnswer(control, Event.ASK, PATIENT)
+		check('a heal asks the patient first', ask ~= nil and ask.inviteId ~= nil)
+		env.source = PATIENT
+		control.netEvents[Event.CONSENT]({ inviteId = ask.inviteId, accepted = true })
+		env.source = nil
+		control.Pump(4)
+		check('the patient standing at the bed is laid on it, facing its yaw',
+			#placed == 1 and placed[1].id == PATIENT and placed[1].profile == 'lie' and placed[1].yaw == 90.0)
+		check('so the heal runs under the bar, not as a floor pair', #requests == 0)
+		check('and the medic holds the configured kit in hand',
+			#held == 1 and held[1].id == MEDIC and held[1].record == 'Items.TestMedkit')
+		local bar = fuelAnswer(control, progress.Event.START, MEDIC)
+		for _ = 1, 13 do control.Advance(500); control.Pump(1) end
+		env.source = MEDIC
+		control.netEvents[progress.Event.REPORT](bar.id, 'finished')
+		env.source = nil
+		control.Pump(4)
+		check('the heal lands: half the pool added', health[PATIENT] == 225, health[PATIENT])
+		check('and the patient gets up off the bed and the kit goes back',
+			#stopped == 1 and stopped[1] == 'bed-1' and #released == 1)
+
+		-- Off the bed, a carry.
+		control.Stand(PATIENT, 402.0, 0.0, 0.0)
+		control.Advance(2000)
+		medical.Server.OnTreat(MEDIC, { target = PATIENT, service = 'trauma', treatment = 'carry' })
+		ask = fuelAnswer(control, Event.ASK, PATIENT)
+		env.source = PATIENT
+		control.netEvents[Event.CONSENT]({ inviteId = ask.inviteId, accepted = true })
+		env.source = nil
+		control.Pump(4)
+		check('a carry, once agreed, is the platform\'s two-player carry',
+			#requests == 1 and requests[1].state.kind == 'carry' and requests[1].options.consent == false)
+		control.Advance(2000)
+		medical.Server.OnTreat(MEDIC, { target = PATIENT, service = 'trauma', treatment = 'heal' })
+		local busy = fuelAnswer(control, Event.ANSWER, MEDIC)
+		check('a medic carrying somebody treats nobody else', busy and busy.code == 'busy', busy and busy.code)
+		control.Advance(2000)
+		medical.Server.OnTreat(MEDIC, { treatment = 'putdown' })
+		local down = fuelAnswer(control, Event.ANSWER, MEDIC)
+		check('putting the patient down cancels the carry',
+			#cancels == 1 and cancels[1].id == requests[1].state.id and down.code == 'put_down')
 	end
 end
 

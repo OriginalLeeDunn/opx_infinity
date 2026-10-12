@@ -188,7 +188,7 @@ local function onOptionsView(payload)
 		items[#items + 1] = {
 			id = row.service .. '.' .. row.treatment,
 			label = ('[%s] %s'):format(row.short, OPX.Locale.Exists(row.label) and locale(row.label) or row.label),
-			icon = row.kind == M.Kind.REVIVE and 'heart' or 'heal',
+			icon = row.kind == M.Kind.REVIVE and 'heart' or row.kind == M.Kind.CARRY and 'person' or 'heal',
 			value = row.fee > 0 and money(row.fee, row.moneyType) or nil,
 			description = not row.stocked and locale('medical.options.unstocked') or nil,
 			disabled = not row.stocked,

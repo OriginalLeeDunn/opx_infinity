@@ -438,6 +438,14 @@ local function onGiveUp()
 	end
 
 	local respawn = type(M.Settings.RESPAWN) == 'table' and M.Settings.RESPAWN or {}
+	local fade = type(M.Settings.FADE) == 'table' and M.Settings.FADE or {}
+	local fadeMs = math.floor(clamp(fade.MS, 0, 5000, 600))
+	-- THE SCREEN GOES BLACK BEFORE THE BODY MOVES, so the player wakes at the
+	-- medical center instead of watching the city stream in around them. The
+	-- fade is the platform's own quest fade; its client-side ceiling means a
+	-- fade-in that never arrives costs a pause, never a black screen.
+	local fading = fade.ENABLED ~= false and type(Open77.players.fade) == 'function'
+	if fading then pcall(Open77.players.fade, playerId, true, fadeMs, { timeoutMs = 15000 }) end
 	local ok, reason = Open77.players.respawn(playerId, {
 		position = { x = point.x, y = point.y, z = point.z },
 		heading = point.heading,
@@ -448,11 +456,18 @@ local function onGiveUp()
 		graceMs = math.floor(clamp(respawn.GRACE_MS, 0, 60000, 5000)),
 	})
 	if not ok then
+		if fading then pcall(Open77.players.fade, playerId, false, fadeMs) end
 		audit('downed.giveUp', playerId, false, tostring(reason))
 		return refuse(playerId, 'respawn_refused')
 	end
 	audit('downed.giveUp', playerId, true, tostring(point.label or ''))
 	getUp(playerId, 'gave up')
+	if fading then
+		CreateThread(function()
+			Wait(math.floor(clamp(fade.HOLD_MS, 0, 10000, 1500)))
+			pcall(Open77.players.fade, playerId, false, fadeMs)
+		end)
+	end
 end
 
 -- Stores a departing player's down record for their character, then forgets

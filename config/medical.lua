@@ -122,13 +122,36 @@ OPX.Config.MODULES.medical = {
 			-- ITEMS are consumed from the MEDIC's bag once the act completes,
 			-- name -> count. FEE is billed to the patient, PAY is what the medic is
 			-- paid on top of their salary.
+			--
+			-- PROP is an `Items.*` record the medic holds in the right hand while the
+			-- work runs (`Open77.heldItems.hold`), '' for none. It ships off: no
+			-- medkit record is confirmed against this build's catalogue yet, and a
+			-- wrong one only costs a line in the journal. It shares the right hand
+			-- with weapons, so a drawn gun is put away for it.
 			TREATMENTS = {
 				revive = { KIND = 'revive', LABEL = 'medical.treat.revive', MIN_GRADE = 0,
 					DURATION_MS = 10000, ITEMS = { maxdoc = 1 }, HEALTH = 0.6, GRACE_MS = 5000,
-					FEE = 3000, PAY = 600, ANIMATION = 'examine' },
+					FEE = 3000, PAY = 600, ANIMATION = 'examine', PROP = '' },
 				heal = { KIND = 'heal', LABEL = 'medical.treat.heal', MIN_GRADE = 0,
 					DURATION_MS = 6000, ITEMS = { bounce_back = 1 }, HEAL = 0.5, CONSENT = true,
-					FEE = 800, PAY = 150, ANIMATION = 'examine' },
+					FEE = 800, PAY = 150, ANIMATION = 'examine', PROP = '' },
+			},
+
+
+			-- Carrying a patient to the AV or the clinic: the platform's two-player
+			-- `carry` (the medic walks, the patient is in their arms). The engine
+			-- refuses a dead body, so it is offered on a patient who is UP --
+			-- revived, or hurt and walking -- never on one who is down. CONSENT asks
+			-- the patient first, as a heal does.
+			CARRY = { ENABLED = true, DURATION_S = 180, CONSENT = true, MIN_GRADE = 0 },
+
+			-- Treatment beds. A patient standing within RADIUS of one when a heal
+			-- starts is laid on it (`Open77.animations.playAt`, POSE 'lie') for the
+			-- length of the bar instead of sitting wounded on the floor. Placeholders
+			-- at 0,0,0 are disabled; stand at the bed and paste your position and
+			-- the yaw the body should face.
+			BEDS = {
+				{ LABEL = 'TTI - trauma bay', X = 0.0, Y = 0.0, Z = 0.0, YAW = 0.0, RADIUS = 1.5, POSE = 'lie' },
 			},
 
 			BILLING = {
@@ -168,10 +191,16 @@ OPX.Config.MODULES.medical = {
 				-- An apprentice can bandage; standing a body back up takes a doc.
 				revive = { KIND = 'revive', LABEL = 'medical.treat.revive', MIN_GRADE = 1,
 					DURATION_MS = 15000, ITEMS = { maxdoc = 1 }, HEALTH = 0.35, GRACE_MS = 3000,
-					FEE = 1200, PAY = 300, ANIMATION = 'examine' },
+					FEE = 1200, PAY = 300, ANIMATION = 'examine', PROP = '' },
 				bandage = { KIND = 'heal', LABEL = 'medical.treat.bandage', MIN_GRADE = 0,
 					DURATION_MS = 4000, ITEMS = { bandage = 1 }, HEAL = 0.2, CONSENT = true,
-					FEE = 150, PAY = 40, ANIMATION = 'examine' },
+					FEE = 150, PAY = 40, ANIMATION = 'examine', PROP = '' },
+			},
+
+
+			CARRY = { ENABLED = true, DURATION_S = 120, CONSENT = true, MIN_GRADE = 0 },
+			BEDS = {
+				{ LABEL = 'Back-alley table', X = 0.0, Y = 0.0, Z = 0.0, YAW = 0.0, RADIUS = 1.5, POSE = 'lie' },
 			},
 
 			BILLING = {

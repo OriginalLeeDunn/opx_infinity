@@ -893,6 +893,9 @@ permissions {
   "players.controls",
 
   "players.animations.control",
+  -- `Open77.players.fade` (FadePlayerScreen): the fade to black around a give up
+  -- in `modules/downed/server/main.lua`. The client consumes the relay itself.
+  "players.screen",
   "animations.presentation",
 
   -- `Open77.playerInteractions.request` and `cancel`, the platform's two-player

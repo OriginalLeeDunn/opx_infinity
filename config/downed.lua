@@ -16,6 +16,10 @@ OPX.Config.MODULES.downed = {
 		GRACE_MS = 5000,
 	},
 
+	-- The fade to black around a give up: out before the body moves, in once it
+	-- stands at the medical center HOLD_MS later. Durations in milliseconds.
+	FADE = { ENABLED = true, MS = 600, HOLD_MS = 1500 },
+
 	-- Respawn points, the nearest to the fall winning. Replace the starter row
 	-- with your own medical centers.
 	HOSPITALS = {

@@ -98,6 +98,8 @@ local function treatment(key, raw)
 		pay = whole(raw.PAY, 0, 10000000, 0),
 		animation = type(raw.ANIMATION) == 'string' and raw.ANIMATION:match('^[%w_]+$')
 			and raw.ANIMATION or nil,
+		-- An `Items.*` record held in the medic's right hand while the work runs.
+		prop = type(raw.PROP) == 'string' and raw.PROP:match('^Items%.[%w_]+$') and raw.PROP or nil,
 	}
 end
 
@@ -137,12 +139,30 @@ local function desks(raw)
 	return out
 end
 
+-- Treatment beds: a patient standing at one is laid down on it for a heal.
+local function beds(raw)
+	local out = {}
+	if type(raw) ~= 'table' then return out end
+	for index, row in ipairs(raw) do
+		if type(row) == 'table' and not Model.IsPlaceholder(row) then
+			local x, y, z = coordinate(row.X), coordinate(row.Y), coordinate(row.Z)
+			if x and y and z then
+				out[#out + 1] = { index = index, label = text(row.LABEL, ''), x = x, y = y, z = z,
+					yaw = bounded(row.YAW, -360, 360, 0), radius = bounded(row.RADIUS, 0.5, 5, 1.5),
+					pose = type(row.POSE) == 'string' and row.POSE:match('^[%w_]+$') and row.POSE or 'lie' }
+			end
+		end
+	end
+	return out
+end
+
 local function service(key, raw, globals)
 	if type(raw) ~= 'table' then return nil end
 	local dispatch = type(raw.DISPATCH) == 'table' and raw.DISPATCH or {}
 	local subscription = type(raw.SUBSCRIPTION) == 'table' and raw.SUBSCRIPTION or {}
 	local billing = type(raw.BILLING) == 'table' and raw.BILLING or {}
 	local blip = type(raw.BLIP) == 'table' and raw.BLIP or {}
+	local carry = type(raw.CARRY) == 'table' and raw.CARRY or {}
 
 	local treatments, order = {}, {}
 	for name, row in pairs(type(raw.TREATMENTS) == 'table' and raw.TREATMENTS or {}) do
@@ -178,6 +198,13 @@ local function service(key, raw, globals)
 		},
 		treatments = treatments,
 		treatmentOrder = order,
+		carry = {
+			enabled = carry.ENABLED == true,
+			durationMs = whole(carry.DURATION_S, 10, 600, 180) * 1000,
+			consent = carry.CONSENT ~= false,
+			minGrade = whole(carry.MIN_GRADE, 0, 100, 0),
+		},
+		beds = beds(raw.BEDS),
 		billing = {
 			enabled = billing.ENABLED ~= false,
 			moneyType = moneyType(billing.MONEY_TYPE, 'BANK'),
@@ -345,12 +372,25 @@ function Model.Problems(raw)
 						'disabled. Stand on each spot in game and paste your position in'):format(name, blanks, total)
 				end
 			end
+			local bedBlanks, bedTotal = 0, 0
+			for _, bed in ipairs(type(row.BEDS) == 'table' and row.BEDS or {}) do
+				bedTotal = bedTotal + 1
+				if Model.IsPlaceholder(bed) then bedBlanks = bedBlanks + 1 end
+			end
+			if bedBlanks > 0 then
+				lines[#lines + 1] = ('%s: %d of %d BEDS ARE STILL THE PLACEHOLDER 0,0,0 -- they are ' ..
+					'disabled'):format(name, bedBlanks, bedTotal)
+			end
 			local count = 0
 			for treatKey, treat in pairs(type(row.TREATMENTS) == 'table' and row.TREATMENTS or {}) do
 				count = count + 1
 				if treatment(treatKey, treat) == nil then
 					lines[#lines + 1] = ('%s treatment %s: KIND must be revive or heal and DURATION_MS ' ..
 						'a number of milliseconds; it is disabled'):format(name, tostring(treatKey))
+				elseif type(treat) == 'table' and treat.PROP ~= nil and treat.PROP ~= ''
+					and (type(treat.PROP) ~= 'string' or not treat.PROP:match('^Items%.[%w_]+$')) then
+					lines[#lines + 1] = ('%s treatment %s: PROP must be an Items.* record, or \'\' ' ..
+						'for none'):format(name, tostring(treatKey))
 				end
 			end
 			if count == 0 then

@@ -70,9 +70,13 @@ M.Event = {
 	ON_SUBSCRIBED = OPX.Event(LOCAL, 'medical', 'subscribed'),
 }
 
---- The two kinds of treatment. A third would need a third branch on the server,
---- so the set is closed here rather than spelt at each site.
-M.Kind = { REVIVE = 'revive', HEAL = 'heal' }
+--- The kinds of act. REVIVE and HEAL are configured TREATMENTS; CARRY is the
+--- service's own CARRY block, offered beside them. A fourth would need a fourth
+--- branch on the server, so the set is closed here rather than spelt at each site.
+M.Kind = { REVIVE = 'revive', HEAL = 'heal', CARRY = 'carry' }
+
+--- The two pseudo-treatment names the client may send beside a configured one.
+M.CARRY, M.PUT_DOWN = 'carry', 'putdown'
 
 --- Why a call exists.
 M.Reason = {

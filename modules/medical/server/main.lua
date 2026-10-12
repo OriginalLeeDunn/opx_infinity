@@ -363,6 +363,8 @@ local function unfit(patient, kind)
 	if kind == Kind.REVIVE then
 		return (not down) and 'not_down' or nil
 	end
+	-- The engine carries a living body only: a patient who is down is revived first.
+	if kind == Kind.CARRY then return down and 'is_down' or nil end
 	if down then return 'is_down' end
 	local current, maximum = healthOf(patient)
 	if current == nil then return 'no_health' end
@@ -385,9 +387,24 @@ local function balanceOf(player, moneyType)
 	return read and (math.tointeger(OPX.Math.Finite(value) or 0) or 0) or 0
 end
 
+-- The CARRY block of a service, shaped as a treatment so it rides the same
+-- consent, busy and release paths. Nothing is consumed, billed or paid.
+local function carryOf(svc)
+	if not svc.carry.enabled then return nil end
+	return { key = M.CARRY, kind = Kind.CARRY, label = 'medical.treat.carry', minGrade = svc.carry.minGrade,
+		durationMs = svc.carry.durationMs, consent = svc.carry.consent, items = {}, fee = 0, pay = 0 }
+end
+
 -- Every treatment a medic may give a patient now, as rows for the client.
 local function optionsFor(medic, patient)
 	local rows = {}
+	-- Carrying somebody: the only thing to do with them is put them down.
+	local holding = busy[medic]
+	if holding ~= nil and holding.treat.kind == Kind.CARRY and holding.interactionId ~= nil then
+		rows[1] = { service = holding.svc.key, short = holding.svc.short, treatment = M.PUT_DOWN,
+			label = 'medical.treat.putdown', kind = Kind.CARRY, fee = 0, stocked = true }
+		return rows
+	end
 	for _, key in ipairs(config().serviceOrder) do
 		local svc = config().services[key]
 		for _, name in ipairs(svc.treatmentOrder) do
@@ -401,6 +418,11 @@ local function optionsFor(medic, patient)
 					moneyType = svc.billing.moneyType, stocked = stocked,
 				}
 			end
+		end
+		local carry = carryOf(svc)
+		if carry ~= nil and member(medic, svc, carry.minGrade) and not downState(patient) then
+			rows[#rows + 1] = { service = key, short = svc.short, treatment = M.CARRY, label = carry.label,
+				kind = Kind.CARRY, fee = 0, stocked = true }
 		end
 	end
 	return rows
@@ -455,6 +477,19 @@ local function release(job)
 	if busy[job.medic] == job then busy[job.medic] = nil end
 	if treating[job.patient] == job then treating[job.patient] = nil end
 	if job.interactionId ~= nil then byInteraction[job.interactionId] = nil end
+	-- The bed and the prop are this treatment's, and end with it whatever ended it.
+	if job.bedPlayback ~= nil then
+		local animations = Open77.animations
+		if type(animations) == 'table' and type(animations.stopAt) == 'function' then
+			pcall(animations.stopAt, job.bedPlayback)
+		end
+		job.bedPlayback = nil
+	end
+	if job.holding then
+		local held = Open77.heldItems
+		if type(held) == 'table' and type(held.release) == 'function' then pcall(held.release, job.medic) end
+		job.holding = nil
+	end
 end
 
 -- The act itself: a revive through the downed contract, a heal through the host.
@@ -480,6 +515,10 @@ local function finish(job, completed, ending)
 	if job.done then return end
 	job.done = true
 	release(job)
+	-- A carry is not a treatment: however it ended, the patient is on their feet.
+	if job.treat.kind == Kind.CARRY then
+		return answer(job.medic, true, 'put_down')
+	end
 	if not completed then
 		answer(job.medic, false, 'interrupted')
 		return
@@ -563,26 +602,112 @@ local function startPair(job)
 	return true
 end
 
+-- The platform's two-player carry: the medic walks, the patient is in their arms.
+local function startCarry(job)
+	local native = Open77.playerInteractions
+	if type(native) ~= 'table' or type(native.request) ~= 'function' then return false, 'carry_refused' end
+	local read, state, reason = pcall(native.request, job.medic, job.patient, 'carry', {
+		durationMs = job.treat.durationMs,
+		startDistance = math.min(10, config().reach),
+		breakDistance = math.min(20, config().reach + 4),
+		consent = false,
+	})
+	if not read or type(state) ~= 'table' or type(state.id) ~= 'string' then
+		Open77.log.debug('[medical] carry refused: ' .. tostring(read and reason or state))
+		return false, 'carry_refused'
+	end
+	job.interactionId = state.id
+	byInteraction[state.id] = job
+	return true
+end
+
+-- The usable bed of a service the patient stands at, or nil.
+local function bedFor(svc, patient)
+	local there = positionOf(patient)
+	if there == nil then return nil end
+	for _, bed in ipairs(svc.beds) do
+		if within(there, { x = bed.x, y = bed.y, z = bed.z, bucket = there.bucket }, bed.radius) then
+			return bed
+		end
+	end
+	return nil
+end
+
+-- Lays the patient on a bed for the length of a heal. Answers whether they lie.
+local function layDown(job, bed)
+	local animations = Open77.animations
+	if type(animations) ~= 'table' or type(animations.playAt) ~= 'function' then return false end
+	local read, placed, reason = pcall(animations.playAt, job.patient, bed.pose,
+		{ x = bed.x, y = bed.y, z = bed.z }, bed.yaw, { loop = true })
+	if not read or type(placed) ~= 'table' or type(placed.playbackId) ~= 'string' then
+		Open77.log.debug('[medical] bed refused: ' .. tostring(read and reason or placed))
+		return false
+	end
+	job.bedPlayback = placed.playbackId
+	return true
+end
+
+-- Puts the treatment's prop in the medic's right hand. A refusal costs the prop.
+local function holdProp(job)
+	if job.treat.prop == nil then return end
+	local held = Open77.heldItems
+	if type(held) ~= 'table' or type(held.hold) ~= 'function' then return end
+	local read, request, reason = pcall(held.hold, job.medic, job.treat.prop)
+	if read and request ~= nil then
+		job.holding = true
+	else
+		Open77.log.debug(('[medical] %s could not be held: %s'):format(job.treat.prop,
+			tostring(read and reason or request)))
+	end
+end
+
 local function begin(job)
 	busy[job.medic], treating[job.patient] = job, job
+	if job.treat.kind == Kind.CARRY then
+		local carrying, why = startCarry(job)
+		if not carrying then release(job) end
+		return carrying, why
+	end
 	local ok, why
 	if job.treat.kind == Kind.HEAL then
-		local paired = startPair(job)
-		if paired == true then return true end
-		-- No coordinator, or it refused (a vehicle, a reservation): the bar.
+		-- At a bed, the patient lies on it under the bar; anywhere else they sit
+		-- wounded through the two-player heal.
+		local bed = bedFor(job.svc, job.patient)
+		if not (bed ~= nil and layDown(job, bed)) then
+			local paired = startPair(job)
+			if paired == true then
+				holdProp(job)
+				return true
+			end
+			-- No coordinator, or it refused (a vehicle, a reservation): the bar.
+		end
 	end
 	ok, why = startBar(job)
 	if not ok then
 		release(job)
 		return false, why
 	end
+	holdProp(job)
 	return true
 end
 
 local function onTreat(player, payload)
 	if type(payload) ~= 'table' then return answer(player, false, 'invalid') end
+	-- Putting a carried patient down needs no service, no target and no check:
+	-- it only ever releases what this medic holds.
+	if payload.treatment == M.PUT_DOWN then
+		local holding = busy[player]
+		if holding == nil or holding.treat.kind ~= Kind.CARRY or holding.interactionId == nil then
+			return answer(player, false, 'not_carrying')
+		end
+		local native = Open77.playerInteractions
+		if type(native) == 'table' and type(native.cancel) == 'function' then
+			pcall(native.cancel, holding.interactionId, 'put_down')
+		end
+		return finish(holding, false, 'put_down')
+	end
 	local svc = config().services[payload.service]
-	local treat = svc and svc.treatments[payload.treatment]
+	local treat = svc and (payload.treatment == M.CARRY and carryOf(svc) or svc.treatments[payload.treatment])
 	local patient = math.tointeger(tonumber(payload.target))
 	if treat == nil or patient == nil or patient == player then return answer(player, false, 'no_treatment') end
 	if busy[player] ~= nil then return answer(player, false, 'busy') end
@@ -603,9 +728,9 @@ local function onTreat(player, payload)
 	local job = { medic = player, patient = patient, svc = svc, treat = treat, tier = tier,
 		offContract = offContract, fee = fee }
 
-	-- CONSENT: a heal on a body that can still say no asks first. A revive never
-	-- does -- the body cannot answer, and a biomonitor contract is the consent.
-	if treat.kind == Kind.HEAL and treat.consent then
+	-- CONSENT: a heal or a carry on a body that can still say no asks first. A
+	-- revive never does -- the body cannot answer, and a contract is the consent.
+	if (treat.kind == Kind.HEAL or treat.kind == Kind.CARRY) and treat.consent then
 		nextInvite = nextInvite % 2147483646 + 1
 		job.inviteId, job.expiresMs = nextInvite, OPX.Now() + CONSENT_MS
 		invites[nextInvite] = job
@@ -618,7 +743,7 @@ local function onTreat(player, payload)
 	end
 	local started, failure = begin(job)
 	if not started then return answer(player, false, failure) end
-	answer(player, true, 'started')
+	answer(player, true, treat.kind == Kind.CARRY and 'carrying' or 'started')
 end
 
 local function onConsent(player, payload)
@@ -632,7 +757,7 @@ local function onConsent(player, payload)
 	end
 	local started, failure = begin(job)
 	if not started then return answer(job.medic, false, failure) end
-	answer(job.medic, true, 'started')
+	answer(job.medic, true, job.treat.kind == Kind.CARRY and 'carrying' or 'started')
 end
 
 -- Reads a coordinator state, a table or the JSON the server events may carry.
