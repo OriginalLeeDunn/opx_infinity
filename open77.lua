@@ -134,6 +134,9 @@ shared_script "config/ripperdoc.lua"
 -- Shared: the client draws the access points and brokers it reads here, and the
 -- server re-derives every one. See modules/netrunner/module.lua.
 shared_script "config/netrunner.lua"
+-- Shared: the client reads the talk key and the route here; the server re-derives
+-- every channel and gate. See modules/radio/module.lua.
+shared_script "config/radio.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -606,6 +609,16 @@ shared_script "modules/netrunner/shared/access.lua"
 server_script "modules/netrunner/server/main.lua"
 client_script "modules/netrunner/client/main.lua"
 
+-- Radio: service channels on the platform's voice. After `character`
+-- (required), `inventory`, `menu` and `downed` (optional), all ordered above.
+-- No new permission: `voice.manage` (server memberships), `voice.client` (the
+-- talk route) and `input.actions` (the talk key) are declared below already.
+shared_script "modules/radio/module.lua"
+shared_script "modules/radio/locales.lua"
+shared_script "modules/radio/shared/model.lua"
+server_script "modules/radio/server/main.lua"
+client_script "modules/radio/client/main.lua"
+
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before
 -- `admin`, which stays last.
@@ -909,6 +922,10 @@ permissions {
   -- player would HEAR the call while nobody heard them -- half a conversation,
   -- refused silently on their own machine, which is the shape of failure this
   -- manifest's comments keep coming back to.
+  --
+  -- `modules/radio` uses both too: on the server `createChannel`, `addPlayer`,
+  -- `removePlayer`, `setChannelPlayerPermissions` and `removeChannel` for the
+  -- service channels; on the client `setTransmitting` while its talk key is held.
   "voice.manage",
   "voice.client",
 

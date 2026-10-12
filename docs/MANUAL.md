@@ -685,6 +685,24 @@ Contract `netrunner` v1 (server): `CamerasBlind(network)`, `Objectives()`,
 Staff: `/opx.netrunner.capture <network> <node> [kind]`, `/opx.netrunner.networks`.
 Every position ships as `0,0,0` and its network stays disabled until surveyed.
 
+### Radio
+
+`modules/radio` + `config/radio.lua`. A **channel** is a config entry (NCPD dispatch,
+NCPD command, MaxTac, Trauma, the shared `interagency` band for the three, ripperdoc,
+Delamain, Arasaka, Militech; gang frequencies ship `ENABLED = false`) gated by
+`JOBS` / `GANGS` through `OPX.JobGate.EvaluateGroups` (primary job, `ON_DUTY`), backed
+by one resource-owned `Open77.voice` channel in mode `radio` with a band-pass and hiss.
+`AUTO` channels are joined when the character qualifies and every channel is left when
+they stop (`opx:on:character:job` / `gang` / `loaded`, `opx:on:inventory:items` for the
+`radio` handset, registered at boot, `REQUIRE_ITEM`), plus a sweep. `/opx.radio` or
+using the handset opens the menu: power, join / leave, select, mute (per channel,
+server-side `canListen`). **A member is a listener until the talk key (CAPSLOCK,
+rebindable) is held**: the server lifts `canSpeak` on the selected channel for as long
+as it is held (`MAX_TALK_MS` cap, never while downed), so a holocall's `all` route or
+the platform's own voice key never reach a radio channel. Contract `radio` (server):
+`Join(player, channel)`, `Leave(player, channel)`, `Channels(player)`; bus
+`opx:on:radio:changed`. `/opx.radio.channels` (staff) lists them.
+
 ### Emotes
 
 `animations` offers **every animation the platform has** (**"toutes les animations,
