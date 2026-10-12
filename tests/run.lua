@@ -42138,6 +42138,671 @@ do
 	check('a client booting with 96 pumps keeps every resume under 4,500', worst < 4500, worst)
 end
 
+-- ── contracts: the fixer / merc gig board ───────────────────────────────────
+-- `modules/contracts`. The rules are pure and checked on their own numbers; the
+-- server is booted with one surveyed drop-off, one zone and one district fixer
+-- patched in after `config/contracts.lua` loads, the storage swapped for an
+-- in-memory table that keeps the same compare-and-swap and ledger contract, a
+-- real character roster so cash really moves, and an inventory fake that holds
+-- the parcels.
+
+local function contractsConfig(env, file)
+	if file == 'config/contracts.lua' then
+		local config = env.OPX.Config.MODULES.contracts
+		config.DROPOFFS.test_drop = { LABEL = 'Test drop', DISTRICT = 'Watson', X = 100.0, Y = 0.0,
+			Z = 0.0, RADIUS = 2.0, NPC = { RECORD = 'Character.VendorMale', YAW = 0.0 } }
+		config.ZONES.test_zone = { LABEL = 'Test zone', DISTRICT = 'Watson', X = 300.0, Y = 0.0,
+			Z = 0.0, RADIUS = 10.0 }
+		config.FIXERS = {
+			test_fixer = { NAME = 'Test Fixer', DISTRICT = 'Watson', X = 200.0, Y = 0.0, Z = 0.0,
+				YAW = 0.0, RECORD = 'Character.VendorFemale',
+				GENERATE = { WHEN = 'never', MAX_OPEN = 1, EVERY_S = 60, CUT_PCT = 20,
+					DEADLINE_S = 3600 },
+				TEMPLATES = { { TYPE = 'deliver_item', TITLE = 'NPC run', BRIEF = 'Go.',
+					TARGETS = { 'test_drop' }, REWARD = { MIN = 500, MAX = 500 } } } },
+		}
+		config.MINT_PER_HOUR = 1200
+	elseif file == 'modules/contracts/server/storage.lua' then
+		-- The in-memory twin of the three tables: the same answers, the same CAS.
+		local store = { rows = {}, ledger = {}, history = {}, nextId = 0 }
+		local function copy(t)
+			local out = {}
+			for k, v in pairs(t) do out[k] = v end
+			return out
+		end
+		local S = env.OPX.Modules.Get('contracts').Storage
+		S.Insert = function(record)
+			store.nextId = store.nextId + 1
+			local row = copy(record)
+			row.id = store.nextId
+			store.rows[row.id] = row
+			return { ok = true, value = row.id }
+		end
+		S.Move = function(record, from, rev)
+			local row = store.rows[record.id]
+			if row == nil or row.state ~= from or row.rev ~= rev then return { ok = true, value = false } end
+			store.rows[record.id] = copy(record)
+			return { ok = true, value = true }
+		end
+		S.Forget = function(id)
+			if store.rows[id] and store.rows[id].state == 'locking' then store.rows[id] = nil end
+			return { ok = true, value = 1 }
+		end
+		S.LoadOpen = function()
+			local out = {}
+			for _, row in pairs(store.rows) do
+				if env.OPX.Modules.Get('contracts').Access.IsOpen(row.state) then out[#out + 1] = copy(row) end
+			end
+			table.sort(out, function(a, b) return a.id < b.id end)
+			return { ok = true, value = out }
+		end
+		S.Reserve = function(op)
+			local row = store.ledger[op.id]
+			if row then return { ok = true, value = { fresh = false, state = row.state } } end
+			store.ledger[op.id] = { state = 'reserved', amount = op.amount, citizenId = op.citizenId,
+				phase = op.phase, contractId = op.contractId }
+			return { ok = true, value = { fresh = true, state = 'reserved' } }
+		end
+		S.Settle = function(id, state)
+			local row = store.ledger[id]
+			if row and row.state == 'reserved' then row.state = state end
+			return { ok = true, value = 1 }
+		end
+		S.Rearm = function(id)
+			local row = store.ledger[id]
+			if row and row.state == 'cancelled' then row.state = 'reserved' return { ok = true, value = true } end
+			return { ok = true, value = false }
+		end
+		S.Pending = function()
+			local out = {}
+			for id, row in pairs(store.ledger) do
+				if row.state == 'reserved' then
+					out[#out + 1] = { id = id, contractId = row.contractId, phase = row.phase,
+						citizenId = row.citizenId, amount = row.amount }
+				end
+			end
+			return { ok = true, value = out }
+		end
+		S.Committed = function(id)
+			return { ok = true, value = store.ledger[id] ~= nil and store.ledger[id].state == 'committed' }
+		end
+		S.MintedLastHour = function()
+			local sum = 0
+			for _, row in pairs(store.ledger) do
+				if row.phase == 'mint' and row.state == 'committed' then sum = sum + row.amount end
+			end
+			return { ok = true, value = sum }
+		end
+		S.History = function(contractId, actor, from, to, data)
+			store.history[#store.history + 1] = { contractId = contractId, actor = actor, from = from, to = to }
+			return { ok = true, value = #store.history }
+		end
+		env.contractsStore = store
+	end
+end
+
+local function contractsBridge()
+	return Host.Database({
+		scalar = function() return 1 end,
+		update = function() return 1 end,
+		query = function() return {} end,
+		single = function() return nil end,
+		insert = function() return 1 end,
+		transaction = function() return true end,
+	})
+end
+
+-- A character standing in the roster with a job, a wallet and live metadata.
+local function contractsCharacter(env, control, source, citizenId, job, grade, cash, onDuty)
+	-- A real citizen id: `AddMoneyOffline` parses it, checksum and all. The
+	-- name a test passes is only a label for the reader.
+	local _ = citizenId
+	local player = standCharacter(env, control, source, env.OPX.CitizenId.Generate(),
+		{ EDDIES = cash, BANK = 0 })
+	local data = player.PlayerData
+	data.job = { name = job, onDuty = onDuty ~= false, grade = { name = job, level = grade } }
+	data.jobs = { [job] = grade }
+	data.metadata = {}
+	player.Functions.SetMetaData = function(key, value) data.metadata[key] = value end
+	player.Functions.GetMetaData = function(key)
+		if key == nil then return data.metadata end
+		return data.metadata[key]
+	end
+	return player
+end
+
+-- The parcels, in place of the real inventory contract.
+local function contractsInventory(OPX)
+	local fake = { bags = {}, registered = {}, room = true }
+	local realGet = OPX.Api.Get
+	local api = {
+		RegisterItem = function(name, definition, owner)
+			fake.registered[#fake.registered + 1] = { name = name, definition = definition, owner = owner }
+			return { ok = true, value = { name = name } }
+		end,
+		CanCarry = function() return { ok = true, value = fake.room } end,
+		AddItem = function(target, name, count, metadata)
+			fake.bags[target] = fake.bags[target] or {}
+			table.insert(fake.bags[target], { name = name, count = count, metadata = metadata })
+			return { ok = true }
+		end,
+		RemoveWhere = function(target, name, match)
+			local taken = 0
+			for key, bag in pairs(fake.bags) do
+				-- A citizen id reaches every bag here; the gig tag tells them apart.
+				if key == target or type(target) == 'string' then
+					for index = #bag, 1, -1 do
+						local item = bag[index]
+						local fits = item.name == name
+						for field, value in pairs(match) do
+							if item.metadata == nil or item.metadata[field] ~= value then fits = false end
+						end
+						if fits then
+							taken = taken + item.count
+							table.remove(bag, index)
+						end
+					end
+				end
+			end
+			return { ok = true, value = taken }
+		end,
+	}
+	OPX.Api.Get = function(name, minimum)
+		if name == 'inventory' then return api end
+		return realGet(name, minimum)
+	end
+	return fake
+end
+
+-- Runs a server action on a thread, as every network handler does, and answers it.
+local function contractsRun(env, control, fn)
+	local answer = nil
+	env.CreateThread(function() answer = table.pack(fn()) end)
+	control.Pump(3)
+	return table.unpack(answer or {})
+end
+
+local function contractsLast(control, name, player)
+	for index = #control.clientEvents, 1, -1 do
+		local event = control.clientEvents[index]
+		if event.name == name and event.source == player then return event[1], index end
+	end
+	return nil
+end
+
+section('contracts: the rules, on their own numbers')
+do
+	local env, control, why = boot('server', contractsBridge(), nil, contractsConfig)
+	check('the server boots with the contracts module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local contracts = OPX.Modules.Get('contracts')
+		local Access = contracts.Access
+		check('the module is running', OPX.Modules.IsRunning('contracts'),
+			OPX.Modules.Record('contracts').Reason)
+
+		local merc, cut = Access.Split(1000, 15)
+		check('a split pays the merc the reward minus the fixer\'s cut', merc == 850 and cut == 150)
+		merc, cut = Access.Split(999, 15)
+		check('the cut rounds DOWN and the two shares always add up to the reward',
+			cut == 149 and merc + cut == 999, ('%d + %d'):format(merc, cut))
+		check('a cut outside 0..100 is clamped, never minted',
+			select(2, Access.Split(100, 250)) == 100 and select(2, Access.Split(100, -5)) == 0)
+		local low, high = Access.CutBounds(0)
+		local _, high2 = Access.CutBounds(2)
+		check('a Runner may ask 10..15 %, a Fixer up to 30 % (FIXER_CUT.BY_GRADE)',
+			low == 10 and high == 15 and high2 == 30, ('%d..%d / %d'):format(low, high, high2))
+		check('the fine is FAIL_PENALTY_PCT of the reward', Access.Penalty(1000) == 100)
+
+		local after = Access.CredAfter({ cred = 3, done = 1, failed = 0 }, 'abandoned')
+		check('cred never falls below zero, and a failure is counted',
+			after.cred == 0 and after.failed == 1 and after.done == 1)
+		after = Access.CredAfter(nil, 'done')
+		check('a first job done is +10 cred', after.cred == 10 and after.done == 1)
+		local tier, label = Access.Tier(250)
+		check('250 cred is the Solo tier', tier == 3 and label == 'Solo', label)
+		check('a tier index answers its minimum', Access.TierMin(2) == 50 and Access.TierMin(99) == nil)
+
+		local posted = { state = 'posted', posterCid = 'FIX1', minCred = 50 }
+		check('a gig is hidden from a merc below its cred',
+			not Access.Visible(posted, { citizenId = 'M1', cred = 10 })
+				and Access.Visible(posted, { citizenId = 'M1', cred = 50 }))
+		check('and from its own poster, and once it is taken',
+			not Access.Visible(posted, { citizenId = 'FIX1', cred = 999 })
+				and not Access.Visible({ state = 'in_progress', minCred = 0 }, { citizenId = 'M1', cred = 0 }))
+
+		check('the state graph refuses walking a paid gig back',
+			Access.Allowed('posted', 'accepted') and Access.Allowed('settling', 'paid')
+				and not Access.Allowed('paid', 'posted') and not Access.Allowed('posted', 'paid'))
+
+		local spec, code = Access.NormalizeSpec({ type = 'deliver_item', title = '  Run \1it ',
+			reward = 1000 }, { cutLow = 10, cutHigh = 15 })
+		check('a spec is cleaned: control characters blanked, trimmed, defaults filled',
+			spec ~= nil and spec.title == 'Run  it' and spec.cutPct == 15 and spec.deadlineS == 3600
+				and spec.validate == 'auto', code)
+		check('a reward outside REWARD is refused',
+			select(2, Access.NormalizeSpec({ type = 'manual', title = 'x', reward = 50 })) == 'bad_reward'
+				and select(2, Access.NormalizeSpec({ type = 'manual', title = 'x', reward = 1e9 }))
+					== 'bad_reward')
+		check('a cut above the poster\'s ceiling is refused',
+			select(2, Access.NormalizeSpec({ type = 'manual', title = 'x', reward = 500, cutPct = 30 },
+				{ cutLow = 10, cutHigh = 15 })) == 'bad_cut')
+		check('a manual gig is validated by hand by default',
+			Access.NormalizeSpec({ type = 'manual', title = 'x', reward = 500 }).validate == 'manual')
+		check('a title of nothing is refused',
+			select(2, Access.NormalizeSpec({ type = 'manual', title = '   ', reward = 500 })) == 'bad_title')
+
+		local board = Access.Public({ id = 1, type = 'deliver_item', title = 't', reward = 1000,
+			cutPct = 20, objective = { dropoff = 'test_drop' }, state = 'posted' },
+			function() return 'Test drop', 'Watson' end)
+		check('a board row carries the pay and the district, never a position',
+			board.pay == 800 and board.district == 'Watson' and board.x == nil and board.objective == nil)
+		check('a pick is deterministic from its seed',
+			Access.Pick(42, 7) == Access.Pick(42, 7) and Access.Pick(42, 7) >= 1 and Access.Pick(42, 7) <= 7)
+
+		check('a surveyed drop-off is usable and a 0,0,0 one is not',
+			Access.Dropoff('test_drop') ~= nil and Access.Dropoff('watson_kabuki_market') == nil)
+		local said = false
+		for _, line in ipairs(control.log.warn) do
+			if line:find('DROPOFFS', 1, true) and line:find('PLACEHOLDER', 1, true)
+				and line:find('watson_kabuki_market', 1, true) then said = true end
+		end
+		check('and the journal names every placeholder drop-off at boot', said)
+		check('and Problems() reports them, so a boot with them says so',
+			#Access.Problems() >= 1)
+	end
+end
+
+section('contracts: a gig posted, taken, delivered and paid')
+do
+	local env, control, why = boot('server', contractsBridge(), nil, contractsConfig)
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local contracts = OPX.Modules.Get('contracts')
+		local Server, Event = contracts.Server, contracts.Event
+		local inventory = contractsInventory(OPX)
+		local store = env.contractsStore
+		check('the board loaded from storage', Server.IsLoaded())
+		local F, R, R2 = 81, 82, 83
+		local fixer = contractsCharacter(env, control, F, 'FIX00001', 'fixer', 2, 5000)
+		local merc = contractsCharacter(env, control, R, 'MRC00001', 'merc', 0, 100)
+		local merc2 = contractsCharacter(env, control, R2, 'MRC00002', 'merc', 0, 100)
+		local paid = {}
+		env.AddEventHandler(Event.ON_PAID, function(_, payload) paid[#paid + 1] = payload end)
+
+		local ok, id = contractsRun(env, control, function()
+			return Server.Post(F, { type = 'deliver_item', target = 'd:test_drop', title = 'Run it',
+				brief = 'Quick.', reward = '1000', cut = 15, deadline = 3600, tier = 1 })
+		end)
+		check('a fixer posts a delivery', ok == true and type(id) == 'number', id)
+		check('the reward and the posting fee are LOCKED IN ESCROW at once',
+			fixer.PlayerData.money.EDDIES == 5000 - 1000 - 50, fixer.PlayerData.money.EDDIES)
+		local gig = Server.Contracts()[id]
+		check('the gig is on the board', gig ~= nil and gig.state == 'posted')
+		check('the escrow is a committed ledger row, the fee another',
+			store.ledger[('contracts:%d:reserve'):format(id)].state == 'committed'
+				and store.ledger[('contracts:%d:fee'):format(id)].amount == 50)
+
+		local board = Server.Board(R)
+		check('a merc sees it, with the pay after the cut and no position',
+			#board.rows == 1 and board.rows[1].pay == 850 and board.rows[1].x == nil
+				and board.rows[1].district == 'Watson')
+		check('and the fixer does not see their own gig to take', #Server.Board(F).rows == 0
+			and #Server.Board(F).posted == 1)
+
+		ok, why = contractsRun(env, control, function() return Server.Accept(F, id) end)
+		check('a fixer cannot take a gig (TAKERS)', not ok and why == 'job_required', why)
+		ok, why = contractsRun(env, control, function() return Server.Accept(R, id) end)
+		check('a merc takes it', ok == true, why)
+		check('it is in progress, and the merc is frozen on it',
+			gig.state == 'in_progress' and gig.mercCid == merc.PlayerData.citizenId)
+		check('the parcel is in the merc\'s bag, tagged with the gig',
+			inventory.bags[R] and inventory.bags[R][1].metadata.contract == id
+				and inventory.registered[1].name == 'contract_package')
+		local active = contractsLast(control, Event.ACTIVE, R)
+		check('the merc is sent the waypoint to the drop-off',
+			type(active) == 'table' and active.id == id and active.waypoint.x == 100.0, active)
+		ok, why = contractsRun(env, control, function() return Server.Accept(R2, id) end)
+		check('a second merc finds it gone', not ok and why == 'not_available', why)
+		check('the second merc\'s board no longer lists it', #Server.Board(R2).rows == 0)
+
+		control.Stand(R, 150.0, 0.0, 0.0)
+		ok, why = contractsRun(env, control, function() return Server.Deliver(R, nil) end)
+		check('a delivery away from the drop-off is refused too_far', not ok and why == 'too_far', why)
+		control.Stand(R2, 100.5, 0.0, 0.0)
+		ok, why = contractsRun(env, control, function() return Server.Deliver(R2, nil) end)
+		check('somebody else at the drop-off has nothing to deliver', not ok and why == 'no_delivery', why)
+		control.Stand(R, 101.0, 0.0, 0.0)
+		ok, why = contractsRun(env, control, function() return Server.Deliver(R, '999') end)
+		check('an NPC that is not this drop-off is refused', not ok and why == 'wrong_dropoff', why)
+		ok, why = contractsRun(env, control, function() return Server.Deliver(R, nil) end)
+		check('standing on the drop-off, the delivery goes through', ok == true, why)
+		check('the parcel was taken back out of the bag', #inventory.bags[R] == 0)
+		check('the gig is paid and closed', gig.state == 'paid' and Server.Contracts()[id] == nil)
+		check('the merc is paid the reward minus the cut', merc.PlayerData.money.EDDIES == 100 + 850,
+			merc.PlayerData.money.EDDIES)
+		check('the fixer gets the cut back', fixer.PlayerData.money.EDDIES == 3950 + 150,
+			fixer.PlayerData.money.EDDIES)
+		check('the merc earns street cred', merc.PlayerData.metadata.contracts ~= nil
+			and merc.PlayerData.metadata.contracts.cred == 10 and merc.PlayerData.metadata.contracts.done == 1)
+		check('the bus hears it paid, with no position on it',
+			#paid == 1 and paid[1].id == id and paid[1].objective == nil and paid[1].mercCid == merc.PlayerData.citizenId)
+		check('and the merc\'s screen is told the gig is over', contractsLast(control, Event.ACTIVE, R) == false)
+		local moves = 0
+		for _, line in ipairs(store.history) do if line.contractId == id then moves = moves + 1 end end
+		check('every state change left a history line', moves >= 5, moves)
+
+		-- A replayed settlement pays nobody twice.
+		local before = merc.PlayerData.money.EDDIES
+		local again = { id = id, state = 'settling', outcome = 'paid', rev = 99, type = 'deliver_item',
+			reward = 1000, cutPct = 15, funded = 'player', posterKind = 'player', posterCid = fixer.PlayerData.citizenId,
+			payerCid = fixer.PlayerData.citizenId, mercCid = merc.PlayerData.citizenId, minCred = 0, validate = 'auto', objective = {},
+			deadlineAt = 0, title = 'Run it' }
+		store.rows[id] = again
+		contractsRun(env, control, function() return Server.Reconcile() end)
+		check('a settlement replayed after a restart finds its receipts and moves no money',
+			merc.PlayerData.money.EDDIES == before and fixer.PlayerData.money.EDDIES == 4100
+				and store.rows[id].state == 'paid', merc.PlayerData.money.EDDIES)
+
+		-- Cancel: the escrow comes back, the fee does not.
+		local cash = fixer.PlayerData.money.EDDIES
+		local _, second = contractsRun(env, control, function()
+			return Server.Post(F, { type = 'manual', target = '', title = 'Talk to Judy', reward = 500,
+				cut = 10, deadline = 3600, tier = 1 })
+		end)
+		ok, why = contractsRun(env, control, function() return Server.Cancel(R, second) end)
+		check('nobody but the poster may pull a gig', not ok and why == 'not_yours', why)
+		ok = contractsRun(env, control, function() return Server.Cancel(F, second) end)
+		check('the poster pulls it and the escrow comes back, less the fee',
+			ok and fixer.PlayerData.money.EDDIES == cash - 50, fixer.PlayerData.money.EDDIES)
+
+		-- Not enough money, and the cap on open gigs.
+		fixer.PlayerData.money.EDDIES = 200
+		ok, why = contractsRun(env, control, function()
+			return Server.Post(F, { type = 'manual', target = '', title = 'Broke', reward = 500, cut = 10,
+				deadline = 3600, tier = 1 })
+		end)
+		check('a fixer who cannot cover reward and fee is refused, and nothing is taken',
+			not ok and why == 'not_enough_money' and fixer.PlayerData.money.EDDIES == 200, why)
+		fixer.PlayerData.money.EDDIES = 100000
+		ok, why = contractsRun(env, control, function()
+			return Server.Post(F, { type = 'deliver_item', target = 'z:test_zone', title = 'Mismatch',
+				reward = 500, cut = 10, deadline = 3600, tier = 1 })
+		end)
+		check('a delivery to a zone is refused bad_target', not ok and why == 'bad_target', why)
+		ok, why = contractsRun(env, control, function()
+			return Server.Post(F, { type = 'deliver_item', target = 'd:watson_kabuki_market', title = 'x',
+				reward = 500, cut = 10, deadline = 3600, tier = 1 })
+		end)
+		check('a placeholder drop-off cannot be posted to', not ok and why == 'bad_target', why)
+		ok, why = contractsRun(env, control, function()
+			return Server.Post(F, { type = 'manual', target = '', title = 'Greedy', reward = 500, cut = 99,
+				deadline = 3600, tier = 1 })
+		end)
+		check('a cut above the grade\'s ceiling is refused', not ok and why == 'bad_cut', why)
+		ok, why = contractsRun(env, control, function()
+			return Server.Post(R, { type = 'manual', target = '', title = 'Merc post', reward = 500,
+				cut = 10, deadline = 3600, tier = 1 })
+		end)
+		check('a merc cannot post (POSTERS)', not ok and why == 'job_required', why)
+	end
+end
+
+section('contracts: abandon, expiry, a zone held, a manual sign-off, a district fixer')
+do
+	local env, control, why = boot('server', contractsBridge(), nil, contractsConfig)
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local contracts = OPX.Modules.Get('contracts')
+		local Server = contracts.Server
+		local inventory = contractsInventory(OPX)
+		local F, B, R = 91, 92, 93
+		local fixer = contractsCharacter(env, control, F, 'FIX00010', 'fixer', 0, 100000)
+		local broker = contractsCharacter(env, control, B, 'FIX00011', 'fixer', 1, 0)
+		local merc = contractsCharacter(env, control, R, 'MRC00010', 'merc', 0, 1000)
+		merc.PlayerData.metadata.contracts = { cred = 20, done = 2, failed = 0 }
+		local function post(fields)
+			fields.cut = fields.cut or 10
+			fields.deadline = fields.deadline or 3600
+			fields.tier = fields.tier or 1
+			return contractsRun(env, control, function() return Server.Post(F, fields) end)
+		end
+
+		-- Abandon: refund, fine, cred.
+		local _, id = post({ type = 'deliver_item', target = 'd:test_drop', title = 'Flake', reward = 1000 })
+		contractsRun(env, control, function() return Server.Accept(R, id) end)
+		local cash = fixer.PlayerData.money.EDDIES
+		local ok, why2 = contractsRun(env, control, function() return Server.Abandon(R, id) end)
+		check('a merc walks away from a gig', ok == true, why2)
+		check('the escrow goes back to the fixer, with the merc\'s fine on top',
+			fixer.PlayerData.money.EDDIES == cash + 1000 + 100, fixer.PlayerData.money.EDDIES - cash)
+		check('the merc pays FAIL_PENALTY_PCT', merc.PlayerData.money.EDDIES == 900,
+			merc.PlayerData.money.EDDIES)
+		check('the parcel is taken back', #(inventory.bags[R] or {}) == 0)
+		check('and the merc loses street cred (abandoned: -8)',
+			merc.PlayerData.metadata.contracts.cred == 12 and merc.PlayerData.metadata.contracts.failed == 1)
+
+		-- A gig above the merc's tier is invisible and refused.
+		local _, high = post({ type = 'manual', target = '', title = 'Big league', reward = 5000, tier = 3 })
+		check('a gig needing Solo is hidden from a Nobody', #Server.Board(R).rows == 0)
+		ok, why2 = contractsRun(env, control, function() return Server.Accept(R, high) end)
+		check('and refused cred_too_low if asked anyway', not ok and why2 == 'cred_too_low', why2)
+
+		-- Expiry on the board.
+		cash = fixer.PlayerData.money.EDDIES
+		control.Advance(3601 * 1000)
+		Server.Sweep()
+		control.Pump(3)
+		check('a gig nobody took expires at its deadline, and the escrow comes back',
+			Server.Contracts()[high] == nil and fixer.PlayerData.money.EDDIES == cash + 5000,
+			fixer.PlayerData.money.EDDIES - cash)
+
+		-- A zone held.
+		_, id = post({ type = 'reach_zone', target = 'z:test_zone', title = 'Stand there', reward = 400 })
+		contractsRun(env, control, function() return Server.Accept(R, id) end)
+		local before = merc.PlayerData.money.EDDIES
+		control.Stand(R, 305.0, 0.0, 0.0)
+		Server.Sweep()
+		control.Advance(5000)
+		Server.Sweep()
+		control.Stand(R, 400.0, 0.0, 0.0)
+		Server.Sweep()
+		control.Stand(R, 305.0, 0.0, 0.0)
+		Server.Sweep()
+		control.Advance(9000)
+		Server.Sweep()
+		check('leaving the zone starts the clock again', Server.Contracts()[id] ~= nil
+			and Server.Contracts()[id].state == 'in_progress')
+		control.Advance(2000)
+		Server.Sweep()
+		control.Pump(3)
+		check('holding the zone for HOLD_MS is the proof, and an auto gig pays at once',
+			Server.Contracts()[id] == nil and merc.PlayerData.money.EDDIES == before + 360,
+			merc.PlayerData.money.EDDIES - before)
+
+		-- Manual: report, then a broker signs off.
+		_, id = post({ type = 'manual', target = '', title = 'Scare a ganger', reward = 600 })
+		contractsRun(env, control, function() return Server.Accept(R, id) end)
+		ok, why2 = contractsRun(env, control, function() return Server.Rule(B, id, true) end)
+		check('nothing to sign off before the merc reports', not ok and why2 == 'nothing_to_validate', why2)
+		ok = contractsRun(env, control, function() return Server.Report(R, id) end)
+		check('the merc reports it done and it waits for a fixer', ok
+			and Server.Contracts()[id].state == 'proof')
+		before = merc.PlayerData.money.EDDIES
+		ok, why2 = contractsRun(env, control, function() return Server.Rule(R, id, true) end)
+		check('a merc cannot sign off their own work', not ok, why2)
+		ok, why2 = contractsRun(env, control, function() return Server.Rule(B, id, true) end)
+		check('a broker of VALIDATE_GRADE signs it off and the merc is paid',
+			ok and merc.PlayerData.money.EDDIES == before + 540, why2)
+		check('the cut goes to the fixer who posted it, not to the broker',
+			broker.PlayerData.money.EDDIES == 0)
+
+		-- Manual timeout: disputed, then staff.
+		_, id = post({ type = 'manual', target = '', title = 'Quiet job', reward = 600 })
+		contractsRun(env, control, function() return Server.Accept(R, id) end)
+		contractsRun(env, control, function() return Server.Report(R, id) end)
+		control.Advance(3601 * 1000)
+		Server.Sweep()
+		control.Pump(3)
+		check('a manual gig nobody signs off goes DISPUTED, escrow held',
+			Server.Contracts()[id] ~= nil and Server.Contracts()[id].state == 'disputed')
+		before = merc.PlayerData.money.EDDIES
+		ok = contractsRun(env, control, function() return Server.Resolve(id, 'paid', 'staff:test') end)
+		check('staff settle it paid', ok and merc.PlayerData.money.EDDIES == before + 540)
+
+		-- A district fixer posts only when no player fixer is on duty.
+		fixer.PlayerData.job.onDuty = false
+		broker.PlayerData.job.onDuty = false
+		-- Off in every other section, so no NPC gig crowds a board under test.
+		OPX.Config.MODULES.contracts.FIXERS.test_fixer.GENERATE.WHEN = 'no_player_fixer'
+		control.Advance(61000)
+		contractsRun(env, control, function() return Server.Generate() end)
+		local npcGig = nil
+		for _, contract in pairs(Server.Contracts()) do
+			if contract.posterKind == 'npc' then npcGig = contract end
+		end
+		check('with no fixer on duty, the district fixer posts from a template',
+			npcGig ~= nil and npcGig.posterName == 'Test Fixer' and npcGig.funded == 'mint'
+				and npcGig.reward == 500 and npcGig.cutPct == 20)
+		control.Advance(61000)
+		contractsRun(env, control, function() return Server.Generate() end)
+		local count = 0
+		for _, contract in pairs(Server.Contracts()) do
+			if contract.posterKind == 'npc' then count = count + 1 end
+		end
+		check('and never past MAX_OPEN', count == 1, count)
+		before = merc.PlayerData.money.EDDIES
+		contractsRun(env, control, function() return Server.Accept(R, npcGig.id) end)
+		control.Stand(R, 100.0, 0.0, 0.0)
+		ok = contractsRun(env, control, function() return Server.Deliver(R, nil) end)
+		check('an NPC gig pays the merc in new money, and the NPC cut is destroyed',
+			ok and merc.PlayerData.money.EDDIES == before + 400, merc.PlayerData.money.EDDIES - before)
+		control.Advance(61000)
+		contractsRun(env, control, function() return Server.Generate() end)
+		local second = nil
+		for _, contract in pairs(Server.Contracts()) do
+			if contract.posterKind == 'npc' then second = contract end
+		end
+		check('400 minted and 500 more fit under MINT_PER_HOUR 1,200: the next one is posted',
+			second ~= nil)
+		if second ~= nil then
+			contractsRun(env, control, function() return Server.Accept(R, second.id) end)
+			contractsRun(env, control, function() return Server.Deliver(R, nil) end)
+		end
+		control.Advance(61000)
+		contractsRun(env, control, function() return Server.Generate() end)
+		count = 0
+		for _, contract in pairs(Server.Contracts()) do
+			if contract.posterKind == 'npc' then count = count + 1 end
+		end
+		check('800 minted: a third 500 would pass the hourly cap and is not posted', count == 0, count)
+		fixer.PlayerData.job.onDuty = true
+	end
+end
+
+section('contracts: what a hostile client gets')
+do
+	local env, control, why = boot('server', contractsBridge(), nil, contractsConfig)
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local contracts = OPX.Modules.Get('contracts')
+		local Event = contracts.Event
+		contractsInventory(OPX)
+		local F, R = 95, 96
+		local fixer = contractsCharacter(env, control, F, 'FIX00020', 'fixer', 0, 10000)
+		contractsCharacter(env, control, R, 'MRC00020', 'merc', 0, 0)
+		local junk = { 'x', 12, true, {}, { verb = 'accept', id = {} }, { verb = 'nope', id = 1 },
+			{ verb = 'accept', id = 1e300 }, { verb = 'validate', id = -1 } }
+		local raised = 0
+		for _, payload in ipairs(junk) do
+			env.source = R
+			local okCall = pcall(control.netEvents[Event.ACT], payload)
+			if not okCall then raised = raised + 1 end
+			okCall = pcall(control.netEvents[Event.POST], payload)
+			if not okCall then raised = raised + 1 end
+			okCall = pcall(control.netEvents[Event.DELIVER], payload)
+			if not okCall then raised = raised + 1 end
+			control.Advance(600)
+			control.Pump(2)
+		end
+		env.source = nil
+		check('no junk payload raises inside a handler', raised == 0, raised)
+		env.source = F
+		control.netEvents[Event.POST]({ type = 'manual', target = '', title = { nested = true },
+			reward = 500, cut = 10, deadline = 3600, tier = 1 })
+		env.source = nil
+		control.Pump(3)
+		check('a nested field never reaches the validator: the post is refused, nothing taken',
+			fixer.PlayerData.money.EDDIES == 10000 and next(contracts.Server.Contracts()) == nil)
+		env.source = F
+		for _ = 1, 20 do control.netEvents[Event.BOARD]() end
+		env.source = nil
+		local boards = 0
+		for _, event in ipairs(control.clientEvents) do
+			if event.name == Event.SHOW_BOARD and event.source == F then boards = boards + 1 end
+		end
+		check('the board is rate limited', boards > 0 and boards <= 8, boards)
+		check('/gigs and /postgig are registered commands', control.commands['gigs'] ~= nil
+			and control.commands['postgig'] ~= nil and control.commands['opx.contracts.resolve'] ~= nil
+			and control.commands['opx.contracts.resolve'].restricted == true)
+		local npcs = 0
+		for _ in pairs(contracts.Server.Npcs()) do npcs = npcs + 1 end
+		check('NPCs stand only on surveyed spots (one fixer, one drop-off)',
+			npcs == 2 or type(env.Open77.npcs) ~= 'table', npcs)
+	end
+end
+
+section('contracts: the client draws the board and the form inside its budget')
+do
+	local env, control, why = boot('client', nil)
+	check('the client boots with the contracts module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local contracts = OPX.Modules.Get('contracts')
+		check('the client half is running', OPX.Modules.IsRunning('contracts'),
+			OPX.Modules.Record('contracts').Reason)
+		local rows = {}
+		for index = 1, 30 do
+			rows[index] = { id = index, type = 'deliver_item', title = ('Gig number %d'):format(index),
+				brief = 'A brief that is long enough to be a real one, choom.', reward = 1000 + index,
+				pay = 850, cutPct = 15, minCred = 0, state = 'posted', poster = 'Regina Jones',
+				target = 'Kabuki', district = 'Watson', validate = 'auto' }
+		end
+		local board = { cred = 12, done = 2, failed = 1, tier = 'Nobody', nextCred = 50, isTaker = true,
+			isPoster = true, currency = 'EDDIES', rows = rows, posted = { rows[1] }, review = { rows[2] },
+			mine = { id = 99, type = 'deliver_item', title = 'Mine', state = 'in_progress', pay = 400,
+				reward = 500, cutPct = 20, secondsLeft = 600 } }
+		local worst = resumeCost(env, control, function()
+			control.netEvents[contracts.Event.SHOW_BOARD](board)
+		end, 80)
+		local menu = OPX.Api.Get('menu')
+		local state = menu.State().value
+		check('a full board opens a menu, built and opened paced on a thread',
+			state.open == true and state.menu == 'contracts.board', state.menu)
+		check('and no resume of a 30-gig board passes 6,000 instructions', worst < 6000, worst)
+		local form = OPX.Api.Get('form')
+		cost = callCost(control.netEvents[contracts.Event.SHOW_FORM], {
+			types = { 'deliver_item', 'reach_zone', 'manual' },
+			targets = { { value = '', kind = 'none' }, { value = 'd:a', label = 'A', district = 'W',
+				kind = 'dropoff' } },
+			tiers = { { label = 'Nobody', min = 0 }, { label = 'Solo', min = 200 } },
+			cut = { low = 10, high = 30, step = 5, default = 15 }, deadlines = { 1800, 3600 },
+			deadline = 3600, reward = { min = 100, max = 50000 }, fee = 50, titleMax = 64,
+			briefMax = 160, currency = 'EDDIES' })
+		local formState = form.State().value
+		check('the posting form opens with its eight fields',
+			formState.open == true and formState.total == 8, formState.total)
+		check('within budget', cost < 9000, cost)
+		control.netEvents[contracts.Event.ACTIVE]({ id = 5, type = 'deliver_item', title = 'Run',
+			waypoint = { x = 1.0, y = 2.0, z = 3.0 }, target = 'Kabuki' })
+		control.netEvents[contracts.Event.ACTIVE](false)
+		check('an active gig and its end are taken without a raise', true)
+	end
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the
