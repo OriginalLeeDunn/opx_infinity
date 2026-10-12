@@ -40130,8 +40130,20 @@ do
 		local beforeHello = #control.clientEvents
 		control.netEvents['opx:net:inventory:hello']()
 		local late = sentAfter(control, beforeHello, 'opx:net:inventory:catalog')
+		-- Read across every part: this resource's own modules register runtime
+		-- items too (contraband, chrome, decks), so the creator's item is in the
+		-- list wherever `pairs` put it, not necessarily first.
+		local sawBurger = false
+		for index = beforeHello + 1, #control.clientEvents do
+			local event = control.clientEvents[index]
+			if event.name == 'opx:net:inventory:catalog' and event.source == 703 then
+				for _, row in ipairs(event[1]) do
+					if row.name == 'my_burger' then sawBurger = true end
+				end
+			end
+		end
 		check('a client that says hello later is sent every runtime item',
-			late ~= nil and late.source == 703 and late[1][1].name == 'my_burger')
+			late ~= nil and late.source == 703 and sawBurger)
 		-- The hello sends the whole runtime list, and no event may carry more
 		-- than a client can validate in one resume: at eight a part, a part of
 		-- items at the validator's bounds overran the budget and was lost.
@@ -40147,7 +40159,13 @@ do
 			local event = control.clientEvents[index]
 			if event.name == 'opx:net:inventory:catalog' and event.source == 704 then
 				parts = parts + 1
-				carried = carried + #event[1]
+				-- Only the creators' items (`ext:<resource>`) are this check's
+				-- count; a module of this resource registers its own beside them.
+				for _, row in ipairs(event[1]) do
+					if type(row.owner) == 'string' and row.owner:sub(1, 4) == 'ext:' then
+						carried = carried + 1
+					end
+				end
 				widest = math.max(widest, #event[1])
 			end
 		end
@@ -43410,6 +43428,644 @@ do
 			waypoint = { x = 1.0, y = 2.0, z = 3.0 }, target = 'Kabuki' })
 		control.netEvents[contracts.Event.ACTIVE](false)
 		check('an active gig and its end are taken without a raise', true)
+	end
+end
+
+-- ── underworld ───────────────────────────────────────────────────────────────
+-- `modules/underworld`: the pure model on its own numbers, the gang gate added
+-- to `lib/shared/jobgate.lua`, then the server booted with one surveyed entry of
+-- each kind patched in after `config/underworld.lua` loads, a real character
+-- contract and the real progress module, an inventory fake that counts bags,
+-- and a database fake that keeps the laundering batches and the escrow rows.
+section('underworld: the model, on its own numbers')
+do
+	local env, _, why = boot('server', Host.Database({
+		query = function() return {} end, single = function() return nil end,
+		scalar = function() return 0 end, insert = function() return 1 end,
+		update = function() return 1 end, transaction = function() return true end,
+	}))
+	check('the server boots with the module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local M = OPX.Modules.Get('underworld')
+		local Model = M.Model
+		check('the module is declared and has a model', M ~= nil and Model ~= nil)
+
+		check('the hash is FNV-1a and stable', Model.Hash('') == 2166136261 and Model.Hash('a') == 0xE40C292C,
+			Model.Hash('a'))
+		local same, inside = true, true
+		for index = 1, 200 do
+			local roll = Model.Roll('op' .. index, 'reward', 800, 2200)
+			if roll ~= Model.Roll('op' .. index, 'reward', 800, 2200) then same = false end
+			if roll < 800 or roll > 2200 or math.type(roll) ~= 'integer' then inside = false end
+		end
+		check('a roll is drawn from the op id: the same op rolls the same', same)
+		check('and always inside its bounds, a whole number', inside)
+		check('a different salt rolls something else for the same op',
+			Model.Roll('op1', 'a', 0, 1000000) ~= Model.Roll('op1', 'b', 0, 1000000))
+		check('a chance of 0 never comes up, of 1 always',
+			not Model.Chance('x', 'y', 0) and Model.Chance('x', 'y', 1))
+		local hits = 0
+		for index = 1, 1000 do if Model.Chance('seed' .. index, 'alarm', 0.3) then hits = hits + 1 end end
+		check('a chance of 0.3 comes up about three times in ten', hits > 220 and hits < 380, hits)
+		local bx, by = Model.Blur(100, 200, 50, 'op9')
+		check('a blurred point stays within its radius',
+			math.sqrt((bx - 100) ^ 2 + (by - 200) ^ 2) <= 50.0001)
+		check('and a radius of 0 is the point itself', select(1, Model.Blur(1, 2, 0, 's')) == 1)
+
+		-- The till: one back every REGROW, never past MAX.
+		local charges, at = Model.Regrow(0, 2, 1000, 0, 2500)
+		check('a till regrows one charge per period and keeps the remainder', charges == 2 and at == 2500,
+			charges .. '/' .. at)
+		charges, at = Model.Regrow(0, 3, 1000, 0, 1500)
+		check('one period gone is one charge, counted from the period\'s end', charges == 1 and at == 1000)
+		charges = Model.Regrow(1, 3, 1000, 5000, 4000)
+		check('a clock that ran backwards grows nothing', charges == 1)
+		charges = Model.Regrow(9, 3, 1000, 0, 0)
+		check('a stored count past the max reads as the max', charges == 3)
+
+		local list = { { at = 0, amount = 500 }, { at = 5000, amount = 300 } }
+		check('the mint cap counts what is inside the window', Model.CapLeft(list, 6000, 3000, 1000) == 700
+			and #list == 1)
+		check('and no cap is no ceiling', Model.CapLeft({}, 0, 1000, nil) == math.huge)
+		check('opening hours wrap midnight', Model.InHours(23, { 20, 5 }) and Model.InHours(2, { 20, 5 })
+			and not Model.InHours(12, { 20, 5 }))
+		check('and no clock, or no hours, is always open', Model.InHours(nil, { 20, 5 }) and Model.InHours(3, nil))
+		check('addiction decays by the hour, never below zero',
+			Model.Decay(10, 0, 7200, 2) == 6 and Model.Decay(1, 0, 36000, 2) == 0)
+		check('a clean price carries the premium and rounds up', Model.Price(100, 1.2, 3, true, 1.4) == 504
+			and Model.Price(100, 1, 2, false, 1.4) == 200)
+		check('a front keeps its cut, rounded down', Model.Clean(1000, 0.75) == 750 and Model.Clean(3, 0.5) == 1)
+
+		-- The shipped config: every entry is a placeholder until surveyed.
+		local built, problems, placeholders = Model.Build(OPX.Config.MODULES.underworld)
+		check('the shipped config builds with no problem', #problems == 0, table.concat(problems, '; '))
+		check('and every shipped entry waits for a survey (0, 0, 0)',
+			#placeholders == 14 and #built.stores.list == 0 and #built.dealers.list == 0, #placeholders)
+		check('the drugs and the street deal are read', built.drugs.black_lace ~= nil
+			and built.street.items.synthcoke ~= nil and built.dirty.item == 'dirty_eddies')
+
+		local fixture = {
+			ROBBERIES = { STORES = {
+				{ ID = 'a', X = 1, Y = 2, Z = 3, REWARD = { MIN = 10, MAX = 5 } },
+				{ ID = 'b', X = 1, Y = 2, Z = 3, REWARD = { MIN = 1, MAX = 5 }, REGISTER = { MAX = 2 } },
+				{ ID = 'b', X = 1, Y = 2, Z = 3, REWARD = { MIN = 1, MAX = 5 } },
+				{ ID = 'bad id!', X = 1, Y = 2, Z = 3 },
+			} },
+			LAUNDERING = { FRONTS = { { ID = 'f', X = 1, Y = 1, Z = 1, RATE_PCT = 2 },
+				{ ID = 'g', X = 1, Y = 1, Z = 1, RATE_PCT = 0.5, GANGS = { tygerclaws = 'x' } } } },
+			BLACKMARKET = { DEALERS = { { ID = 'd', RECORD = 'Vehicle.nope', SPOTS = { { X = 1, Y = 1, Z = 1 } } } } },
+		}
+		built, problems = Model.Build(fixture)
+		local text = table.concat(problems, '\n')
+		check('a REWARD with MIN above MAX is refused by name', text:find('store a: REWARD', 1, true) ~= nil)
+		check('a second entry with one ID is refused', text:find('ID b is used twice', 1, true) ~= nil)
+		check('an ID that is not a word is refused', text:find('store #4: ID', 1, true) ~= nil)
+		check('a RATE_PCT above 1 is refused', text:find('front f: RATE_PCT', 1, true) ~= nil)
+		check('a malformed GANGS is named, through the job gate\'s own rule',
+			text:find('front g: GANGS entries', 1, true) ~= nil)
+		check('a dealer that is not a Character record is refused', text:find('dealer d: RECORD', 1, true) ~= nil)
+		check('and the good entries load', built.stores.byId.b ~= nil and built.stores.byId.b.max == 2
+			and built.fronts.byId.g ~= nil)
+		local only = Model.Build({ ROBBERIES = fixture.ROBBERIES, LAUNDERING = fixture.LAUNDERING },
+			{ stores = true })
+		check('one part may be read on its own', only.stores.byId.b ~= nil and only.fronts.byId.g == nil)
+	end
+end
+
+section('underworld: the gang gate beside the job gate')
+do
+	local env, _, why = boot('server', Host.Database({
+		query = function() return {} end, single = function() return nil end,
+		scalar = function() return 0 end, insert = function() return 1 end,
+		update = function() return 1 end, transaction = function() return true end,
+	}))
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local Gate = env.OPX.JobGate
+		local now = 1000
+		local policy = { maxAgeMs = 60000 }
+		local claw = { job = { name = 'unemployed', grade = { level = 0 } }, jobs = {},
+			gang = { name = 'tygerclaws', grade = { level = 1 } }, gangs = { tygerclaws = 1 }, atMs = now }
+		check('an entry with neither list is public, with no snapshot at all',
+			Gate.EvaluateGroups({}, nil, now, policy) == true)
+		check('a gang member at the grade passes', Gate.EvaluateGroups({ gangs = { tygerclaws = 1 } }, claw,
+			now, policy) == true)
+		local ok, code = Gate.EvaluateGroups({ gangs = { tygerclaws = 2 } }, claw, now, policy)
+		check('one grade short is refused gang_grade_too_low', ok == false and code == 'gang_grade_too_low', code)
+		ok, code = Gate.EvaluateGroups({ gangs = { valentinos = 0 } }, claw, now, policy)
+		check('another gang is refused gang_required', ok == false and code == 'gang_required', code)
+		ok = Gate.EvaluateGroups({ gangs = { valentinos = 0 }, jobs = { unemployed = 0 } }, claw, now, policy)
+		check('either list lets in: the job opens what the gang does not', ok == true)
+		ok, code = Gate.EvaluateGroups({ gangs = { tygerclaws = 0 } }, { gang = claw.gang, atMs = 1 }, 100000,
+			policy)
+		check('a stale snapshot closes a gang gate too', ok == false and code == 'job_stale', code)
+		ok, code = Gate.EvaluateGroups({ gangs = { tygerclaws = 2 }, jobs = { ncpd = 0 } }, claw, now, policy)
+		check('the closest near-miss across both lists is named', code == 'gang_grade_too_low', code)
+		check('the job gate itself answers as it always did',
+			Gate.Evaluate({ jobs = { ncpd = 0 } }, claw, now, policy) == false
+				and select(2, Gate.Evaluate({ jobs = { ncpd = 0 } }, claw, now, policy)) == 'job_required')
+		check('a GANGS block is checked like a JOBS block',
+			#Gate.GangProblems({ tygerclaws = 'x' }, 'here') == 1 and #Gate.GangProblems({ tygerclaws = 0 }, 'here') == 0
+				and #Gate.GangProblems('nope', 'here') == 1)
+	end
+end
+
+section('underworld: robberies, dealers, fronts, labs and drugs on the server')
+do
+	-- What the database fake keeps: batches, escrow rows, and every write.
+	local db = { batches = {}, escrow = {}, writes = {}, nextBatch = 0 }
+	local bridge = Host.Database({
+		query = function(sql, params)
+			if sql:find('FROM opx77_underworld_batches', 1, true) then
+				local rows = {}
+				for _, batch in ipairs(db.batches) do
+					if batch.citizen == params.citizen and batch.front == params.front and batch.collected == 0 then
+						rows[#rows + 1] = { id = batch.id, dirty = batch.dirty, clean = batch.clean,
+							payout = batch.payout, remaining = batch.remaining }
+					end
+				end
+				return rows
+			end
+			if sql:find('FROM opx77_underworld_escrow', 1, true) then return db.escrow end
+			return {}
+		end,
+		single = function() return nil end,
+		scalar = function(sql, params)
+			if sql:find('SUM(dirty)', 1, true) then
+				local sum = 0
+				for _, batch in ipairs(db.batches) do
+					if batch.citizen == params.citizen then sum = sum + batch.dirty end
+				end
+				return sum
+			end
+			return 0
+		end,
+		insert = function(sql, params)
+			if sql:find('opx77_underworld_batches', 1, true) then
+				db.nextBatch = db.nextBatch + 1
+				db.batches[#db.batches + 1] = { id = db.nextBatch, citizen = params.citizen, front = params.front,
+					dirty = params.dirty, clean = params.clean, payout = params.payout,
+					remaining = params.seconds, collected = 0 }
+				return db.nextBatch
+			end
+			return 1
+		end,
+		update = function(sql, params)
+			db.writes[#db.writes + 1] = { sql = tostring(sql), params = type(params) == 'table' and params or {} }
+			if sql:find('SET collected = 1', 1, true) then
+				for _, batch in ipairs(db.batches) do
+					if batch.id == params.id and batch.collected == 0 and batch.remaining <= 0 then
+						batch.collected = 1
+						return 1
+					end
+				end
+				return 0
+			end
+			return 1
+		end,
+		transaction = function() return true end,
+	})
+
+	-- One surveyed entry of each kind, patched in after the config loads.
+	local function fixture(env, file)
+		if file ~= 'config/underworld.lua' then return end
+		local config = env.OPX.Config.MODULES.underworld
+		config.ALERT = { CHANCE = 1, DELAY_MS = { 0, 0 }, WITNESS_CHANCE = 1, BLUR_RADIUS = 0 }
+		config.MINT_CAPS = { WINDOW_MINUTES = 60, robbery = 20000, fence = 400 }
+		config.RATE_LIMIT = { WINDOW_MS = 1000, REQUESTS = 100 }
+		config.ROBBERIES.STORES = { { ID = 'test_store', LABEL = 'Test 24/7', X = 100.0, Y = 0.0, Z = 0.0,
+			REWARD = { MIN = 800, MAX = 2200 }, DURATION_MS = 5000, MIN_POLICE = 1,
+			REGISTER = { MAX = 1, REGROW_MINUTES = 1 }, PLAYER_COOLDOWN_MIN = 20, REQUIRE_WEAPON = true } }
+		config.BLACKMARKET.DEALERS = { { ID = 'test_dealer', LABEL = 'Test fence', RECORD = 'Character.test',
+			SPOTS = { { X = 200.0, Y = 0.0, Z = 0.0 }, { X = 210.0, Y = 0.0, Z = 0.0 } }, ROTATE_MINUTES = 30,
+			STOCK = { { ITEM = 'glitter', PRICE = 80, QTY = 3, RESTOCK_MINUTES = 1 },
+				{ ITEM = 'black_lace', PRICE = 500, QTY = 2, DIRTY_ONLY = true } },
+			BUYS = { { ITEM = 'stolen_goods', PRICE = 180 } } } }
+		config.LAUNDERING.FRONTS = {
+			{ ID = 'test_front', LABEL = 'Test front', X = 300.0, Y = 0.0, Z = 0.0, RATE_PCT = 0.75,
+				PER_TX_MAX = 2000, DAILY_CAP = 2500, MINUTES_PER_BATCH = 0, PAYOUT = 'BANK' },
+			{ ID = 'claws_front', LABEL = 'Claws only', X = 400.0, Y = 0.0, Z = 0.0, RATE_PCT = 0.5,
+				GANGS = { tygerclaws = 0 } },
+		}
+		config.LABS = { { ID = 'test_lab', LABEL = 'Test lab', X = 500.0, Y = 0.0, Z = 0.0, QUEUE = 2,
+			HEAT = { PER_CYCLE = 40, DECAY_PER_MINUTE = 10, FLOOR = 50 },
+			RECIPES = { { KEY = 'glitter', INPUTS = { chem_precursor = 1 }, OUTPUT = 'glitter', COUNT = 4,
+				SECONDS = 60 } } } }
+	end
+
+	-- The host has no NPC table, effects relay or two-player coordinator: one
+	-- each, recording what the module asked of them.
+	local asked = { npcs = {}, removed = {}, spoken = {}, screen = {}, interactions = {} }
+	local function prelude(env)
+		local nextNpc = 7000
+		env.Open77.npcs = {
+			ai = { tasks = 0 }, damage = { mortal = 0, immortal = 1 },
+			create = function(def) nextNpc = nextNpc + 1; asked.npcs[nextNpc] = def; return nextNpc end,
+			remove = function(id) asked.removed[#asked.removed + 1] = id; return true end,
+			speak = function(id, line) asked.spoken[#asked.spoken + 1] = line; return true end,
+		}
+		env.Open77.effects = env.Open77.effects or {}
+		env.Open77.effects.screen = function(player, name, options)
+			asked.screen[#asked.screen + 1] = { player = player, name = name, options = options }
+			return true
+		end
+		local nextInteraction = 0
+		env.Open77.playerInteractions = {
+			request = function(actor, targetId, kind, options)
+				nextInteraction = nextInteraction + 1
+				local state = { id = ('%032x'):format(nextInteraction), kind = kind, actor = tostring(actor),
+					target = tostring(targetId), options = options }
+				asked.interactions[#asked.interactions + 1] = state
+				return state
+			end,
+			cancel = function() return true end,
+		}
+	end
+
+	local env, control, why = boot('server', bridge, prelude, fixture)
+	check('the server boots with one entry of each kind surveyed', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local M = OPX.Modules.Get('underworld')
+		local progress = OPX.Modules.Get('progress')
+		local E = M.Event
+
+		-- The inventory fake: bags by player, a held weapon by player.
+		local bags, weapons = {}, {}
+		local function bagOf(target)
+			if type(target) == 'string' then
+				local character = OPX.Modules.Get('character')
+				target = character.Registry.byCitizenId[target] or target
+			end
+			bags[target] = bags[target] or {}
+			return bags[target]
+		end
+		local fake = {
+			AddItem = function(target, name, count)
+				local bag = bagOf(target)
+				bag[name] = (bag[name] or 0) + (count or 1)
+				return { ok = true }
+			end,
+			RemoveItem = function(target, name, count)
+				local bag = bagOf(target)
+				if (bag[name] or 0) < (count or 1) then return { ok = false, error = 'not_enough' } end
+				bag[name] = bag[name] - (count or 1)
+				return { ok = true }
+			end,
+			GetItemCount = function(target, name) return { ok = true, value = bagOf(target)[name] or 0 } end,
+			CanCarry = function() return { ok = true, value = true } end,
+			GetHeldWeapon = function(player) return weapons[player] end,
+		}
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if name == 'inventory' then return fake end
+			return realGet(name, minimum)
+		end
+
+		local ROBBER, COP, BUYER = 81, 82, 83
+		local robber = standCharacter(env, control, ROBBER, 'UWROB001', { EDDIES = 500, BANK = 0 })
+		robber.PlayerData.job = { name = 'unemployed', onDuty = true, grade = { level = 0 } }
+		robber.PlayerData.jobs = {}
+		standCharacter(env, control, COP, 'UWCOP001', { EDDIES = 0, BANK = 0 })
+		local buyer = standCharacter(env, control, BUYER, 'UWBUY001', { EDDIES = 500, BANK = 0 })
+		buyer.PlayerData.job = { name = 'unemployed', onDuty = true, grade = { level = 0 } }
+		buyer.PlayerData.jobs = {}
+		-- The roster stub keeps no metadata functions; the real player does.
+		for _, held in ipairs({ robber, buyer }) do
+			local data = held.PlayerData
+			held.Functions.SetMetaData = function(key, value) data.metadata[key] = value end
+			held.Functions.GetMetaData = function(key)
+				if key == nil then return data.metadata end
+				return data.metadata[key]
+			end
+		end
+		control.Stand(COP, 1000.0, 0.0, 0.0)
+		weapons[BUYER] = { name = 'w_pistol' }
+
+		local function last(name, player)
+			for index = #control.clientEvents, 1, -1 do
+				local event = control.clientEvents[index]
+				if event.name == name and event.source == player then return event[1], index end
+			end
+			return nil
+		end
+		local function ask(name, player, payload)
+			env.source = player
+			control.netEvents[name](payload)
+			env.source = nil
+			control.Pump(3)
+			return last(E.ANSWER, player)
+		end
+		-- Runs the bar a player has up to its end, as the client reports it.
+		local function finishBar(player, ms, ending)
+			local bar = last(progress.Event.START, player)
+			for _ = 1, math.floor((ms or bar.durationMs) / 500) + 1 do
+				control.Advance(500)
+				control.Pump(1)
+			end
+			env.source = player
+			control.netEvents[progress.Event.REPORT](bar.id, ending or 'finished')
+			env.source = nil
+			control.Pump(5)
+			return last(E.ANSWER, player)
+		end
+
+		check('the contraband is in the catalogue', OPX.Modules.Get('inventory').Catalog.Get('dirty_eddies') ~= nil
+			and OPX.Modules.Get('inventory').Catalog.Get('black_lace') ~= nil)
+		check('a drug is a usable item, decided by this module',
+			OPX.Modules.Get('inventory').Actions.UsableOwner('synthcoke') == 'underworld')
+
+		-- ── robbery ───────────────────────────────────────────────────────
+		control.Stand(ROBBER, 150.0, 0.0, 0.0)
+		local answer = ask(E.ROB, ROBBER, { store = 'test_store' })
+		check('away from the till a robbery is refused too_far', answer and answer.code == 'too_far',
+			answer and answer.code)
+		control.Stand(ROBBER, 100.5, 0.0, 0.0)
+		control.Advance(1100)
+		answer = ask(E.ROB, ROBBER, { store = 'test_store' })
+		check('empty-handed it is refused need_weapon', answer and answer.code == 'need_weapon', answer and answer.code)
+		weapons[ROBBER] = { name = 'w_pistol' }
+		local copJob = OPX.Modules.Get('character').Players[COP].PlayerData.job
+		copJob.onDuty = false
+		answer = ask(E.ROB, ROBBER, { store = 'test_store' })
+		check('with no officer on duty it is refused not_enough_police',
+			answer and answer.code == 'not_enough_police', answer and answer.code)
+		copJob.onDuty = true
+		local before = #control.clientEvents
+		answer = ask(E.ROB, ROBBER, { store = 'test_store' })
+		local bar = last(progress.Event.START, ROBBER)
+		check('armed, at the till, with a cop on duty, the bar goes up', bar ~= nil and bar.durationMs == 5000
+			and answer.code == 'started', answer and answer.code)
+		check('the clerk-less store still rings the alarm on an officer\'s screen',
+			(function()
+				control.Pump(3)
+				for index = before + 1, #control.clientEvents do
+					local event = control.clientEvents[index]
+					if event.name == E.ALERT and event.source == COP then return event[1].kind == 'robbery'
+						and math.abs(event[1].x - 100.0) < 0.01 end
+				end
+				return false
+			end)())
+		control.Stand(BUYER, 100.8, 0.0, 0.0)
+		answer = ask(E.ROB, BUYER, { store = 'test_store' })
+		check('a second robber on the same till is refused spot_busy', answer and answer.code == 'spot_busy',
+			answer and answer.code)
+		answer = finishBar(ROBBER)
+		local paid = bagOf(ROBBER).dirty_eddies or 0
+		check('the end of the bar pays dirty eddies inside REWARD, into the bag',
+			answer.ok and answer.code == 'robbed' and paid >= 800 and paid <= 2200, tostring(answer.code) .. ' ' .. paid)
+		local ledgered = false
+		for _, write in ipairs(db.writes) do
+			if write.sql:find('opx77_underworld_ledger', 1, true) and write.params and write.params.amount == paid
+				and write.params.source == 'robbery:test_store' then ledgered = true end
+		end
+		check('and the ledger has the line for them', ledgered)
+		answer = ask(E.ROB, BUYER, { store = 'test_store' })
+		check('the next robber finds the register empty', answer and answer.code == 'register_empty',
+			answer and answer.code)
+		answer = ask(E.ROB, ROBBER, { store = 'test_store' })
+		check('and the robber is told to lie low', answer and answer.code == 'cooldown', answer and answer.code)
+		control.Advance(61000)
+		answer = ask(E.ROB, BUYER, { store = 'test_store' })
+		check('a minute later the till has regrown a charge', answer.ok and answer.code == 'started',
+			answer and answer.code)
+		control.Stand(BUYER, 160.0, 0.0, 0.0)
+		for _ = 1, 3 do control.Advance(500); control.Pump(2) end
+		answer = last(E.ANSWER, BUYER)
+		check('walking out mid-bar stops it, and nothing is paid', answer.ok == false
+			and answer.code == 'too_far' and (bagOf(BUYER).dirty_eddies or 0) == 0, answer.code)
+		control.Stand(BUYER, 100.8, 0.0, 0.0)
+		control.Advance(2000)
+		answer = ask(E.ROB, BUYER, { store = 'test_store' })
+		check('and the charge it held is back in the till', answer.ok and answer.code == 'started',
+			answer and answer.code)
+		finishBar(BUYER, nil, 'cancelled')
+
+		-- ── the black market ──────────────────────────────────────────────
+		env.source = ROBBER
+		control.netEvents[E.HELLO]()
+		env.source = nil
+		local dealers = last(E.DEALERS, ROBBER)
+		check('a hello is answered with the dealer standing in the world',
+			type(dealers) == 'table' and #dealers == 1 and dealers[1].dealer == 'test_dealer', #(dealers or {}))
+		local npc = dealers[1].npc
+		check('the dealer is an immortal server NPC from its record', asked.npcs[tonumber(npc)].record
+			== 'Character.test' and asked.npcs[tonumber(npc)].damagePolicy == 1)
+		control.Stand(ROBBER, 200.5, 0.0, 0.0)
+		control.Advance(2000)
+		env.source = ROBBER
+		control.netEvents[E.DEALER]({ npc = npc })
+		env.source = nil
+		control.Pump(3)
+		local view = last(E.VIEW, ROBBER)
+		check('the stall shows the stock with the server\'s dirty and clean prices',
+			view and view.kind == 'dealer' and view.stock[1].dirty == 80 and view.stock[1].clean == 112
+				and view.stock[2].clean == nil, view and view.kind)
+		local dirtyBefore = bagOf(ROBBER).dirty_eddies
+		answer = ask(E.BUY, ROBBER, { dealer = 'test_dealer', index = 2, count = 1, pay = 'clean' })
+		check('a dirty-only line refuses clean money', answer.code == 'dirty_only', answer.code)
+		answer = ask(E.BUY, ROBBER, { dealer = 'test_dealer', index = 1, count = 2, pay = 'dirty' })
+		check('the dirty price leaves the bag BEFORE the bar ends (reserved into escrow)',
+			bagOf(ROBBER).dirty_eddies == dirtyBefore - 160, bagOf(ROBBER).dirty_eddies)
+		local escrowed = false
+		for _, write in ipairs(db.writes) do
+			if write.sql:find('INSERT INTO opx77_underworld_escrow', 1, true) then escrowed = true end
+		end
+		check('and an escrow row is written for a crash to find', escrowed)
+		answer = finishBar(ROBBER)
+		check('the bar done, the goods are in the bag', answer.ok and answer.code == 'bought'
+			and bagOf(ROBBER).glitter == 2, answer.code)
+		answer = ask(E.BUY, ROBBER, { dealer = 'test_dealer', index = 1, count = 2, pay = 'dirty' })
+		check('stock is counted: one left is not two', answer.code == 'sold_out', answer.code)
+		dirtyBefore = bagOf(ROBBER).dirty_eddies
+		answer = ask(E.BUY, ROBBER, { dealer = 'test_dealer', index = 1, count = 1, pay = 'clean' })
+		local money = robber.PlayerData.money
+		check('clean money pays the premium, out of cash', money.EDDIES == 500 - 112, money.EDDIES)
+		answer = finishBar(ROBBER, nil, 'cancelled')
+		check('a cancelled deal hands the money back and keeps the stock', answer.code == 'cancelled'
+			and money.EDDIES == 500 and bagOf(ROBBER).dirty_eddies == dirtyBefore, answer.code)
+		answer = ask(E.BUY, ROBBER, { dealer = 'test_dealer', index = 1, count = 1, pay = 'dirty' })
+		check('the unit a cancel released can be bought again', answer.ok and answer.code == 'started',
+			answer.code)
+		finishBar(ROBBER, nil, 'cancelled')
+
+		bagOf(ROBBER).stolen_goods = 3
+		dirtyBefore = bagOf(ROBBER).dirty_eddies
+		answer = ask(E.SELL, ROBBER, { dealer = 'test_dealer', index = 1, count = 2 })
+		check('selling to a fence takes the goods first', bagOf(ROBBER).stolen_goods == 1)
+		answer = finishBar(ROBBER)
+		check('and pays dirty eddies for them once the bar is done', answer.code == 'sold'
+			and bagOf(ROBBER).dirty_eddies == dirtyBefore + 360, answer.code)
+		answer = ask(E.SELL, ROBBER, { dealer = 'test_dealer', index = 1, count = 1 })
+		answer = finishBar(ROBBER)
+		check('past the fence mint cap (400) a sale is cut to what is left', answer.code == 'sold_capped'
+			and bagOf(ROBBER).dirty_eddies == dirtyBefore + 400, answer.code)
+		bagOf(ROBBER).stolen_goods = 1
+		answer = ask(E.SELL, ROBBER, { dealer = 'test_dealer', index = 1, count = 1 })
+		answer = finishBar(ROBBER)
+		check('and with nothing left under the cap, the goods come back', answer.code == 'mint_cap'
+			and bagOf(ROBBER).stolen_goods == 1 and bagOf(ROBBER).dirty_eddies == dirtyBefore + 400, answer.code)
+
+		-- ── laundering ────────────────────────────────────────────────────
+		control.Stand(ROBBER, 300.5, 0.0, 0.0)
+		bagOf(ROBBER).dirty_eddies = 3000
+		answer = ask(E.LAUNDER, ROBBER, { front = 'test_front', amount = 5000 })
+		check('more than PER_TX_MAX at once is refused bad_amount', answer.code == 'bad_amount', answer.code)
+		answer = ask(E.LAUNDER, ROBBER, { front = 'test_front', amount = 2000 })
+		check('a deposit takes the dirty eddies before the bar', bagOf(ROBBER).dirty_eddies == 1000)
+		answer = finishBar(ROBBER)
+		check('and files a batch of 75% clean', answer.code == 'deposited' and db.batches[1] ~= nil
+			and db.batches[1].clean == 1500 and db.batches[1].dirty == 2000, answer.code)
+		answer = ask(E.LAUNDER, ROBBER, { front = 'test_front', amount = 1000 })
+		check('past DAILY_CAP a deposit is refused daily_cap, and nothing is taken',
+			answer.code == 'daily_cap' and bagOf(ROBBER).dirty_eddies == 1000, answer.code)
+		env.source = ROBBER
+		control.netEvents[E.FRONT]({ front = 'test_front' })
+		env.source = nil
+		control.Pump(3)
+		view = last(E.VIEW, ROBBER)
+		check('the counter shows the batch and what is left today', view and view.kind == 'front'
+			and view.left == 500 and #view.batches == 1, view and view.left)
+		local bank = money.BANK
+		answer = ask(E.COLLECT, ROBBER, { front = 'test_front' })
+		check('a ready batch is collected into BANK', answer.code == 'collected' and money.BANK == bank + 1500,
+			answer.code)
+		answer = ask(E.COLLECT, ROBBER, { front = 'test_front' })
+		check('and only once', answer.code == 'nothing_ready' and money.BANK == bank + 1500, answer.code)
+		control.Stand(ROBBER, 400.5, 0.0, 0.0)
+		answer = ask(E.LAUNDER, ROBBER, { front = 'claws_front', amount = 100 })
+		check('a front behind a gang refuses an outsider gang_required', answer.code == 'gang_required',
+			answer.code)
+		robber.PlayerData.gang = { name = 'tygerclaws', grade = { level = 0 } }
+		answer = ask(E.LAUNDER, ROBBER, { front = 'claws_front', amount = 100 })
+		check('and lets a member in', answer.ok and answer.code == 'started', answer.code)
+		finishBar(ROBBER, nil, 'cancelled')
+
+		-- ── labs ──────────────────────────────────────────────────────────
+		local crafting = OPX.Api.Get('crafting')
+		local benches = crafting.Benches()
+		local found = false
+		for _, bench in ipairs(type(benches) == 'table' and benches.value or {}) do
+			if bench.key == 'underworld:test_lab' then found = true end
+		end
+		check('a lab is a crafting bench of its own', found)
+		before = #control.clientEvents
+		env.TriggerEvent(OPX.Event(OPX.Channel.LOCAL, 'crafting', 'ordered'), ROBBER,
+			{ bench = 'underworld:test_lab', order = 1 })
+		check('an order heats the lab', M.Drugs.Heat('test_lab') == 40)
+		env.TriggerEvent(OPX.Event(OPX.Channel.LOCAL, 'crafting', 'ordered'), ROBBER,
+			{ bench = 'underworld:test_lab', order = 2 })
+		check('a second order heats it past the floor', M.Drugs.Heat('test_lab') == 80, M.Drugs.Heat('test_lab'))
+		control.Advance(60000)
+		control.Pump(5)
+		check('and it cools by the minute', M.Drugs.Heat('test_lab') < 80, M.Drugs.Heat('test_lab'))
+
+		-- ── drugs ─────────────────────────────────────────────────────────
+		local used = M.Drugs.Use(BUYER, { name = 'synthcoke', slot = 1 })
+		check('a drug used is consumed, and its screen effect is asked for', used.ok and used.consume == 1
+			and asked.screen[#asked.screen].name == 'drugged'
+			and asked.screen[#asked.screen].options.strength == 0.6)
+		check('and it adds to the addiction counter', math.abs(M.Drugs.Level(BUYER) - 2) < 0.01, M.Drugs.Level(BUYER))
+		used = M.Drugs.Use(BUYER, { name = 'synthcoke', slot = 1 })
+		check('a second dose inside the cooldown is refused', used.ok == false)
+		local deaths = #control.world.transitions
+		buyer.PlayerData.metadata.underworld_addiction = { level = 13, at = OPX.Now() }
+		control.Advance(6000)
+		used = M.Drugs.Use(BUYER, { name = 'black_lace', slot = 1 })
+		answer = last(E.ANSWER, BUYER)
+		check('past OVERDOSE_AT the body gives out', answer.code == 'overdose'
+			and #control.world.transitions == deaths + 1 and control.world.transitions[deaths + 1].verb == 'kill',
+			answer.code)
+
+		-- ── a street deal ─────────────────────────────────────────────────
+		control.Stand(ROBBER, 600.0, 0.0, 0.0)
+		control.Stand(BUYER, 601.0, 0.0, 0.0)
+		bagOf(ROBBER).glitter = 5
+		bagOf(BUYER).dirty_eddies = 300
+		env.source = ROBBER
+		control.netEvents[E.DEAL_MENU]({ target = BUYER })
+		env.source = nil
+		control.Pump(3)
+		view = last(E.VIEW, ROBBER)
+		check('the seller is offered what they carry, at the street\'s prices', view and view.kind == 'deal'
+			and view.offers[1].item == 'glitter' and view.offers[1].held == 5)
+		answer = ask(E.DEAL_OFFER, ROBBER, { target = BUYER, item = 'glitter', count = 3, price = 3000 })
+		check('a price outside the street range is refused', answer.code == 'bad_price', answer.code)
+		answer = ask(E.DEAL_OFFER, ROBBER, { target = BUYER, item = 'glitter', count = 3, price = 150 })
+		local state = asked.interactions[#asked.interactions]
+		check('an offer asks the coordinator for a give, with consent', answer.code == 'deal_offered'
+			and state.kind == 'give' and state.options.consent == true and state.target == tostring(BUYER))
+		control.Fire('onPlayerInteractionCompleted', { id = 'not-ours', kind = 'custom' })
+		control.Pump(3)
+		check('another resource\'s interaction is not ours to settle', bagOf(ROBBER).glitter == 5)
+		control.Fire('onPlayerInteractionCompleted', state)
+		control.Pump(5)
+		check('the hand-over done, the goods and the price swap', bagOf(ROBBER).glitter == 2
+			and bagOf(BUYER).glitter == 3 and bagOf(BUYER).dirty_eddies == 150)
+		control.Fire('onPlayerInteractionCompleted', state)
+		control.Pump(5)
+		check('and a second completion of the same id changes nothing', bagOf(ROBBER).glitter == 2
+			and bagOf(BUYER).dirty_eddies == 150)
+		answer = ask(E.DEAL_OFFER, ROBBER, { target = BUYER, item = 'glitter', count = 2, price = 400 })
+		state = asked.interactions[#asked.interactions]
+		bagOf(BUYER).dirty_eddies = 10
+		control.Fire('onPlayerInteractionCompleted', state)
+		control.Pump(5)
+		check('a buyer who cannot pay gets nothing, and the seller keeps the goods',
+			bagOf(ROBBER).glitter == 2 and bagOf(BUYER).glitter == 3 and bagOf(BUYER).dirty_eddies == 10)
+
+		-- ── the escrow a crash left behind ────────────────────────────────
+		db.escrow = { { op_id = 'deadbeef0000000100aa', citizen_id = 'UWBUY001',
+			payload = env.json.encode({ items = { { name = 'dirty_eddies', count = 70 } } }) } }
+		local recovered = false
+		env.CreateThread(function() M.Op.Recover(); recovered = true end)
+		control.Pump(10)
+		local closed = false
+		for _, write in ipairs(db.writes) do
+			if write.sql:find('DELETE FROM opx77_underworld_escrow', 1, true) and write.params
+				and write.params.op == 'deadbeef0000000100aa' then closed = true end
+		end
+		check('an escrow row a crash left open is refunded at start, and closed', recovered
+			and bagOf(BUYER).dirty_eddies == 80 and closed, bagOf(BUYER).dirty_eddies)
+
+		-- ── staff ─────────────────────────────────────────────────────────
+		check('the staff commands are registered', control.commands[M.Command.LEDGER] ~= nil
+			and control.commands[M.Command.SITES] ~= nil and control.commands[M.Command.CAPTURE] ~= nil)
+		check('the contract is published', type(OPX.Api.Get('underworld')) == 'table'
+			and OPX.Api.Get('underworld').DirtyItem() == 'dirty_eddies')
+	end
+end
+
+section('underworld: the client builds its rows inside the budget')
+do
+	-- Every entry surveyed, so every sphere is registered: the boot is where the
+	-- cost is, and one resume over the budget is a module that never wakes up.
+	local function surveyed(env, file)
+		if file ~= 'config/underworld.lua' then return end
+		local config = env.OPX.Config.MODULES.underworld
+		for _, list in ipairs({ config.ROBBERIES.STORES, config.LAUNDERING.FRONTS, config.LABS }) do
+			for index, entry in ipairs(list) do entry.X = 100.0 * index end
+		end
+	end
+	local fresh, control = Host.Environment('client')
+	local failed = nil
+	for _, file in ipairs(Host.LoadOrder('open77.lua', 'client')) do
+		local chunk, why = loadfile(file, 't', fresh)
+		if chunk == nil then failed = why break end
+		local ok, failure = pcall(chunk)
+		if not ok then failed = failure break end
+		surveyed(fresh, file)
+	end
+	check('the client loads with every entry surveyed', failed == nil, failed)
+	if failed == nil then
+		local worst = resumeCost(fresh, control, function()
+			control.Fire('onClientResourceStart', 'opx_infinity')
+		end, 240)
+		check('and no resume of its boot passes 4,500', worst < 4500, worst)
+		local M = fresh.OPX.Modules.Get('underworld')
+		check('it knows the four stores, four fronts and three labs', M.Built ~= nil
+			and #M.Built.stores.list == 4 and #M.Built.fronts.list == 4 and #M.Built.labs.list == 3)
 	end
 end
 

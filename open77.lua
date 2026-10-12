@@ -127,6 +127,7 @@ shared_script "config/medical.lua"
 -- Shared: both halves declare the module with its settings; the server
 -- re-derives every choice it offers. See modules/contracts/module.lua.
 shared_script "config/contracts.lua"
+shared_script "config/underworld.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -562,6 +563,22 @@ server_script "modules/contracts/server/storage.lua"
 server_script "modules/contracts/server/main.lua"
 client_script "modules/contracts/client/main.lua"
 
+-- The underworld: dirty money, the black market, drug labs, drugs, robberies,
+-- laundering and street deals. After `character` and `inventory` (required),
+-- and after every optional module it asks at run time; the labs are `crafting`
+-- benches registered from its `Start`, which the dependency walk orders after
+-- `crafting` wherever this block sits. `world.npcs` (dealers, clerks) and
+-- `players.interactions.control` (street deals) are declared below already;
+-- `players.screenfx` is this module's, for a drug's screen effect.
+shared_script "modules/underworld/module.lua"
+shared_script "modules/underworld/locales.lua"
+shared_script "modules/underworld/shared/model.lua"
+server_script "modules/underworld/server/storage.lua"
+server_script "modules/underworld/server/op.lua"
+server_script "modules/underworld/server/main.lua"
+server_script "modules/underworld/server/drugs.lua"
+client_script "modules/underworld/client/main.lua"
+
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before
 -- `admin`, which stays last.
@@ -781,6 +798,11 @@ permissions {
   "players.life.revive",
 
   "players.stats.apply",
+
+  -- `Open77.effects.screen`, a drug's screen effect, in
+  -- `modules/underworld/server/drugs.lua` alone. `open77_permissions
+  -- players.screenfx` prints this exact manifest line; server-enforced.
+  "players.screenfx",
 
   -- `Open77.players.teleport`, the ONLY thing in this resource that moves a
   -- living body without killing it. `modules/teleports` is its only caller.
