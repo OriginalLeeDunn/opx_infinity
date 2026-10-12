@@ -41027,7 +41027,11 @@ local function hostileReset(control)
 		local list = control.log[kind]
 		for index = #list, 1, -1 do list[index] = nil end
 	end
-	for _, list in ipairs({ control.clientEvents, control.notices, control.database.calls }) do
+	-- `carried.writes` too: every carried-state save is recorded there, and at
+	-- 16,384 entries its array part doubles (+256 KB) inside whichever door's
+	-- growth window it happens to reach -- a harness allocation, not a door's.
+	for _, list in ipairs({ control.clientEvents, control.notices, control.database.calls,
+		control.carried.writes }) do
 		for index = #list, 1, -1 do list[index] = nil end
 	end
 end
@@ -45116,6 +45120,522 @@ do
 			table.concat(problems, ' / '))
 		check('and the category still draws, with its sprite',
 			categories.garages ~= nil and categories.garages.icon == nil and categories.garages.color == nil)
+	end
+end
+
+-- ── mechanic: garages, the roadside kit, the board, the tow and the lot ──────
+-- Shops are config, the board is table arithmetic, and every repair and tow is
+-- judged by the server twice: before the bar and when it ends.
+do
+	-- The shipped shops with their first bay, stash and lot surveyed.
+	local function mechanicConfig(env, file)
+		if file ~= 'config/mechanic.lua' then return end
+		local shop = env.OPX.Config.MODULES.mechanic.SHOPS.autofixer_arroyo
+		shop.BAYS[1].X, shop.BAYS[1].Y, shop.BAYS[1].Z = 500.0, 0.0, 0.0
+		shop.STASH.X, shop.STASH.Y, shop.STASH.Z = 510.0, 0.0, 0.0
+		shop.LOT.X, shop.LOT.Y, shop.LOT.Z = 520.0, 0.0, 0.0
+	end
+
+	-- Fakes for the soft contracts, in place of the real ones. `world` is what
+	-- each fake records and answers.
+	local function fakes(env)
+		local OPX = env.OPX
+		local world = {
+			bag = {}, stash = {}, opened = {}, plates = {}, rows = {}, states = {}, invoices = {},
+			deposits = {}, refuseState = nil, invoicesOn = false, accountsOn = false,
+		}
+		local inventory = {
+			GetItemCount = function(player, item)
+				return { ok = true, value = (world.bag[player] or {})[item] or 0 }
+			end,
+			RemoveItem = function(player, item, count)
+				local held = world.bag[player] or {}
+				if (held[item] or 0) < count then return { ok = false, error = 'not_enough' } end
+				held[item] = held[item] - count
+				return { ok = true }
+			end,
+			AddItem = function(player, item, count)
+				world.bag[player] = world.bag[player] or {}
+				world.bag[player][item] = (world.bag[player][item] or 0) + (count or 1)
+				return { ok = true }
+			end,
+			CountInStash = function(name, item) return { ok = true, value = (world.stash[name] or {})[item] or 0 } end,
+			RemoveFromStash = function(name, item, count)
+				local held = world.stash[name] or {}
+				if (held[item] or 0) < count then return { ok = false, error = 'not_enough' } end
+				held[item] = held[item] - count
+				return { ok = true }
+			end,
+			AddToStash = function(name, item, count)
+				world.stash[name] = world.stash[name] or {}
+				world.stash[name][item] = (world.stash[name][item] or 0) + (count or 1)
+				return { ok = true }
+			end,
+			OpenStash = function(player, name, options)
+				world.opened[#world.opened + 1] = { player = player, name = name, options = options }
+				return { ok = true }
+			end,
+		}
+		local vehicles = {
+			PlateOf = function(id)
+				local entry = world.plates[tostring(id)]
+				if entry == nil then return nil, nil end
+				return entry.plate, entry.citizenId
+			end,
+			SetState = function(plate, state, garage)
+				world.states[#world.states + 1] = { plate = plate, state = state, garage = garage }
+				if world.refuseState then return { ok = false, error = world.refuseState } end
+				if world.rows[plate] then world.rows[plate].state = state == 'impounded' and 2 or 1 end
+				return { ok = true, value = { plate = plate, state = state } }
+			end,
+			List = function(citizenId)
+				local out = {}
+				for _, row in pairs(world.rows) do
+					if row.citizenId == citizenId then out[#out + 1] = row end
+				end
+				return { ok = true, value = out }
+			end,
+			Get = function(plate)
+				local row = world.rows[plate]
+				if row == nil then return { ok = false, error = 'vehicle.notFound' } end
+				return { ok = true, value = row }
+			end,
+		}
+		local invoices = {
+			Issue = function(spec)
+				world.invoices[#world.invoices + 1] = spec
+				return { ok = true, value = { id = #world.invoices } }
+			end,
+		}
+		local accounts = {
+			Deposit = function(kind, key, amount, reason, opId)
+				world.deposits[#world.deposits + 1] = { kind = kind, key = key, amount = amount, opId = opId }
+				return { ok = true, value = { balance = amount } }
+			end,
+		}
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if name == 'inventory' then return inventory end
+			if name == 'vehicles' then return vehicles end
+			if name == 'invoices' then return world.invoicesOn and invoices or nil end
+			if name == 'accounts' then return world.accountsOn and accounts or nil end
+			return realGet(name, minimum)
+		end
+		-- The repair natives the host stub does not carry.
+		world.repairs, world.healths, world.refuseRepair = {}, {}, false
+		local api = env.Open77.vehicles
+		api.repair = function(id, scope)
+			world.repairs[#world.repairs + 1] = { id = id, scope = scope }
+			return not world.refuseRepair
+		end
+		api.setHealth = function(id, health)
+			world.healths[#world.healths + 1] = { id = id, health = health }
+			if world.refuseRepair then return false, 'vehicle_not_found' end
+			return true
+		end
+		return world
+	end
+
+	-- A damaged car in the world at a point.
+	local function car(env, control, x, health)
+		local id = env.Open77.vehicles.create({ record = 'Vehicle.v_standard2_archer_hella_player',
+			position = { x = x, y = 0.0, z = 0.0 }, bucket = 0 })
+		local entry
+		for _, one in ipairs(control.vehicles.world) do
+			if one.id == id then entry = one end
+		end
+		entry.health = health
+		return id, entry
+	end
+
+	-- Ends the bar a player has up, as their client reports it finished.
+	local function finishBar(env, control, progress, player)
+		local bar = fuelAnswer(control, progress.Event.START, player)
+		if bar == nil then return nil end
+		local steps = math.ceil((bar.durationMs or 0) / 500) + 1
+		for _ = 1, steps do control.Advance(500); control.Pump(1) end
+		env.source = player
+		control.netEvents[progress.Event.REPORT](bar.id, 'finished')
+		env.source = nil
+		control.Pump(6)
+		return bar
+	end
+
+	section('mechanic: the model -- shops, damage, prices, the board')
+	do
+		local env, _, why = boot('server', nil, nil, mechanicConfig)
+		check('the server boots with the mechanic module', why == nil, why)
+		if why == nil then
+			local OPX = env.OPX
+			local mechanic = OPX.Modules.Get('mechanic')
+			local Model = mechanic.Model
+			local settings = Model.Settings(OPX.Config.MODULES.mechanic)
+			check('the three shipped shops are read', #settings.shopOrder == 3
+				and settings.shops.autofixer_arroyo ~= nil and settings.shops.kabuki_watson ~= nil)
+			local arroyo, kabuki = settings.shops.autofixer_arroyo, settings.shops.kabuki_watson
+			check('a surveyed bay, stash and lot are kept', #arroyo.bays == 1 and arroyo.stash ~= nil
+				and arroyo.lot ~= nil and arroyo.stashKey == 'mechanic_autofixer_arroyo')
+			check('a shop left at 0,0,0 has no bay, no stash and no lot', #kabuki.bays == 0
+				and kabuki.stash == nil and kabuki.lot == nil)
+
+			local mistakes, unsurveyed = Model.Partition(Model.Problems(OPX.Config.MODULES.mechanic))
+			check('the shipped config has no mistake', #mistakes == 0, table.concat(mistakes, ' | '))
+			check('and names every spot still to survey', #unsurveyed >= 2, #unsurveyed)
+			local bad = Model.Problems({ BILLING = { NO_CUSTOMER = 'maybe', CUT_PCT = 140 },
+				KIT = { SCOPES = { 'full', 'wings' } }, IMPOUND = { JOBS = {} },
+				SHOPS = { ['bad key'] = {}, x = { JOBS = { mechanic = true } } } })
+			check('a broken config is named, line by line', #bad >= 6, table.concat(bad, ' | '))
+
+			check('health 0.4 is 60% missing', Model.Missing(0.4, nil) == 60)
+			local body = {}
+			for index = 1, 30 do body[index] = index <= 15 and 1.0 or 0.0 end
+			check('a crushed body counts when it is worse than the health',
+				Model.Missing(0.9, { body = body }) == 50)
+			check('a flat tyre alone still costs the floor', Model.Missing(1.0, { tires = 1 }) == 5)
+			check('an intact car is 0%', Model.Missing(1.0, {}) == 0)
+
+			local quote = Model.Quote(settings, 60, 60000)
+			check('60% costs BASE + 12 x 60 = 970', quote.fee == 970, quote.fee)
+			check('and three parts, one per 25%', quote.parts == 3, quote.parts)
+			check('and 8 s + 150 ms per percent', quote.durationMs == 17000, quote.durationMs)
+			check('the progress ceiling caps a long repair', Model.Quote(settings, 100, 20000).durationMs == 20000)
+			local cut, share = Model.Split(970, 30)
+			check('the mechanic takes 30% and the shop the rest', cut == 291 and share == 679)
+			check('a kit never lowers health', Model.KitHealth(settings, 0.8, false) == 0.8)
+			check('a mechanic gets more out of a kit', Model.KitHealth(settings, 0.1, true) == 0.7
+				and Model.KitHealth(settings, 0.1, false) == 0.45)
+
+			local Dispatch = mechanic.Dispatch
+			Dispatch.Reset()
+			local call, fresh = Dispatch.Open({ caller = 5, kind = 'repair', ttlMs = 1000, nowMs = 0 })
+			local again, second = Dispatch.Open({ caller = 5, kind = 'tow', note = 'ditch', ttlMs = 1000, nowMs = 10 })
+			check('calling twice is one call, refreshed', fresh and not second and again == call
+				and call.kind == 'tow' and call.note == 'ditch')
+			check('a mechanic takes it', Dispatch.Take(call.id, 9, 1, 20) ~= nil)
+			local _, full = Dispatch.Take(call.id, 10, 1, 20)
+			check('a second one is refused call_full', full == 'call_full', full)
+			check('a taken call does not lapse', #Dispatch.Expire(5000) == 0)
+			Dispatch.Drop(call.id, 9)
+			check('an untaken call lapses', #Dispatch.Expire(5000) == 1 and Dispatch.Of(5) == nil)
+			local own = Dispatch.Open({ caller = 6, kind = 'repair', ttlMs = 1000, nowMs = 0 })
+			check('a caller who leaves takes their call with them', Dispatch.Forget(6) == own and Dispatch.Of(6) == nil)
+		end
+	end
+
+	section('mechanic: a workshop repair -- bay, parts, the customer billed, the platform refusing')
+	do
+		local env, control, why = boot('server', nil, nil, mechanicConfig)
+		check('the server boots', why == nil, why)
+		if why == nil then
+			local OPX = env.OPX
+			local mechanic = OPX.Modules.Get('mechanic')
+			local progress = OPX.Modules.Get('progress')
+			local Event = mechanic.Event
+			local world = fakes(env)
+			local MECH, CUST, STRANGER = 81, 82, 83
+			local mech = medicalCharacter(env, control, MECH, 'MECH0001', 'mechanic', 1, { EDDIES = 0, BANK = 0 })
+			local cust = medicalCharacter(env, control, CUST, 'CUST0001', 'unemployed', 0, { EDDIES = 0, BANK = 5000 })
+			medicalCharacter(env, control, STRANGER, 'STRA0002', 'unemployed', 0, { EDDIES = 0, BANK = 0 })
+			local vehicle = car(env, control, 501.0, 0.4)
+			world.plates[tostring(vehicle)] = { plate = 'PLATE001', citizenId = 'CUST0001' }
+			control.Stand(MECH, 502.0, 0.0, 0.0)
+			control.Stand(CUST, 506.0, 0.0, 0.0)
+			control.Stand(STRANGER, 503.0, 1.0, 0.0)
+
+			mechanic.Server.OnRepair(STRANGER, { vehicleId = tostring(vehicle), mode = 'shop' })
+			local refused = fuelAnswer(control, Event.ANSWER, STRANGER)
+			check('somebody with no garage job is refused', refused and refused.code == 'not_mechanic',
+				refused and refused.code)
+
+			mechanic.Server.OnRepair(MECH, { vehicleId = tostring(vehicle), mode = 'shop' })
+			local noParts = fuelAnswer(control, Event.ANSWER, MECH)
+			check('with no parts anywhere the repair is refused before the bar',
+				noParts and noParts.code == 'no_parts' and noParts.count == 3, noParts and noParts.code)
+			check('and no bar went up', fuelAnswer(control, progress.Event.START, MECH) == nil)
+
+			-- A car outside every bay.
+			local far = car(env, control, 900.0, 0.4)
+			control.Stand(MECH, 901.0, 0.0, 0.0)
+			world.stash.mechanic_autofixer_arroyo = { mech_parts = 3 }
+			mechanic.Server.OnRepair(MECH, { vehicleId = tostring(far), mode = 'shop' })
+			local outside = fuelAnswer(control, Event.ANSWER, MECH)
+			check('a car outside the bays is refused not_in_bay', outside and outside.code == 'not_in_bay',
+				outside and outside.code)
+			control.Stand(MECH, 502.0, 0.0, 0.0)
+
+			mechanic.Server.OnRepair(MECH, { vehicleId = tostring(vehicle), mode = 'shop' })
+			local started = fuelAnswer(control, Event.ANSWER, MECH)
+			check('in the bay with parts in the stash the bar starts, quoting the fee',
+				started and started.code == 'started' and started.fee == 970, started and started.code)
+			check('nothing is taken before the work', world.stash.mechanic_autofixer_arroyo.mech_parts == 3
+				and cust.PlayerData.money.BANK == 5000)
+			mechanic.Server.OnRepair(STRANGER, { vehicleId = tostring(vehicle), mode = 'kit' })
+			local twice = fuelAnswer(control, Event.ANSWER, STRANGER)
+			check('a second worker on the same car is refused', twice and twice.code == 'vehicle_busy',
+				twice and twice.code)
+
+			local bar = finishBar(env, control, progress, MECH)
+			check('the bar lasts what the quote says', bar ~= nil and bar.durationMs == 17000, bar and bar.durationMs)
+			local done = fuelAnswer(control, Event.ANSWER, MECH)
+			check('the repair lands, billed', done and done.code == 'repaired' and done.billed == 'paid',
+				done and done.code)
+			check('three parts left the shop stash', world.stash.mechanic_autofixer_arroyo.mech_parts == 0)
+			check('the platform was asked for a full repair and full health',
+				#world.repairs == 1 and world.repairs[1].scope == 'full'
+				and #world.healths == 1 and world.healths[1].health == 1.0)
+			check('the owner, standing by, paid 970', cust.PlayerData.money.BANK == 4030, cust.PlayerData.money.BANK)
+			check('with no accounts module, all of it goes to the mechanic', mech.PlayerData.money.BANK == 970,
+				mech.PlayerData.money.BANK)
+
+			-- A car the platform will not repair: everything is given back.
+			world.refuseRepair = true
+			world.bag[MECH] = { mech_parts = 3 }
+			world.stash.mechanic_autofixer_arroyo.mech_parts = 0
+			control.Advance(2000)
+			mechanic.Server.OnRepair(MECH, { vehicleId = tostring(vehicle), mode = 'shop' })
+			finishBar(env, control, progress, MECH)
+			local refusedFix = fuelAnswer(control, Event.ANSWER, MECH)
+			check('a car another resource owns is refused not_ours', refusedFix and refusedFix.code == 'not_ours',
+				refusedFix and refusedFix.code)
+			check('and the parts go back to the bag they came from', world.bag[MECH].mech_parts == 3)
+			check('and the customer is refunded', cust.PlayerData.money.BANK == 4030, cust.PlayerData.money.BANK)
+			world.refuseRepair = false
+
+			-- With invoices and accounts: an invoice, and no direct charge.
+			world.invoicesOn, world.accountsOn = true, true
+			control.Advance(2000)
+			mechanic.Server.OnRepair(MECH, { vehicleId = tostring(vehicle), mode = 'shop' })
+			finishBar(env, control, progress, MECH)
+			local invoiced = fuelAnswer(control, Event.ANSWER, MECH)
+			check('with invoices the customer gets an invoice instead',
+				invoiced and invoiced.billed == 'invoiced' and #world.invoices == 1, invoiced and invoiced.billed)
+			local spec = world.invoices[1]
+			check('issued by the mechanic, to the owner, for the shop account', spec and spec.issuer == MECH
+				and spec.target == CUST and spec.amount == 970 and spec.account.kind == 'job'
+				and spec.account.key == 'mechanic' and spec.source == 'mechanic' and spec.cutPct == 30)
+			check('and nobody was charged directly', cust.PlayerData.money.BANK == 4030)
+
+			-- The roadside kit: anybody, anywhere.
+			world.invoicesOn, world.accountsOn = false, false
+			local wreck = car(env, control, 1200.0, 0.2)
+			control.Stand(STRANGER, 1201.0, 0.0, 0.0)
+			control.Advance(2000)
+			mechanic.Server.OnRepair(STRANGER, { vehicleId = tostring(wreck), mode = 'kit' })
+			local noKit = fuelAnswer(control, Event.ANSWER, STRANGER)
+			check('no kit, no patch', noKit and noKit.code == 'no_kit', noKit and noKit.code)
+			world.bag[STRANGER] = { mech_repairkit = 1 }
+			control.Advance(2000)
+			mechanic.Server.OnRepair(STRANGER, { vehicleId = tostring(wreck), mode = 'kit' })
+			local before = #world.healths
+			local kitBar = finishBar(env, control, progress, STRANGER)
+			local patched = fuelAnswer(control, Event.ANSWER, STRANGER)
+			check('a kit takes its own time', kitBar ~= nil and kitBar.durationMs == 12000)
+			check('and patches the car to 45%', patched and patched.code == 'patched' and patched.percent == 45
+				and world.healths[before + 1].health == 0.45, patched and patched.code)
+			check('repairing the tyres too', world.repairs[#world.repairs].scope == 'tires')
+			check('the kit is used up', world.bag[STRANGER].mech_repairkit == 0)
+
+			-- A car that rolled away during the bar.
+			world.bag[STRANGER].mech_repairkit = 1
+			control.Advance(2000)
+			mechanic.Server.OnRepair(STRANGER, { vehicleId = tostring(wreck), mode = 'kit' })
+			for _, one in ipairs(control.vehicles.world) do
+				if one.id == wreck then one.position = { x = 1210.0, y = 0.0, z = 0.0 } end
+			end
+			finishBar(env, control, progress, STRANGER)
+			local moved = fuelAnswer(control, Event.ANSWER, STRANGER)
+			check('a car that moved during the bar is not patched', moved and moved.code == 'vehicle_moved',
+				moved and moved.code)
+			check('and the kit is kept', world.bag[STRANGER].mech_repairkit == 1)
+		end
+	end
+
+	section('mechanic: the tow, the impound and the lot')
+	do
+		local env, control, why = boot('server', nil, nil, mechanicConfig)
+		check('the server boots', why == nil, why)
+		if why == nil then
+			local OPX = env.OPX
+			local mechanic = OPX.Modules.Get('mechanic')
+			local progress = OPX.Modules.Get('progress')
+			local Event = mechanic.Event
+			local world = fakes(env)
+			local COP, ROOKIE, OWNER_ID = 91, 92, 93
+			local cop = medicalCharacter(env, control, COP, 'COP00001', 'ncpd', 0, { EDDIES = 0, BANK = 0 })
+			medicalCharacter(env, control, ROOKIE, 'ROOK0001', 'mechanic', 0, { EDDIES = 0, BANK = 0 })
+			local owner = medicalCharacter(env, control, OWNER_ID, 'OWNR0001', 'unemployed', 0,
+				{ EDDIES = 0, BANK = 1000 })
+			local vehicle, towed = car(env, control, 700.0, 1.0)
+			local stray = car(env, control, 800.0, 1.0)
+			world.plates[tostring(vehicle)] = { plate = 'TOWME001', citizenId = 'OWNR0001' }
+			world.rows.TOWME001 = { plate = 'TOWME001', citizenId = 'OWNR0001', state = 0,
+				record = 'Vehicle.v_standard2_archer_hella_player' }
+			control.Stand(COP, 701.0, 0.0, 0.0)
+			control.Stand(ROOKIE, 701.0, 1.0, 0.0)
+			control.Stand(OWNER_ID, 300.0, 0.0, 0.0)
+
+			mechanic.Server.OnImpound(ROOKIE, { vehicleId = tostring(vehicle) })
+			local rookie = fuelAnswer(control, Event.ANSWER, ROOKIE)
+			check('a grease monkey may not tow', rookie and rookie.code == 'not_authorised', rookie and rookie.code)
+
+			control.Stand(COP, 801.0, 0.0, 0.0)
+			mechanic.Server.OnImpound(COP, { vehicleId = tostring(stray) })
+			local stranger = fuelAnswer(control, Event.ANSWER, COP)
+			check('a car nobody owns is refused not_registered', stranger and stranger.code == 'not_registered',
+				stranger and stranger.code)
+			control.Stand(COP, 701.0, 0.0, 0.0)
+
+			towed.occupants = { OWNER_ID }
+			control.Advance(2000)
+			mechanic.Server.OnImpound(COP, { vehicleId = tostring(vehicle) })
+			local occupied = fuelAnswer(control, Event.ANSWER, COP)
+			check('a car with somebody in it is refused', occupied and occupied.code == 'occupied',
+				occupied and occupied.code)
+			towed.occupants = nil
+
+			control.Advance(2000)
+			mechanic.Server.OnImpound(COP, { vehicleId = tostring(vehicle) })
+			check('an officer on duty starts the tow', fuelAnswer(control, Event.ANSWER, COP).code == 'started')
+			check('and nothing is written before the bar ends', #world.states == 0)
+			finishBar(env, control, progress, COP)
+			local tow = fuelAnswer(control, Event.ANSWER, COP)
+			check('the car is impounded through the vehicles contract',
+				tow and tow.code == 'impounded' and #world.states == 1
+				and world.states[1].plate == 'TOWME001' and world.states[1].state == 'impounded',
+				tow and tow.code)
+			check('the tow pays nothing out of thin air by default', cop.PlayerData.money.BANK == 0)
+
+			-- The owner at the lot.
+			mechanic.Server.OnLot(OWNER_ID, { shop = 'autofixer_arroyo' })
+			local away = fuelAnswer(control, Event.ANSWER, OWNER_ID)
+			check('the lot answers only at its desk', away and away.code == 'too_far', away and away.code)
+			control.Stand(OWNER_ID, 520.5, 0.0, 0.0)
+			control.Advance(2000)
+			mechanic.Server.OnLot(OWNER_ID, { shop = 'autofixer_arroyo' })
+			local view = fuelAnswer(control, Event.LOT_VIEW, OWNER_ID)
+			check('the desk lists the impounded car and the fee', view and #view.vehicles == 1
+				and view.vehicles[1].plate == 'TOWME001' and view.fee == 1500)
+
+			control.Advance(2000)
+			mechanic.Server.OnRelease(OWNER_ID, { shop = 'autofixer_arroyo', plate = 'TOWME001' })
+			local poor = fuelAnswer(control, Event.ANSWER, OWNER_ID)
+			check('the owner with 1000 cannot pay 1500', poor and poor.code == 'cannot_afford'
+				and owner.PlayerData.money.BANK == 1000, poor and poor.code)
+
+			control.Stand(COP, 520.5, 1.0, 0.0)
+			control.Advance(2000)
+			mechanic.Server.OnRelease(COP, { shop = 'autofixer_arroyo', plate = 'TOWME001' })
+			local notYours = fuelAnswer(control, Event.ANSWER, COP)
+			check('somebody else cannot release it', notYours and notYours.code == 'not_yours',
+				notYours and notYours.code)
+
+			owner.PlayerData.money.BANK = 2000
+			world.accountsOn = true
+			control.Advance(2000)
+			mechanic.Server.OnRelease(OWNER_ID, { shop = 'autofixer_arroyo', plate = 'TOWME001' })
+			local released = fuelAnswer(control, Event.ANSWER, OWNER_ID)
+			check('the owner pays and the car is stored again', released and released.code == 'released'
+				and owner.PlayerData.money.BANK == 500 and world.states[#world.states].state == 'stored',
+				released and released.code)
+			check('the fee goes to the shop account', #world.deposits == 1 and world.deposits[1].key == 'mechanic'
+				and world.deposits[1].amount == 1500 and world.deposits[1].kind == 'job')
+
+			-- A release the registry refuses is not charged.
+			world.rows.TOWME001.state = 2
+			world.refuseState = 'vehicle.busy'
+			owner.PlayerData.money.BANK = 2000
+			control.Advance(2000)
+			mechanic.Server.OnRelease(OWNER_ID, { shop = 'autofixer_arroyo', plate = 'TOWME001' })
+			local failed = fuelAnswer(control, Event.ANSWER, OWNER_ID)
+			check('a refused release costs nothing', failed and failed.code == 'release_failed'
+				and owner.PlayerData.money.BANK == 2000, failed and failed.code)
+
+			-- The parts room.
+			control.Stand(ROOKIE, 510.0, 0.5, 0.0)
+			control.Advance(2000)
+			mechanic.Server.OnStash(ROOKIE, { shop = 'autofixer_arroyo' })
+			check('a mechanic at the parts room opens the shop stash', #world.opened == 1
+				and world.opened[1].name == 'mechanic_autofixer_arroyo')
+			control.Advance(2000)
+			mechanic.Server.OnStash(OWNER_ID, { shop = 'autofixer_arroyo' })
+			check('a customer does not', #world.opened == 1)
+		end
+	end
+
+	section('mechanic: a call on the board -- alerted, taken, closed, lapsed')
+	do
+		local env, control, why = boot('server', nil, nil, mechanicConfig)
+		check('the server boots', why == nil, why)
+		if why == nil then
+			local OPX = env.OPX
+			local mechanic = OPX.Modules.Get('mechanic')
+			local Event = mechanic.Event
+			fakes(env)
+			local MECH, CALLER, STRANGER = 61, 62, 63
+			medicalCharacter(env, control, MECH, 'MECH0002', 'mechanic', 0, { EDDIES = 0, BANK = 0 })
+			medicalCharacter(env, control, CALLER, 'CALL0001', 'unemployed', 0, { EDDIES = 0, BANK = 0 })
+			medicalCharacter(env, control, STRANGER, 'STRA0003', 'unemployed', 0, { EDDIES = 0, BANK = 0 })
+			control.Stand(MECH, 0.0, 0.0, 0.0)
+			control.Stand(CALLER, 100.0, 0.0, 0.0)
+
+			check('the call commands are registered', control.commands['mechanic'] ~= nil
+				and control.commands['tow'] ~= nil and control.commands['mechboard'] ~= nil)
+			local told = mechanic.Call(CALLER, 'tow', 'stuck on the highway')
+			check('a tow call reaches the one mechanic on duty', told == 1, told)
+			local alert = fuelAnswer(control, Event.ALERT, MECH)
+			check('with its kind, note and distance', alert and alert.kind == 'tow'
+				and alert.note == 'stuck on the highway' and alert.distance == 100)
+			check('and nobody else is alerted', fuelAnswer(control, Event.ALERT, STRANGER) == nil)
+
+			mechanic.Server.OnTake(STRANGER, { callId = alert.id })
+			local refused = fuelAnswer(control, Event.ANSWER, STRANGER)
+			check('a stranger cannot take it', refused and refused.code == 'not_mechanic', refused and refused.code)
+			mechanic.Server.OnTake(MECH, { callId = alert.id })
+			local waypoint = fuelAnswer(control, Event.WAYPOINT, MECH)
+			check('the mechanic takes it and is handed the caller\'s position',
+				waypoint and waypoint.x == 100.0)
+
+			mechanic.Server.OnBoard(MECH)
+			local board = fuelAnswer(control, Event.BOARD_VIEW, MECH)
+			check('the board shows the call as theirs', board and #board.calls == 1 and board.calls[1].mine == true)
+			mechanic.Server.OnBoard(STRANGER)
+			check('and shows a stranger nothing', fuelAnswer(control, Event.BOARD_VIEW, STRANGER) == nil)
+
+			mechanic.Server.OnClose(MECH, { callId = alert.id })
+			check('closing the job removes the call', mechanic.Dispatch.Of(CALLER) == nil)
+			local closed = fuelAnswer(control, Event.CLOSED, MECH)
+			check('and every mechanic drops the pin', closed and closed.id == alert.id and closed.why == 'done')
+
+			mechanic.Call(CALLER, 'repair', nil)
+			local lapse = mechanic.Dispatch.Of(CALLER)
+			control.Advance(601000)
+			mechanic.Server.Sweep()
+			check('an untaken call lapses after CALL_TTL_S', mechanic.Dispatch.Of(CALLER) == nil and lapse ~= nil)
+
+			mechanic.Call(CALLER, 'repair', nil)
+			mechanic.Server.Departed(CALLER)
+			check('a caller who leaves closes their call', mechanic.Dispatch.Of(CALLER) == nil)
+		end
+	end
+
+	section('mechanic: the client builds its rows inside the budget')
+	do
+		local env, control = Host.Environment('client')
+		for _, file in ipairs(Host.LoadOrder('open77.lua', 'client')) do
+			local chunk = loadfile(file, 't', env)
+			if chunk ~= nil and pcall(chunk) and file == 'config/mechanic.lua' then
+				local n = 0
+				for _, shop in pairs(env.OPX.Config.MODULES.mechanic.SHOPS) do
+					n = n + 1
+					shop.STASH.X, shop.STASH.Y, shop.STASH.Z = 100.0 + n, 0.0, 0.0
+					shop.LOT.X, shop.LOT.Y, shop.LOT.Z = 200.0 + n, 0.0, 0.0
+				end
+			end
+		end
+		local worst = resumeCost(env, control, function()
+			control.Fire('onClientResourceStart', 'opx_infinity')
+		end, 240)
+		check('a client booting with every shop surveyed keeps every resume under 4,500', worst < 4500, worst)
 	end
 end
 

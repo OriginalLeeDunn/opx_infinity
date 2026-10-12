@@ -305,6 +305,19 @@ OPX.Config.MODULES.character = {
 				[2] = { name = 'Owner', payment = 260, isBoss = true, bankAuth = true },
 			},
 		},
+
+		-- The garages, the tow and the impound lot: see config/mechanic.lua.
+		mechanic = {
+			label = 'Mechanic',
+			type = 'service',
+			defaultDuty = false,
+			offDutyPay = false,
+			grades = {
+				[0] = { name = 'Grease Monkey', payment = 90 },
+				[1] = { name = 'Mechanic', payment = 200 },
+				[2] = { name = 'Shop Owner', payment = 380, isBoss = true, bankAuth = true },
+			},
+		},
 	},
 
 	GANGS = {

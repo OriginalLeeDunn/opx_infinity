@@ -685,6 +685,27 @@ Contract `netrunner` v1 (server): `CamerasBlind(network)`, `Objectives()`,
 Staff: `/opx.netrunner.capture <network> <node> [kind]`, `/opx.netrunner.networks`.
 Every position ships as `0,0,0` and its network stays disabled until surveyed.
 
+### Mechanic
+
+`modules/mechanic` + `config/mechanic.lua`, job `mechanic` (Grease Monkey / Mechanic /
+Shop Owner). Several **shops** (Autofixer Arroyo, Dakota's garage Rocky Ridge, Kabuki
+body shop), each with `BAYS`, a parts `STASH` and an impound `LOT`, all shipped at
+`0,0,0` (disabled, named at boot). **Workshop repair**: ALT on a vehicle standing in a
+bay, mechanic on duty; the damage in percent (worse of lost health and crushed body
+cells) sets the fee, the parts (`mech_parts`, stash first then bag) and the bar length;
+at the end the server re-checks, takes the parts, charges the customer (the owner if
+near, else the nearest player) and calls `Open77.vehicles.repair(id, 'full')` +
+`setHealth(1.0)` -- refused with `not_ours` (everything given back) for a car another
+resource spawned. With `invoices` the customer gets an invoice instead; the shop share
+goes to `accounts` (`job`, `ACCOUNT`) or, without it, to the mechanic. **Roadside kit**
+(`mech_repairkit`): anybody, anywhere, health up to `KIT.HEALTH` + `KIT.SCOPES`.
+**Calls**: `/mechanic [note]` and `/tow [note]` alert every mechanic on duty (toast +
+pin), `/mechboard` lists, takes (waypoint), drops and closes. **Tow**: `IMPOUND.JOBS`
+(mechanic 1+, ncpd, maxtac) impound a registered, empty vehicle through
+`vehicles.SetState(plate, 'impounded')`; the owner pays `RELEASE_FEE` at a shop's lot to
+get it back (`SetState 'stored'`, fee to the shop account). Contract `mechanic` v1
+(server): `Call`, `Calls`, `Shops`; bus `opx:on:mechanic:call|repaired|impounded|released`.
+
 ### Emotes
 
 `animations` offers **every animation the platform has** (**"toutes les animations,
