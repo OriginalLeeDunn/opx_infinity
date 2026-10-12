@@ -718,6 +718,34 @@ false when no service holds those jobs), `OnDutyCount()` -> number, `IsCuffed(id
 `opx:on:police:call|cuffed|fined|jailed`. Staff: `/opx.police.capture <kind> <name>`
 (no args lists the stations' state), `/opx.police.release <id>`,
 `/opx.police.unimpound <plate>`.
+### Bar
+
+`modules/bar` + `config/bar.lua`: bartenders, bars and food stalls. A **venue** is a
+counter, a back-room stash (`inventory` stash) and an optional supplier point, worked by
+its `JOBS` and/or `GANGS` (`bartender` by default; Totentanz also lets Maelstrom in and
+banks into the `maelstrom` gang treasury). Five lore venues ship -- the Afterlife,
+Lizzie's Bar, El Coyote Cojo, Totentanz, a Jig-Jig Street noodle stall -- all at
+`0,0,0`, disabled and named at boot until their COUNTER and STASH are surveyed
+(`/opx.bar.venues` lists the state).
+
+The loop, all server-side: staff buy **stock** at the supplier into the stash (paid
+from the venue `accounts` treasury when that contract exists, else from the buyer's
+BANK; money first, stock second, refunded if the stash is full) -> **mix** at the
+counter: a recipe of the venue `MENU` is checked against the stash, a server-timed
+`progress` bar runs, everything is re-checked, the ingredients leave the stash and the
+drink lands in the bartender's bag (on the stash shelf if the bag is full); a cancel
+uses nothing -> **serve**: ALT on a customer, pick a drink they carry from the venue's
+`PRICES`, the platform's two-player `give` with consent; on completion the drink moves
+and the customer is billed through `invoices` (`source = 'bar'`, `cutPct =
+STAFF_CUT_PCT`, the venue `ACCOUNT`) or, without it, charged directly with the
+bartender's cut paid out and the house share deposited to `accounts` (all to the
+bartender without it). The items (the Afterlife's cocktails named after legends,
+Broseph ale, noodles, the stock) are registered at boot; a drink's `THIRST`/`HUNGER`
+become its `use.status`, moved by `needs` when it is used, and its `ALCOHOL` raises a
+server-side drunk level played with `Open77.effects.screen('drunk')` on the drinker.
+
+Contract `bar` v1 (server): `Venues()`, `Items()`, `DrunkLevel(player)`. Bus:
+`opx:on:bar:mixed|bought|served`.
 
 ### Emotes
 
