@@ -45119,6 +45119,430 @@ do
 	end
 end
 
+-- ── media: N54 News / WNS / the screamsheet ─────────────────────────────────
+section('media: the config, the validator and the numbers the desk pays by')
+do
+	local env, _, why = boot('server')
+	check('the server boots with the media module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local media = OPX.Modules.Get('media')
+		local Model = media.Model
+		local built = Model.Build(OPX.Config.MODULES.media)
+		local count = 0
+		for _ in pairs(built.networks) do count = count + 1 end
+		check('three newsrooms ship (N54, WNS, the screamsheet), none refused',
+			count == 3 and built.networks.n54 ~= nil and built.networks.wns ~= nil
+				and built.networks.screamsheet ~= nil and #built.problems == 0, table.concat(built.problems, ' / '))
+		check('every shipped desk is at 0,0,0 and named as waiting for its survey',
+			#built.placeholders == 3 and #built.networks.n54.desks == 0, table.concat(built.placeholders, ','))
+		check('the reporter job is the one gated, Stringers sell anywhere, BANK pays',
+			built.job == 'reporter' and built.freelance[0] == true and built.freelance[1] == nil
+				and built.currency == 'BANK' and built.defaultNetwork == 'n54')
+		local jobs = OPX.Config.MODULES.character.JOBS
+		check('config/character.lua carries the reporter job with an Editor-in-chief boss who banks',
+			jobs.reporter ~= nil and jobs.reporter.grades[3].isBoss == true and jobs.reporter.grades[3].bankAuth == true
+				and jobs.reporter.grades[0].name == 'Stringer')
+
+		local broken = Model.Build({
+			DEFAULT_NETWORK = 'nope',
+			NETWORKS = {
+				good = { LABEL = 'Good', DESKS = { { KEY = 'd', X = 1.0, Y = 2.0, Z = 3.0 } } },
+				bad = { LABEL = 'Bad', ACCOUNT = { KIND = 'bank', KEY = 'x' } },
+				nolabel = {},
+			},
+			PHOTO = { UPLOAD_URL = 'ftp://user:pw@example' },
+		})
+		check('a bad newsroom is refused alone, the good one keeps its desk',
+			broken.networks.good ~= nil and #broken.networks.good.desks == 1 and broken.networks.bad == nil
+				and broken.networks.nolabel == nil)
+		check('a missing DEFAULT_NETWORK falls back to the first newsroom, and says so',
+			broken.defaultNetwork == 'good' and table.concat(broken.problems, '\n'):find('DEFAULT_NETWORK', 1, true) ~= nil)
+		check('an upload URL that is not plain http(s) is dropped: photos stay records',
+			broken.photo.uploadUrl == '' and table.concat(broken.problems, '\n'):find('UPLOAD_URL', 1, true) ~= nil)
+
+		local limits = { min = 6, max = 20 }
+		check('a typed line is cleaned and bounded',
+			Model.Line('  Arasaka   tower\nburns ', limits) == 'Arasaka tower burns'
+				and select(2, Model.Line('short', limits)) == 'too_short'
+				and select(2, Model.Line(('x'):rep(21), limits)) == 'too_long'
+				and select(2, Model.Line(('x'):rep(100000), limits)) == 'too_long'
+				and select(2, Model.Line({}, limits)) == 'too_short')
+		local headline, text = Model.SplitBreaking('Tower down | Corpo Plaza sealed off')
+		check('/breaking headline | text splits on the bar', headline == 'Tower down' and text == 'Corpo Plaza sealed off')
+		check('words are counted the way the desk pays them', Model.Words('one  two\tthree') == 3)
+
+		local sales = built.sales
+		check('full price while fresh, STALE_MULT once stale, linear between',
+			Model.Freshness(sales, 0) == 1 and Model.Freshness(sales, sales.staleS + 1) == sales.staleMult
+				and math.abs(Model.Freshness(sales, (sales.freshS + sales.staleS) / 2) - (1 + sales.staleMult) / 2) < 1e-9)
+		local desk = { rate = 1.0 }
+		local now = 100000
+		local price, old = Model.PhotoPrice(built, desk, { crowd = 2, at = now, x = 0, y = 0, z = 0 }, {}, now)
+		check('a fresh photo pays BASE + CROWD_BONUS per head', price == 120 + 2 * 25 and old == false, price)
+		price = Model.PhotoPrice(built, desk, { crowd = 50, at = now, uploaded = true }, {}, now)
+		check('the crowd is capped and a real picture pays UPLOADED_MULT', price == math.floor((120 + 6 * 25) * 1.25), price)
+		price, old = Model.PhotoPrice(built, desk, { crowd = 0, at = now, x = 10, y = 0, z = 0 },
+			{ { x = 0, y = 0, z = 0, at = now - 60 } }, now)
+		check('a scene the desk bought an hour ago is old news', old == true and price == math.floor(120 * 0.3), price)
+		check('a story pays BASE + PER_WORD, capped at WORD_CAP',
+			Model.StoryPrice(built, desk, { words = 50, at = now }, now) == 150 + 150
+				and Model.StoryPrice(built, desk, { words = 9999, at = now }, now) == 150 + 3 * 120)
+		check('an hourly allowance forgets what is an hour old',
+			Model.Left({ { at = now - 10, amount = 300 }, { at = now - 4000, amount = 900 } }, 1000, now) == 700
+				and #Model.Prune({ { at = now - 10 }, { at = now - 4000 } }, now) == 1)
+		check('a staff reporter sells to their own newsroom only, a Stringer anywhere',
+			Model.MaySellTo(built, 1, 'n54', 'n54') and not Model.MaySellTo(built, 1, 'n54', 'wns')
+				and Model.MaySellTo(built, 0, 'n54', 'wns'))
+	end
+end
+
+section('media: the newsroom on the server -- breaking news, photos, stories, the desk, tips, the kit')
+do
+	local function survey(env, file)
+		if file ~= 'config/media.lua' then return end
+		local networks = env.OPX.Config.MODULES.media.NETWORKS
+		local n54, wns = networks.n54.DESKS[1], networks.wns.DESKS[1]
+		n54.X, n54.Y, n54.Z = 300.0, 0.0, 0.0
+		wns.X, wns.Y, wns.Z = 400.0, 0.0, 0.0
+	end
+	local env, control, why = boot('server', fuelBridge({}, {}), nil, survey)
+	check('the server boots with two surveyed desks', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local media = OPX.Modules.Get('media')
+		local progress = OPX.Modules.Get('progress')
+		local ANCHOR, VIEWER, STRINGER, EDITOR = 81, 82, 83, 84
+		local metas = {}
+		local function stand(source, cid, job, grade, onDuty)
+			local loaded = standCharacter(env, control, source, cid, { EDDIES = 0, BANK = 0 })
+			loaded.PlayerData.job = { name = job, onDuty = onDuty ~= false, grade = { level = grade } }
+			loaded.PlayerData.jobs = { [job] = grade }
+			metas[source] = {}
+			loaded.Functions.GetMetaData = function(key) if key == nil then return metas[source] end return metas[source][key] end
+			loaded.Functions.SetMetaData = function(key, value) metas[source][key] = value end
+			return loaded
+		end
+		local anchor = stand(ANCHOR, 'MEDI0001', 'reporter', 2)
+		stand(VIEWER, 'MEDI0002', 'unemployed', 0)
+		local stringer = stand(STRINGER, 'MEDI0003', 'reporter', 0)
+		stand(EDITOR, 'MEDI0004', 'reporter', 3)
+		control.Stand(ANCHOR, 0.0, 0.0, 0.0)
+		control.Stand(VIEWER, 5.0, 0.0, 0.0)
+		control.Stand(STRINGER, 2000.0, 0.0, 0.0)
+		control.Stand(EDITOR, 3000.0, 0.0, 0.0)
+
+		-- The bag, faked by player and slot.
+		local bags = { [ANCHOR] = {}, [VIEWER] = {}, [STRINGER] = {}, [EDITOR] = {} }
+		local function firstFree(bag)
+			local slot = 1
+			while bag[slot] ~= nil do slot = slot + 1 end
+			return slot
+		end
+		local inventory = {
+			GetInventory = function(player)
+				local items = {}
+				for slot, stack in pairs(bags[player] or {}) do
+					items[#items + 1] = { slot = slot, name = stack.name, count = 1, metadata = stack.metadata }
+				end
+				table.sort(items, function(a, b) return a.slot < b.slot end)
+				return { ok = true, value = { items = items } }
+			end,
+			GetSlot = function(player, slot)
+				local stack = (bags[player] or {})[slot]
+				if stack == nil then return { ok = true, value = nil } end
+				return { ok = true, value = { slot = slot, name = stack.name, count = 1, metadata = stack.metadata } }
+			end,
+			AddItem = function(player, name, _, metadata)
+				local bag = bags[player]
+				bag[firstFree(bag)] = { name = name, metadata = metadata }
+				return { ok = true }
+			end,
+			RemoveFromSlot = function(player, slot)
+				local bag = bags[player]
+				if bag[slot] == nil then return { ok = false, error = 'empty' } end
+				bag[slot] = nil
+				return { ok = true }
+			end,
+			CanCarry = function() return { ok = true, value = true } end,
+		}
+		local accounts = nil
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if name == 'inventory' then return inventory end
+			if name == 'accounts' then return accounts end
+			return realGet(name, minimum)
+		end
+		local function count(player, name)
+			local n = 0
+			for _, stack in pairs(bags[player]) do if stack.name == name then n = n + 1 end end
+			return n
+		end
+		local function lastTo(name, player) return fuelAnswer(control, name, player) end
+		local function said(player)
+			for index = #control.clientEvents, 1, -1 do
+				local event = control.clientEvents[index]
+				if event.source == player and type(event[1]) == 'table' and event[1].message ~= nil then
+					return event[1].message
+				end
+			end
+			return nil
+		end
+		local api = OPX.Api.Get('media')
+
+		-- Breaking news.
+		control.Advance(1000)
+		local ok, code = media.Breaking(VIEWER, { headline = 'Fake news everywhere', text = '' })
+		check('a non-reporter cannot break news', not ok and code == 'not_reporter', code)
+		control.Advance(1000)
+		ok, code = media.Breaking(STRINGER, { headline = 'Stringer scoop here', text = '' })
+		check('a Stringer is below the Anchor grade', not ok and code == 'grade_too_low', code)
+		control.Advance(1000)
+		ok, code = media.Breaking(ANCHOR, { headline = 'Hi', text = '' })
+		check('a headline too short is refused', not ok and code == 'headline_too_short', code)
+		control.Advance(1000)
+		ok, code = media.Breaking(ANCHOR, { headline = 'Arasaka Tower goes dark', text = 'Corpo Plaza sealed off by NCPD.' })
+		local seen = lastTo(media.Event.BROADCAST, VIEWER)
+		check('an Anchor on duty breaks news to every connected player', ok and code == 'aired' and seen ~= nil
+			and seen.headline == 'Arasaka Tower goes dark' and seen.label == 'N54 News' and seen.tag == 'N54'
+			and lastTo(media.Event.BROADCAST, STRINGER) ~= nil, code)
+		check('the break carries no presentation: each client reads its own stingers', seen ~= nil and seen.stinger == nil)
+		control.Advance(1000)
+		ok, code = media.Breaking(ANCHOR, { headline = 'Second break right away', text = '' })
+		check('a second break inside the cooldown is refused, with the wait', not ok and code == 'air_busy', code)
+		check('the feed keeps the break for /news', #api.Feed() == 1 and api.Feed()[1].tag == 'N54')
+		anchor.PlayerData.job.onDuty = false
+		control.Advance(400000)
+		ok, code = media.Breaking(ANCHOR, { headline = 'Off duty headline', text = '' })
+		check('off duty, nobody breaks news', not ok and code == 'off_duty', code)
+		anchor.PlayerData.job.onDuty = true
+
+		-- Stories.
+		control.Advance(1000)
+		ok, code = media.Story(ANCHOR, { headline = 'Short one here', body = 'too short' })
+		check('a story with too short a body is refused', not ok and code == 'body_too_short', code)
+		control.Advance(1000)
+		local body = ('Militech convoy ambushed on the Badlands highway at dawn. '):rep(3)
+		ok, code = media.Story(ANCHOR, { headline = 'Convoy hit in the Badlands', body = body })
+		local story = nil
+		for _, stack in pairs(bags[ANCHOR]) do if stack.name == 'press_story' then story = stack.metadata end end
+		check('a story becomes a press_story carrying the byline, headline and word count',
+			ok and story ~= nil and story.by == 'MEDI0001' and story.network == 'n54' and story.words == 27
+				and story.headline == 'Convoy hit in the Badlands', code)
+		control.Advance(1000)
+		ok, code = media.Story(ANCHOR, { headline = 'Another one already', body = body })
+		check('the next story waits for its COOLDOWN', not ok and code == 'story_too_soon', code)
+
+		-- A photo: a server-timed bar, then the record.
+		local function report(player, ms, ending)
+			local current = fuelAnswer(control, progress.Event.START, player)
+			for _ = 1, math.floor(ms / 500) do
+				control.Advance(500)
+				control.Pump(1)
+			end
+			env.source = player
+			control.netEvents[progress.Event.REPORT](current.id, ending or 'finished')
+			env.source = nil
+			control.Pump(4)
+		end
+		control.Advance(1000)
+		ok, code = media.TakePhoto(ANCHOR, 1)
+		check('no camera in the slot: refused', not ok and code == 'no_camera', code)
+		bags[ANCHOR][9] = { name = 'press_camera', metadata = {} }
+		control.Advance(1000)
+		ok, code = media.TakePhoto(ANCHOR, 9)
+		check('a camera starts a server-timed bar', ok and code == 'framing', code)
+		report(ANCHOR, 500, 'finished')
+		check('a bar "finished" early is the server clock\'s to refuse: no photo', count(ANCHOR, 'press_photo') == 0)
+		control.Advance(1000)
+		media.TakePhoto(ANCHOR, 9)
+		control.Stand(ANCHOR, 10.0, 0.0, 0.0)
+		report(ANCHOR, 2500)
+		check('moving during the bar blurs the shot', count(ANCHOR, 'press_photo') == 0)
+		control.Stand(ANCHOR, 0.0, 0.0, 0.0)
+		control.Advance(1000)
+		media.TakePhoto(ANCHOR, 9)
+		report(ANCHOR, 2500)
+		local photo = nil
+		for _, stack in pairs(bags[ANCHOR]) do if stack.name == 'press_photo' then photo = stack.metadata end end
+		check('the photo carries the server\'s reads: where, when, who, the crowd in frame',
+			photo ~= nil and photo.by == 'MEDI0001' and photo.x == 0 and photo.crowd == 1 and photo.uploaded == false
+				and type(photo.serial) == 'string')
+		check('and the camera stays in the bag', bags[ANCHOR][9] ~= nil)
+
+		-- The desk: minted without the accounts contract.
+		control.Advance(1000)
+		ok, code = media.Sell(ANCHOR, { network = 'n54', desk = 'corpo_plaza_newsroom' })
+		check('away from the desk: too_far', not ok and code == 'too_far', code)
+		control.Stand(ANCHOR, 300.5, 0.0, 0.0)
+		bags[ANCHOR][20] = { name = 'press_photo', metadata = { by = 'SOMEONE1', at = 0, crowd = 9 } }
+		control.Advance(1000)
+		ok, code = media.Sell(ANCHOR, { network = 'wns', desk = 'japantown_bureau' })
+		check('an Anchor of N54 cannot sell to the WNS bureau', not ok and code == 'wrong_newsroom', code)
+		control.Advance(1000)
+		ok, code = media.Sell(ANCHOR, { network = 'n54', desk = 'corpo_plaza_newsroom' })
+		local expected = (120 + 25) + (150 + 3 * 27)
+		check('the desk buys the photo and the story, minted when there is no treasury',
+			ok and code == 'sold' and anchor.PlayerData.money.BANK == expected, anchor.PlayerData.money.BANK)
+		check('the pieces left the bag; work under another byline stayed',
+			count(ANCHOR, 'press_story') == 0 and bags[ANCHOR][20] ~= nil and count(ANCHOR, 'press_photo') == 1)
+		control.Advance(1000)
+		ok, code = media.Sell(ANCHOR, { network = 'n54', desk = 'corpo_plaza_newsroom' })
+		check('only somebody else\'s work left: not_your_byline', not ok and code == 'not_your_byline', code)
+		bags[ANCHOR][20] = nil
+
+		-- The desk through the accounts contract.
+		local withdrawn = {}
+		local balance = 0
+		accounts = {
+			Withdraw = function(kind, key, amount, reason, opId)
+				if amount > balance then return { ok = false, error = 'insufficient_funds' } end
+				balance = balance - amount
+				withdrawn[#withdrawn + 1] = { kind = kind, key = key, amount = amount, reason = reason, opId = opId }
+				return { ok = true, value = { balance = balance } }
+			end,
+			Deposit = function(_, _, amount) balance = balance + amount; return { ok = true } end,
+		}
+		bags[ANCHOR][21] = { name = 'press_photo', metadata = { by = 'MEDI0001', at = math.floor(OPX.Now() / 1000),
+			crowd = 0, x = 900, y = 0, z = 0 } }
+		control.Advance(1000)
+		ok, code = media.Sell(ANCHOR, { network = 'n54', desk = 'corpo_plaza_newsroom' })
+		check('an empty newsroom account cannot pay: refused, the photo goes back', not ok and code == 'desk_broke'
+			and count(ANCHOR, 'press_photo') == 1, code)
+		balance = 10000
+		local before = anchor.PlayerData.money.BANK
+		control.Advance(1000)
+		ok, code = media.Sell(ANCHOR, { network = 'n54', desk = 'corpo_plaza_newsroom' })
+		check('with the accounts contract the desk pays from the reporter job account, with an opId',
+			ok and #withdrawn == 1 and withdrawn[1].kind == 'job' and withdrawn[1].key == 'reporter'
+				and type(withdrawn[1].opId) == 'string' and anchor.PlayerData.money.BANK - before == withdrawn[1].amount, code)
+		accounts = nil
+
+		-- A Stringer sells anywhere.
+		bags[STRINGER][1] = { name = 'press_story', metadata = { by = 'MEDI0003', words = 10,
+			at = math.floor(OPX.Now() / 1000) } }
+		control.Stand(STRINGER, 400.5, 0.0, 0.0)
+		control.Advance(1000)
+		ok, code = media.Sell(STRINGER, { network = 'wns', desk = 'japantown_bureau' })
+		check('a Stringer (freelance) sells to the WNS bureau, paid at its RATE',
+			ok and stringer.PlayerData.money.BANK == math.floor((150 + 30) * 1.1), stringer.PlayerData.money.BANK)
+
+		-- The tips line.
+		control.Advance(1000)
+		ok, code = media.Tip(VIEWER, 'short')
+		check('a tip too short is refused', not ok and code == 'tip_too_short', code)
+		ok, code = media.Tip(VIEWER, 'Maelstrom moving crates under the Kabuki overpass tonight')
+		local tip = lastTo(media.Event.TIP, ANCHOR)
+		check('a tip reaches every reporter on duty', ok and code == 'tip_sent' and tip ~= nil
+			and tip.text:find('Maelstrom', 1, true) ~= nil and lastTo(media.Event.TIP, EDITOR) ~= nil, code)
+		local named = false
+		for key, value in pairs(tip or {}) do
+			if value == VIEWER or value == 'MEDI0002' then named = true end
+		end
+		check('and it is anonymous: no id, no citizen id in what reporters get', tip ~= nil and not named)
+		control.Advance(1000)
+		ok, code = media.Tip(VIEWER, 'Another tip coming in too fast')
+		check('one tip a COOLDOWN per caller', not ok and code == 'tip_too_fast', code)
+
+		-- The kit and the pass.
+		control.Advance(1000)
+		ok, code = media.Kit(EDITOR)
+		local pass = nil
+		for _, stack in pairs(bags[EDITOR]) do if stack.name == 'press_pass' then pass = stack.metadata end end
+		check('/presskit gives the reporter their own pass and a camera', ok and pass ~= nil and pass.cid == 'MEDI0004'
+			and pass.network == 'n54' and count(EDITOR, 'press_camera') == 1, code)
+		control.Advance(1000)
+		ok, code = media.Kit(EDITOR)
+		check('and nothing twice', not ok and code == 'kit_full', code)
+		control.Stand(VIEWER, 3001.0, 0.0, 0.0)
+		local passSlot = nil
+		for slot, stack in pairs(bags[EDITOR]) do if stack.name == 'press_pass' then passSlot = slot end end
+		media.OnPassUsed(EDITOR, { slot = passSlot })
+		local card = lastTo(media.Event.PASS, VIEWER)
+		check('a pass shown tells whoever stands close whose it is, and that it holds',
+			card ~= nil and card.status == 'valid' and card.name == 'Vik Vektor' and card.network == 'N54 News')
+		check('somebody far away is not shown it', lastTo(media.Event.PASS, ANCHOR) == nil)
+
+		-- Newsrooms.
+		control.Advance(1000)
+		ok, code = media.Assign(ANCHOR, STRINGER, 'n54', false)
+		check('an Anchor cannot hire into the newsroom', not ok and code == 'grade_too_low', code)
+		control.Advance(1000)
+		ok, code = media.Assign(EDITOR, STRINGER, 'wns', false)
+		check('an Editor-in-chief hires only into their own newsroom', not ok and code == 'not_your_newsroom', code)
+		metas[EDITOR].press = { network = 'wns' }
+		control.Advance(1000)
+		ok, code = media.Assign(EDITOR, STRINGER, 'wns', false)
+		check('the WNS Editor-in-chief moves the Stringer to WNS', ok and metas[STRINGER].press.network == 'wns', code)
+		control.Stand(VIEWER, 3001.0, 0.0, 0.0)
+		control.Advance(4000)
+		media.OnPassUsed(EDITOR, { slot = passSlot })
+		card = lastTo(media.Event.PASS, VIEWER)
+		check('a pass printed for N54 no longer holds once its bearer moved to WNS', card ~= nil and card.status == 'revoked')
+		control.Advance(1000)
+		ok, code = media.Assign(0, VIEWER, 'wns', true)
+		check('staff cannot make a newsroom member of somebody who is no journalist',
+			not ok and code == 'target_not_reporter', code)
+
+		-- Hostile input on the one door.
+		env.source = ANCHOR
+		local survived = pcall(function()
+			control.netEvents[media.Event.REQUEST]({ verb = 'breaking', headline = ('x'):rep(100000), text = {} })
+			control.netEvents[media.Event.REQUEST]({ verb = 'sell', network = {}, desk = 5 })
+			control.netEvents[media.Event.REQUEST]({ verb = 'nope' })
+			control.netEvents[media.Event.REQUEST]('garbage')
+			control.Pump(5)
+		end)
+		env.source = nil
+		check('the request door survives garbage', survived)
+	end
+end
+
+section('media: the client draws a break like an announcement and puts the desks on the eye')
+do
+	local env, control = Host.Environment('client')
+	for _, file in ipairs(Host.LoadOrder('open77.lua', 'client')) do
+		local chunk = loadfile(file, 't', env)
+		if chunk ~= nil and pcall(chunk) and file == 'config/media.lua' then
+			local n = 0
+			for _, network in pairs(env.OPX.Config.MODULES.media.NETWORKS) do
+				for _, desk in ipairs(network.DESKS) do
+					n = n + 1
+					desk.X, desk.Y, desk.Z = 100.0 + n, 0.0, 0.0
+				end
+			end
+		end
+	end
+	local worst = resumeCost(env, control, function()
+		control.Fire('onClientResourceStart', 'opx_infinity')
+	end, 240)
+	check('a client booting with every desk surveyed keeps every resume under 4,500', worst < 4500, worst)
+	control.ReadyPages()
+	local media = env.OPX.Modules.Get('media')
+	control.netEvents[media.Event.BROADCAST]({ network = 'n54', tag = 'N54', label = 'N54 News',
+		headline = 'Arasaka Tower goes dark', text = 'Corpo Plaza sealed off.', durationMs = 14000 })
+	local toast
+	for _, page in ipairs(control.pages) do
+		for index = 1, #page.sent do
+			if page.sent[index].channel == 'opx:notify:show' then toast = page.sent[index].payload end
+		end
+	end
+	check('a break is drawn on the overlay, on its own id, as a warning',
+		toast ~= nil and toast.id == 'opx.media.breaking' and toast.kind == 'warning'
+			and toast.message:find('Arasaka Tower goes dark', 1, true) ~= nil and toast.durationMs == 14000,
+		toast and tostring(toast.id))
+	check('wrapped in the stingers this client configured, like a staff announcement',
+		toast ~= nil and type(toast.stinger) == 'table' and toast.stinger.open == 'announce-open.mp3'
+			and toast.stinger.close == 'announce-close.mp3')
+	local survived = pcall(function()
+		control.netEvents[media.Event.BROADCAST]({ headline = {} })
+		control.netEvents[media.Event.TIP]('x')
+		control.netEvents[media.Event.PASS]({ status = 'bogus', name = 5 })
+		control.netEvents[media.Event.FORM]({ kind = 'nope' })
+	end)
+	check('and the client doors survive garbage', survived)
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the

@@ -958,6 +958,46 @@ stop?, tick? })`. The bus is `opx:on:contracts:posted`, `accepted`, `paid`,
 `failed`, `expired`, `cancelled` — ids, type, citizen ids and reward, never a position.
 Every drop-off, zone and fixer ships at `0,0,0` and is disabled, by name, until surveyed.
 
+### Media: N54 News, WNS and the screamsheet
+
+`modules/media` + `config/media.lua`. Job `reporter` (Stringer 0 / Reporter 1 / Anchor 2 /
+Editor-in-chief 3, boss and bank). Which **newsroom** a reporter works for is character
+metadata `press = { network }` (default `DEFAULT_NETWORK`), set by an Editor-in-chief of that
+newsroom with `/pressnet <id> <network>` or by staff with `/opx.media.assign`. Several
+newsrooms live in one config (`n54`, `wns`, `screamsheet` ship), each with a `TAG`, an
+`ACCOUNT` (`accounts` treasury) and `DESKS`.
+
+**Breaking news** (`/breaking`, form, or `/breaking headline | text`; Anchor and up, on
+duty): the server sends `{ label, tag, headline, text, durationMs }` to every connected
+player on `opx:net:media:broadcast`, and each client draws it exactly like the staff
+announcement above -- `OPX.Toast.Show` on the runtime's overlay, one fixed id, the two
+stingers of the RECEIVING client's `BROADCAST.STINGER` -- plus a chat line on core's answer
+channel. Held to a per-newsroom cooldown, a global cooldown and an hourly count; audited;
+`/news` reads the feed back.
+
+**Field work**: `press_camera` used from the bag starts a server-timed bar; the camera must
+still be in its slot and the reporter within `MAX_DRIFT` when it ends. The `press_photo`
+item carries the server's reads (`x, y, z, bucket, at, by, crowd`). A real picture is taken
+only when `PHOTO.UPLOAD_URL` is set: `Open77.players.requestScreenshot` (permission
+`players.screenshot`) has the client POST its own game view there -- the platform never
+carries the bytes over the game transport, so without an external URL a photo is the
+record of a shot. `/story` files a `press_story` (headline, body, words). An editor **desk**
+(ALT) buys every piece of the seller's own byline: pieces leave the bag, then
+`accounts.Withdraw(kind, key, total, reason, opId)` or, with no `accounts`, new money under
+`SALES.MINT_PER_HOUR`, then `AddMoney`; any refusal puts back what moved. Freshness, old
+news (`REPEAT_*`) and a per-seller hourly cap shape the price. Stringers sell to any desk,
+staff only to their own newsroom.
+
+**Tips line**: `/tip <text>`, anybody, anonymous to the reporters on duty (the caller is in
+the audit journal only); `/tips` reads the last ones. **Kit**: `/presskit` gives an on-duty
+reporter their own `press_pass` and a `press_camera`; a pass used from the bag shows
+everybody within `PASS.SHOW_RADIUS` the bearer, newsroom and whether the accreditation
+still holds (`valid`, `revoked`, `unverified`). Client-to-server is ONE door,
+`opx:net:media:request` with `verb = breaking|story|sell`. Contract `media` (server):
+`NetworkOf(player)`, `Networks()`, `Feed()`; bus `opx:on:media:broadcast|sold|photo|tip`.
+Staff: `/opx.media.desks`, `/opx.media.capture <network> <desk>`. Every desk ships at
+`0,0,0` and is disabled, by name, until surveyed.
+
 ---
 
 ## For creators
