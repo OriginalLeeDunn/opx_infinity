@@ -284,45 +284,59 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The four rules above still hold, in other words. Tone is not available --
-   the minimal surface is grey and white -- and neither is a pane, so a toast
-   is its words on its own dark square. The KIND is its tag and the tone of
-   its lifetime line: faint for info, lit for success, white for the two that
-   are wrong. A toast is a THING, so it has a ground; the column that
-   stacks them has none.
+   A toast is a white card: the grid's hairline round it, a soft shadow under
+   it, black type in three weights -- the kind as a light caption, the title
+   bold, the message light and grey. The KIND is a small square before the
+   caption, the house site's bullet: grey for info, the rainbow for success,
+   black for warning and error. The error alone is also boxed in black,
+   because it is the one kind that must be noticed without being read.
 
+   The lifetime is a 2px rainbow band along the foot, sliding -- a toast is
+   transient, so it may move; on the two kinds that are wrong it is black.
    The kind's own word arrives in capitals (`CONFIRMED`) and is lowered with
-   its first letter back. The title is the caller's text and is left as they
-   wrote it. The lifetime is a 1px line along the foot. */
+   its first letter back. The title is the caller's text, left as written. */
 :root[data-op-style="minimal"] .toast {
-  --rule: rgba(255, 255, 255, 0.32);
-  --aug-border-bg: transparent;
-  gap: var(--op-space-3);
-  padding: var(--op-space-2) var(--op-space-4) var(--op-space-3) calc(var(--op-space-3) + 2px);
+  --kind-mark: var(--op-text-faint);
+  --aug-border-bg: var(--op-edge);
+  --aug-border-all: 1px;
+  gap: 12px;
+  padding: 12px 16px 14px 14px;
   color: var(--op-text);
-  background: var(--op-plate);
-  box-shadow: none;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .toast .glyph {
   width: 16px;
   height: 16px;
-  color: var(--op-text-dim);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .toast .glyph svg {
-  stroke-width: 1.6;
+  stroke-width: 1.5;
 }
 
 :root[data-op-style="minimal"] .toast .body {
-  gap: 2px;
+  gap: 3px;
 }
 
 :root[data-op-style="minimal"] .toast .tag {
-  font: 500 var(--op-fs-label) / 1.2 var(--op-font-body);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: 300 var(--op-fs-label) / 1.2 var(--op-font-body);
   color: var(--op-text-dim);
   opacity: 1;
   text-transform: lowercase !important;
+}
+
+:root[data-op-style="minimal"] .toast .tag::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--kind-mark);
 }
 
 :root[data-op-style="minimal"] .toast .tag::first-letter {
@@ -331,36 +345,36 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
 
 :root[data-op-style="minimal"] .toast .title {
   font: 600 var(--op-fs-lead) / 1.25 var(--op-font-display);
+  letter-spacing: -0.02em !important;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .toast .message {
-  font: 400 var(--op-fs-body) / 1.4 var(--op-font-body);
+  font: 300 var(--op-fs-body) / 1.5 var(--op-font-body);
   color: var(--op-text-dim);
   opacity: 1;
 }
 
 :root[data-op-style="minimal"] .toast .bar {
-  left: calc(var(--op-space-3) + 2px);
-  bottom: 2px;
-  width: calc(100% - var(--op-space-3) - var(--op-space-4) - 2px);
-  height: 1px;
-  background: var(--rule);
-  opacity: 0.5;
+  height: 2px;
+  background-color: var(--op-rainbow-2);
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  animation: op-rainbow-slide 4s linear infinite;
 }
 
 :root[data-op-style="minimal"] .toast.success {
-  --rule: var(--op-red-hi);
+  --kind-mark: var(--op-rainbow);
 }
 
 :root[data-op-style="minimal"] .toast.warning,
 :root[data-op-style="minimal"] .toast.error {
-  --rule: var(--op-alarm);
+  --kind-mark: var(--op-alarm);
 }
 
 :root[data-op-style="minimal"] .toast.warning .tag,
 :root[data-op-style="minimal"] .toast.error .tag {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--op-alarm);
 }
 
@@ -369,11 +383,14 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
   color: var(--op-text);
 }
 
-/* The error alone is boxed -- a white hairline round the words -- because it
-   is the one kind that must be noticed without being read. */
+:root[data-op-style="minimal"] .toast.warning .bar,
+:root[data-op-style="minimal"] .toast.error .bar {
+  background: var(--op-alarm);
+  animation: none;
+}
+
 :root[data-op-style="minimal"] .toast.error {
   --aug-border-bg: var(--op-alarm);
-  --aug-border-all: 1px;
-  background: var(--op-plate-lit);
+  --aug-border-all: 1.5px;
 }
 </style>

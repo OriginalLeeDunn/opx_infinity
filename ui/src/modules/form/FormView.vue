@@ -1111,32 +1111,28 @@ function focusField(field: Field): void {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   Type on the street, not a terminal. The three rules above stay true -- the
-   focused field does not leave the plane, a centred form does not tilt, the
-   caret is the one thing the browser fills -- and everything they were written
-   against goes:
+   A printed form. The three rules above stay true -- the focused field does
+   not leave the plane, a centred form does not tilt, the caret is the one
+   thing the browser fills -- and everything they were written against goes:
 
-     the bay       has no ground and no interlace -- it is a place, and the
-                   fields in it carry their own; the scrim behind dims the world
-     the header    is the title alone; the `// FORM` eyebrow is the instrument
+     the bay       is one white sheet with a soft shadow (`.op-bay`), no
+                   interlace; the scrim behind fades the world to white
+     the header    is the title alone, large and light, with a 2px rainbow
+                   line under it; the `// FORM` eyebrow is the instrument
                    naming itself, and a form does not need to
-     a field       is a thing, so it has its own dark plate -- the label and
-                   its entry on it, a 1px line under; pointed at, the plate
-                   lifts; focused, it lifts and the label and line go white,
-                   with no step sideways and no bloom
-     a choice      steps with two small plates that light under the pointer
-     a keycap      is a small key with a faint fill */
+     a field       is a row of the sheet's hairline index: the label on the
+                   left, the entry on the right, a rule between rows; pointed
+                   at, the row goes grey-white; focused, a black hairline
+                   frames it and the label goes bold
+     a range       a 1px grey track filled in the rainbow
+     a choice      steps with two small ghost squares
+     a keycap      is a small key on the sunk ground */
 :root[data-op-style="minimal"] .scrim {
-  background: rgba(0, 0, 0, 0.45);
-}
-
-:root[data-op-style="minimal"] .bay {
-  background: none;
-  box-shadow: none;
+  background: rgba(255, 255, 255, 0.55);
 }
 
 :root[data-op-style="minimal"] .bay-inner {
-  text-shadow: var(--op-ink);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .bay-inner::before {
@@ -1145,8 +1141,22 @@ function focusField(field: Field): void {
 
 :root[data-op-style="minimal"] .head,
 :root[data-op-style="minimal"] .strip.end .head {
-  padding: var(--op-space-5) var(--op-space-5) var(--op-space-1);
+  position: relative;
+  padding: var(--op-space-5) var(--op-space-5) var(--op-space-4);
   border-bottom: 0;
+}
+
+/* The header's rule: the rainbow, from edge to edge of the sheet. */
+:root[data-op-style="minimal"] .head::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  animation: op-rainbow-slide 4s linear infinite;
 }
 
 :root[data-op-style="minimal"] .eyebrow {
@@ -1154,26 +1164,34 @@ function focusField(field: Field): void {
 }
 
 :root[data-op-style="minimal"] .head h1 {
-  font: 600 var(--op-fs-title) / 1.2 var(--op-font-body);
+  font: 300 var(--op-fs-head) / 1.1 var(--op-font-body);
+  letter-spacing: -0.035em !important;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .note {
-  padding: var(--op-space-1) var(--op-space-5) 0;
-  font-size: var(--op-fs-meta);
+  padding: var(--op-space-3) var(--op-space-5) 0;
+  font: 300 var(--op-fs-meta) / 1.6 var(--op-font-body);
+  color: var(--op-text-dim);
 }
 
+/* The rows: an index, one hairline between each. */
 :root[data-op-style="minimal"] .list {
-  gap: 2px;
-  padding: var(--op-space-3) var(--op-space-5) var(--op-space-4);
+  gap: 0;
+  padding: var(--op-space-3) 0 var(--op-space-3);
+}
+
+:root[data-op-style="minimal"] .slot + .slot {
+  box-shadow: inset 0 1px 0 var(--op-edge);
 }
 
 :root[data-op-style="minimal"] .field {
   --aug-border-bg: transparent;
-  padding: 11px var(--op-space-3);
-  background: var(--op-plate);
-  box-shadow: inset 0 -1px 0 var(--op-edge-hover);
+  padding: 13px var(--op-space-5);
+  background: var(--op-sheet);
+  box-shadow: none;
   color: var(--op-text);
+  text-shadow: none;
   transition:
     background-color var(--op-dur-fast) linear,
     box-shadow var(--op-dur-fast) linear;
@@ -1181,25 +1199,26 @@ function focusField(field: Field): void {
 
 :root[data-op-style="minimal"] .field:hover:not(.on) {
   --aug-border-bg: transparent;
-  background: var(--op-plate-lit);
-  box-shadow: inset 0 -1px 0 var(--op-edge-on);
+  background: var(--op-sheet-hover);
+  box-shadow: none;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .field.on {
   --aug-border-bg: transparent;
   transform: none;
-  background: var(--op-plate-lit);
-  box-shadow: inset 0 -1px 0 var(--op-text);
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-on);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .field .label {
-  font-weight: 500;
+  font-weight: 300;
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .field.on .label {
+  font-weight: 600;
   color: var(--op-text);
 }
 
@@ -1209,42 +1228,47 @@ function focusField(field: Field): void {
   padding: 0;
   border-bottom: 0;
   font: 400 var(--op-fs-body) / 1.2 var(--op-font-body);
+  color: var(--op-text);
   text-align: right;
   caret-color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .entry::selection {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--op-rainbow-1);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .entry::placeholder {
   font-style: normal;
+  font-weight: 300;
+  color: var(--op-text-faint);
 }
 
 :root[data-op-style="minimal"] .value {
   font: 400 var(--op-fs-body) / 1.2 var(--op-font-body);
+  color: var(--op-text);
   opacity: 1;
 }
 
 :root[data-op-style="minimal"] .count {
-  font: 400 var(--op-fs-label) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text-faint);
   opacity: 1;
 }
 
-/* A range: a 2px line, and the share of it filled in white. The fill is the
-   reading, so it stays. */
+/* A range: a 1px grey track, and the share of it filled in the rainbow. The
+   fill is the reading, so it stays -- and it is the one coloured thing. */
 :root[data-op-style="minimal"] .rule {
   width: 72px;
-  height: 2px;
-  background: var(--op-edge-hover);
+  height: 3px;
+  background: var(--op-edge);
   box-shadow: none;
   overflow: hidden;
 }
 
 :root[data-op-style="minimal"] .rule i,
 :root[data-op-style="minimal"] .field.on .rule i {
-  background: var(--op-text);
+  background: var(--op-rainbow);
 }
 
 :root[data-op-style="minimal"] .marks {
@@ -1252,29 +1276,37 @@ function focusField(field: Field): void {
 }
 
 :root[data-op-style="minimal"] .mark {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   padding: 0;
-  background: var(--op-wash);
+  border: 0;
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
   color: var(--op-text-dim);
-  font: 500 var(--op-fs-body) / 18px var(--op-font-body);
+  font: 400 var(--op-fs-body) / 20px var(--op-font-body);
   text-align: center;
 }
 
 :root[data-op-style="minimal"] .mark:hover {
-  background: var(--op-wash-on);
+  background: var(--op-sheet-hover);
+  box-shadow: inset 0 0 0 1px var(--op-text);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .foot {
   gap: var(--op-space-3);
-  padding: var(--op-space-3) var(--op-space-5) var(--op-space-5);
+  padding: var(--op-space-4) var(--op-space-5) var(--op-space-5);
   border-top: 1px solid var(--op-edge);
+}
+
+:root[data-op-style="minimal"] .hint {
+  font: 300 var(--op-fs-meta) / 1.6 var(--op-font-body);
+  color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .status {
   font-family: var(--op-font-body);
-  font-weight: 400;
+  font-weight: 300;
   color: var(--op-text-dim);
 }
 
@@ -1288,13 +1320,14 @@ function focusField(field: Field): void {
   --aug-border-all: 1px;
   height: 20px;
   padding: 0 7px;
-  background: rgba(255, 255, 255, 0.10);
-  box-shadow: none;
-  font: 600 var(--op-fs-label) / 1 var(--op-font-body);
+  background: var(--op-sheet-sunk);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .cap-label {
-  font: 400 var(--op-fs-meta) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-meta) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
 }
 </style>

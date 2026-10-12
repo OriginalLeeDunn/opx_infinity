@@ -745,65 +745,109 @@ function choose(row: Slot): void {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A RACK OF SQUARE PLATES WITH NOTHING AROUND THEM. Each row keeps its own dark
-   ground -- it is a thing to press -- but the bay that held them in the
-   cyberpunk look has neither a frame nor a ground: the rows stand on the
-   street as a column. Pointed at, a row's ground lifts; chosen, it lifts
-   further and its words go white.
+   A WHITE SHEET CUT INTO ROWS. The bay is a sheet with a soft shadow under it
+   and a 2px rainbow line along its top, where the cyberpunk look lit its
+   leading edge; the rows are cells of that sheet, separated by 1px hairlines
+   rather than by space. The type is black and light; a row's label is the one
+   word on it drawn at weight.
 
-   The chosen row does not step out of the column: the pop is a plane pushed
-   toward the player, and on a flat surface it is only a row out of line. A
-   check becomes a square switch -- the one control here whose state is a
-   position -- and a separator is a quiet label with no rule under it. */
+   Pointed at, a row's ground greys a hair; chosen, a pastel rainbow wash
+   slides under it -- the only colour on the sheet, and it is only ever on the
+   row the cursor is on. The chosen row does not step out of the column. A
+   check is a square hairline box, ticked: a rainbow fill with a black tick. */
 :root[data-op-style="minimal"] .bay {
   --aug-border-bg: transparent;
-  background: none;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .bay-inner::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  animation: op-rainbow-slide 4s linear infinite;
+  pointer-events: none;
 }
 
 :root[data-op-style="minimal"] .list {
-  gap: 2px;
-  padding: var(--op-space-2) 0;
+  gap: 0;
+  padding: 2px 0 0;
+}
+
+:root[data-op-style="minimal"] .slot + .slot .row {
+  border-top: 1px solid var(--op-line);
 }
 
 :root[data-op-style="minimal"] .row {
   --aug-border-bg: transparent;
-  padding: 8px var(--op-space-3);
-  background: var(--op-plate);
-  color: var(--op-red-text);
+  isolation: isolate;
+  padding: 11px var(--op-space-4);
+  background: transparent;
+  color: var(--op-text);
   transition:
     color var(--op-dur-fast) linear,
-    background-color var(--op-dur-fast) linear,
-    box-shadow var(--op-dur-fast) linear;
+    background-color var(--op-dur-fast) linear;
+}
+
+/* The wash: present on every row, shown on the chosen one, and only moving
+   while it is shown. */
+:root[data-op-style="minimal"] .row::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 200%;
+  opacity: 0;
+  animation: op-rainbow-slide 6s linear infinite paused;
+  transition: opacity 250ms ease;
+  pointer-events: none;
 }
 
 :root[data-op-style="minimal"] .row.is-hover,
 :root[data-op-style="minimal"] .row:hover:not(.is-off):not(.is-on) {
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .row.on {
   transform: none;
-  background: var(--op-plate-lit);
+  background: transparent;
   color: var(--op-text);
   box-shadow: none;
 }
 
+:root[data-op-style="minimal"] .row.on::before {
+  opacity: 0.5;
+  animation-play-state: running;
+}
+
+:root[data-op-style="minimal"] .row.is-off {
+  color: var(--op-text-faint);
+}
+
 :root[data-op-style="minimal"] .row .label {
-  font-weight: 500;
-  text-shadow: var(--op-ink);
+  font-weight: 400;
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .row.on .label {
   color: var(--op-text);
-  text-shadow: var(--op-ink);
+  font-weight: 600;
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .row .value,
 :root[data-op-style="minimal"] .row .mark {
   color: var(--op-text-dim);
-  font-weight: 400;
-  text-shadow: var(--op-ink);
+  font-weight: 300;
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .row.on .value {
@@ -811,50 +855,63 @@ function choose(row: Slot): void {
   color: var(--op-text);
 }
 
+:root[data-op-style="minimal"] .glyph {
+  color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .row.on .glyph {
+  color: var(--op-text);
+}
+
 :root[data-op-style="minimal"] .glyph svg {
   stroke-width: 1.5;
 }
 
-/* The eye's checkbox, exactly: a square hairline, and ticked, a white square
-   with the tick cut out of it in the ground's colour. Not a switch -- a menu
-   row and an eye row ask the same yes-or-no, and answer it the same way. */
+/* The eye's checkbox, exactly: a square hairline, and ticked, the rainbow
+   with a black tick drawn into it. */
 :root[data-op-style="minimal"] .check {
   width: 13px;
   height: 13px;
-  border: 1px solid rgba(255, 255, 255, 0.45);
-  background: none;
+  border: 1px solid var(--op-edge-hover);
+  background: var(--op-sheet);
 }
 
 :root[data-op-style="minimal"] .check.ticked {
   border-color: var(--op-text);
-  background: var(--op-text);
+  background: var(--op-rainbow);
 }
 
 :root[data-op-style="minimal"] .check svg {
-  stroke: rgb(var(--op-plate-rgb));
+  stroke: var(--op-text);
+  stroke-width: 1.8;
 }
 
 :root[data-op-style="minimal"] .sep {
   /* On the labels' x: the row's inset, the glyph column it holds open, the gap. */
-  padding: var(--op-space-3) var(--op-space-3) var(--op-space-1)
-    calc(var(--op-space-3) * 2 + 16px);
-  color: var(--op-text-dim);
-  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
-  text-shadow: var(--op-ink);
+  padding: var(--op-space-4) var(--op-space-4) var(--op-space-2)
+    calc(var(--op-space-4) + var(--op-space-3) + 16px);
+  color: var(--op-text-faint);
+  font: 400 var(--op-fs-label) / 1 var(--op-font-body);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .sep::after {
   content: none;
 }
 
+:root[data-op-style="minimal"] .slot + .slot .sep {
+  border-top: 1px solid var(--op-line);
+}
+
 :root[data-op-style="minimal"] .foot {
-  padding: var(--op-space-2) var(--op-space-3) var(--op-space-1);
-  border-top: 1px solid var(--op-edge);
+  padding: var(--op-space-3) var(--op-space-4);
+  border-top: 1px solid var(--op-line);
+  background: var(--op-sheet-sunk);
 }
 
 :root[data-op-style="minimal"] .hint {
   color: var(--op-text-dim);
   opacity: 1;
-  text-shadow: var(--op-ink);
+  text-shadow: none;
 }
 </style>

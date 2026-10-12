@@ -1640,14 +1640,15 @@ onUnmounted(() => {
    =============================================================================
    The cyberpunk cascade is a column of outlined plates, each its own object,
    leaning toward the screen edge and jumping out at the pointer. Here a column
-   is a stack of rows standing next to what the eye is on: each row is a thing
-   on its own dark square, the column that holds them has no sheet, and nothing
-   moves. The pointed row's ground lights up and its words go white; a folder
-   that is open keeps the lit ground while its own list stands beside it.
+   is a white sheet standing next to what the eye is on, with a soft shadow
+   under it, cut into rows by 1px hairlines; nothing leans and nothing jumps.
+   The pointed row greys a hair; a folder that is open, or a row being run,
+   takes the pastel rainbow wash and keeps it while its own list stands beside
+   it -- the only colour on the sheet.
 
-   THE DANGER ROW CANNOT BE RED, and the minimal surface has no second colour
-   to spend on it. It is white at the heavier weight, so it reads as the one
-   row that is not like the others before it is read. */
+   THE DANGER ROW CANNOT BE RED, and the white surface has no second colour to
+   spend on it. It is black at the heaviest weight with a black rule down its
+   leading edge, so it reads as the one row that is not like the others. */
 :root[data-op-style="minimal"] .column {
   width: 236px;
   perspective: none;
@@ -1660,23 +1661,44 @@ onUnmounted(() => {
 }
 
 :root[data-op-style="minimal"] .rows {
-  gap: 2px;
+  gap: 0;
   padding: 0;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+}
+
+:root[data-op-style="minimal"] .slot + .slot > .row {
+  border-top: 1px solid var(--op-line);
 }
 
 :root[data-op-style="minimal"] .row {
   --aug-border-bg: transparent;
+  isolation: isolate;
   gap: 10px;
-  padding: 7px 12px;
-  font: 500 var(--op-fs-body) / 1.2 var(--op-font-body);
-  color: var(--op-text-dim);
-  background: var(--op-plate);
+  padding: 10px 14px;
+  font: 300 var(--op-fs-body) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+  background: transparent;
   box-shadow: none;
-  text-shadow: var(--op-ink);
+  text-shadow: none;
+}
+
+/* The wash: on every row, shown on the open and running ones only. */
+:root[data-op-style="minimal"] .row::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 200%;
+  opacity: 0;
+  animation: op-rainbow-slide 6s linear infinite paused;
+  transition: opacity 250ms ease;
+  pointer-events: none;
 }
 
 :root[data-op-style="minimal"] .row .label {
-  font: 500 var(--op-fs-body) / 1.2 var(--op-font-body);
+  font: 400 var(--op-fs-body) / 1.2 var(--op-font-body);
 }
 
 :root[data-op-style="minimal"] .glyph {
@@ -1686,45 +1708,46 @@ onUnmounted(() => {
 }
 
 :root[data-op-style="minimal"] .glyph svg {
-  stroke-width: 1.6;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.85));
+  stroke-width: 1.5;
+  filter: none;
 }
 
 :root[data-op-style="minimal"] .value,
 :root[data-op-style="minimal"] .mark {
-  font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-meta) / 1 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .hint {
-  font: 400 var(--op-fs-meta) / 1.35 var(--op-font-body);
+  font: 300 var(--op-fs-meta) / 1.4 var(--op-font-body);
+  color: var(--op-text-dim);
 }
 
-/* A square hairline; ticked, the mark is the one fill a row may carry. */
+/* A square hairline; ticked, the rainbow with a black tick drawn into it. */
 :root[data-op-style="minimal"] .check {
   width: 13px;
   height: 13px;
-  border-color: rgba(255, 255, 255, 0.45);
-  background: none;
+  border-color: var(--op-edge-hover);
+  background: var(--op-sheet);
 }
 
 :root[data-op-style="minimal"] .check.ticked {
   border-color: var(--op-text);
-  background: var(--op-text);
+  background: var(--op-rainbow);
 }
 
 :root[data-op-style="minimal"] .check svg {
-  stroke: rgb(var(--op-plate-rgb));
+  stroke: var(--op-text);
 }
 
-/* --- the states: the ground lights, the words go white, the edge takes a rule - */
+/* --- the states -------------------------------------------------------------- */
 :root[data-op-style="minimal"] .row:hover:not(.off):not(.pending):not(.open),
 :root[data-op-style="minimal"] .plane.keyboard .row:focus:not(.off):not(.pending):not(.open),
 :root[data-op-style="minimal"] .row.danger:hover:not(.off):not(.pending),
 :root[data-op-style="minimal"] .plane.keyboard .row.danger:focus:not(.off):not(.pending) {
   --aug-border-bg: transparent;
   color: var(--op-text);
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
   box-shadow: none;
   transform: none;
   filter: none;
@@ -1732,7 +1755,8 @@ onUnmounted(() => {
 
 :root[data-op-style="minimal"] .row:hover:not(.off):not(.pending):not(.open) .glyph,
 :root[data-op-style="minimal"] .plane.keyboard .row:focus:not(.off):not(.pending):not(.open) .glyph,
-:root[data-op-style="minimal"] .row.open .glyph {
+:root[data-op-style="minimal"] .row.open .glyph,
+:root[data-op-style="minimal"] .row.pending .glyph {
   color: var(--op-text);
 }
 
@@ -1740,22 +1764,34 @@ onUnmounted(() => {
 :root[data-op-style="minimal"] .plane.keyboard .row:focus:not(.off):not(.pending):not(.open) .label,
 :root[data-op-style="minimal"] .row.open .label,
 :root[data-op-style="minimal"] .row.pending .label {
-  text-shadow: var(--op-ink);
+  font-weight: 600;
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .row.open,
 :root[data-op-style="minimal"] .row.pending {
   --aug-border-bg: transparent;
   color: var(--op-text);
-  background: var(--op-plate-lit);
+  background: transparent;
   box-shadow: none;
   transform: none;
   filter: none;
 }
 
+:root[data-op-style="minimal"] .row.open::before,
+:root[data-op-style="minimal"] .row.pending::before {
+  opacity: 0.5;
+  animation-play-state: running;
+}
+
+:root[data-op-style="minimal"] .row.open .mark {
+  color: var(--op-text);
+}
+
 :root[data-op-style="minimal"] .row.danger {
   --aug-border-bg: transparent;
   color: var(--op-alarm);
+  box-shadow: inset 2px 0 0 var(--op-alarm);
 }
 
 :root[data-op-style="minimal"] .row.danger .glyph {
@@ -1769,16 +1805,21 @@ onUnmounted(() => {
 :root[data-op-style="minimal"] .row.off {
   --aug-border-bg: transparent;
   color: var(--op-text-faint);
-  background: var(--op-plate-quiet);
+  background: var(--op-sheet-sunk);
+}
+
+:root[data-op-style="minimal"] .row.off .glyph {
+  color: var(--op-text-faint);
 }
 
 /* --- waiting and refused ------------------------------------------------------ */
 :root[data-op-style="minimal"] .status {
-  padding: 8px 12px;
-  background: var(--op-plate);
-  font: 500 var(--op-fs-meta) / 1.3 var(--op-font-body);
+  padding: 10px 14px;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+  font: 300 var(--op-fs-meta) / 1.3 var(--op-font-body);
   color: var(--op-text-dim);
-  text-shadow: var(--op-ink);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .status.bad {
@@ -1791,7 +1832,7 @@ onUnmounted(() => {
 :root[data-op-style="minimal"] .spin {
   width: 10px;
   height: 10px;
-  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  border: 1.5px solid var(--op-line);
   border-top-color: var(--op-text);
   animation-timing-function: linear;
 }

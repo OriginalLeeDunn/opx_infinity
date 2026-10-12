@@ -1033,13 +1033,14 @@ const shown = computed<Row[]>(() => contacts.value)
    NOT A HOLOGRAM. The projector -- the disc, its rings, the sweep, the beam,
    the panel leaning back on its own perspective -- is the cyberpunk look's
    idea of a phone, and none of it survives here. What is left is the phone's
-   actual content, flat, anchored where the projection
-   was: a hairline box with a header, its two lists as two tabs, and contact
-   rows and buttons that each sit on a dark ground of their own. The BOX is a
-   place and has no ground -- the things in it stand on the street side by
-   side, held together by one hairline. The rings and the sweep are not hidden by opacity:
-   they are taken out of the render, so the sweep's infinite rotation stops
-   costing anything at all.
+   actual content, flat, anchored where the projection was: one white sheet
+   with a soft shadow, a header, its two lists as two tabs, and contact rows
+   cut by hairlines. Black type, light by default and bold for a name; the
+   answer is the one solid black button, refusing a ghost one. A ringing call
+   is the one active thing, so it alone carries the pastel rainbow: a 2px line
+   sliding along the top of the sheet. The rings and the sweep are not hidden
+   by opacity: they are taken out of the render, so the sweep's infinite
+   rotation stops costing anything at all.
 
    THE CATALOGUE SPEAKS THIS SURFACE IN CAPITALS (`HOLOCALL`, `ANSWER`,
    `CONTACTS`), and the minimal look never sets capitals. The strings are
@@ -1048,6 +1049,7 @@ const shown = computed<Row[]>(() => contacts.value)
    that come from the catalogue are touched; a contact's name never is. */
 :root[data-op-style="minimal"] .holo {
   perspective: none;
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .stage {
@@ -1067,73 +1069,89 @@ const shown = computed<Row[]>(() => contacts.value)
   display: none;
 }
 
-/* --- the box ---------------------------------------------------------------- */
+/* --- the sheet --------------------------------------------------------------- */
 :root[data-op-style="minimal"] .panel-frame {
   max-height: none;
   margin-bottom: 0;
   transform: none;
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-line), var(--op-sheet-shadow);
 }
 
 :root[data-op-style="minimal"] .panel {
-  padding: var(--op-space-4) var(--op-space-4) var(--op-space-3);
+  padding: var(--op-space-5) var(--op-space-5) var(--op-space-4);
   border: 0;
+  color: var(--op-text);
   background: none;
   box-shadow: none;
-  text-shadow: var(--op-ink);
+  text-shadow: none;
 }
 
-/* The two red side edges become the box's own hairline, and a ringing call
-   still breathes on it -- white and slow, the one thing on the box that
-   moves. */
+/* The two red side edges become the rainbow line along the top, shown only
+   while a call rings: it slides instead of pulsing. */
 :root[data-op-style="minimal"] .panel-edges {
-  border: 1px solid var(--op-edge-on);
-  opacity: 0.5;
+  inset: 0 0 auto;
+  height: 2px;
+  border: 0;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  opacity: 0;
+}
+
+:root[data-op-style="minimal"] .panel-frame.is-ringing .panel-edges {
+  opacity: 1;
+  animation: op-rainbow-slide 4s linear infinite;
 }
 
 /* --- the header -------------------------------------------------------------- */
 :root[data-op-style="minimal"] .head {
-  gap: 2px var(--op-space-2);
-  margin-bottom: var(--op-space-3);
-  padding-bottom: 0;
-  border-bottom: 0;
+  gap: 4px var(--op-space-2);
+  margin-bottom: var(--op-space-4);
+  padding-bottom: var(--op-space-4);
+  border-bottom: 1px solid var(--op-line);
 }
 
 :root[data-op-style="minimal"] .title {
-  font-size: var(--op-fs-title);
+  font: 700 var(--op-fs-title) / 1.1 var(--op-font-display);
+  letter-spacing: -0.035em !important;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .eyebrow {
+  font-weight: 300;
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .shut {
   align-self: center;
-  padding: 3px 8px;
-  background: var(--op-plate);
-  color: var(--op-text-dim);
+  padding: 5px 10px;
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  color: var(--op-text);
   font-size: var(--op-fs-label);
+  font-weight: 400;
 }
 
 :root[data-op-style="minimal"] .shut:hover {
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
   color: var(--op-text);
 }
 
 /* --- a call ringing in, a call running ---------------------------------------
-   A row on its own ground, with the answer as the one white button on the
-   surface -- a white square with dark words, the loudest thing it can be. */
+   A cell of the sheet, sunk one step, cut off by a hairline. */
 :root[data-op-style="minimal"] .ring-row,
 :root[data-op-style="minimal"] .live-row {
   gap: var(--op-space-3);
-  margin-bottom: var(--op-space-3);
-  padding: var(--op-space-3);
+  margin-bottom: var(--op-space-4);
+  padding: var(--op-space-3) var(--op-space-4);
   border-bottom: 0;
-  background: var(--op-plate);
+  background: var(--op-sheet-sunk);
+  box-shadow: inset 0 0 0 1px var(--op-line);
 }
 
 :root[data-op-style="minimal"] .ring-who,
 :root[data-op-style="minimal"] .live-who {
+  font-weight: 600;
   color: var(--op-text);
 }
 
@@ -1141,92 +1159,110 @@ const shown = computed<Row[]>(() => contacts.value)
   gap: 6px;
 }
 
+/* Ghost buttons: white, a #d4d4d4 hairline, black words. */
 :root[data-op-style="minimal"] .act,
 :root[data-op-style="minimal"] .pill {
-  padding: 4px 12px;
+  padding: 6px 14px;
   border: 0;
-  background: var(--op-plate-lit);
-  color: var(--op-text-dim);
+  background: var(--op-sheet);
+  color: var(--op-text);
   font-size: var(--op-fs-label);
-  box-shadow: none;
+  font-weight: 400;
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
   text-shadow: none;
+  transition: background-color var(--op-dur-fast) var(--op-ease), box-shadow var(--op-dur-fast) var(--op-ease);
 }
 
 :root[data-op-style="minimal"] .act:hover,
 :root[data-op-style="minimal"] .pill:hover {
-  background: var(--op-wash-on);
+  background: var(--op-sheet-hover);
   color: var(--op-text);
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px var(--op-text-faint);
 }
 
+/* The answer: the one solid black button on the surface. */
 :root[data-op-style="minimal"] .act.yes,
 :root[data-op-style="minimal"] .act.yes:hover {
   background: var(--op-text);
-  font-weight: 700;
-  color: rgb(var(--op-plate-rgb));
+  font-weight: 600;
+  color: var(--op-sheet);
+  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .act.yes:hover {
+  background: #262626;
 }
 
 :root[data-op-style="minimal"] .waiting {
   margin: 0;
+  font-weight: 300;
   color: var(--op-text-dim);
 }
 
-/* --- the two lists, as two words ---------------------------------------------
-   Each on a ground of its own; the open one lit, white and underlined, the
-   other grey. */
+/* --- the two lists, as two cells ---------------------------------------------
+   One hairline strip; the open one bold with a 2px rainbow foot, the other
+   light and grey. */
 :root[data-op-style="minimal"] .tabs {
   display: inline-flex;
-  gap: 2px;
-  margin-bottom: var(--op-space-2);
+  gap: 0;
+  margin-bottom: var(--op-space-3);
   padding: 0;
   background: none;
+  box-shadow: inset 0 0 0 1px var(--op-line);
 }
 
 :root[data-op-style="minimal"] .tab {
-  padding: 4px 12px 3px;
+  padding: 7px 14px;
   border: 0;
-  border-bottom: 1px solid transparent;
-  background: var(--op-plate);
+  background: none;
   color: var(--op-text-dim);
   font-size: var(--op-fs-label);
+  font-weight: 300;
+}
+
+:root[data-op-style="minimal"] .tab + .tab {
+  box-shadow: inset 1px 0 0 var(--op-line);
 }
 
 :root[data-op-style="minimal"] .tab:hover:not(.on) {
+  background: var(--op-sheet-hover);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .tab.on {
-  border-bottom-color: var(--op-text);
-  background: var(--op-plate-lit);
+  background:
+    var(--op-rainbow-band) left bottom / 200% 2px no-repeat,
+    var(--op-sheet);
   color: var(--op-text);
+  font-weight: 600;
 }
 
 /* --- the rows ----------------------------------------------------------------
-   Each contact on its own ground, 2px from the next, so the list is a stack
-   of things and not a table drawn on a panel. */
+   A list on the sheet, each contact cut from the next by a hairline. */
 :root[data-op-style="minimal"] .row {
   gap: var(--op-space-3);
-  margin-bottom: 2px;
-  padding: 8px var(--op-space-3);
-  border-bottom: 0;
-  background: var(--op-plate);
+  margin-bottom: 0;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--op-line);
+  background: none;
 }
 
 :root[data-op-style="minimal"] .row:last-child {
-  margin-bottom: 0;
+  border-bottom: 0;
 }
 
 :root[data-op-style="minimal"] .who {
+  font-weight: 600;
   color: var(--op-text);
 }
 
-/* Presence, as a status mark and not a bead of neon: a solid white square
-   for someone reachable, a hollow one for someone who is not. */
+/* Presence: a small pastel square for someone reachable -- the rainbow at
+   rest, static -- and a hollow grey one for someone who is not. */
 :root[data-op-style="minimal"] .dot {
   width: 6px;
   height: 6px;
-  background: var(--op-text);
-  box-shadow: none;
+  background: var(--op-rainbow);
+  box-shadow: inset 0 0 0 1px rgba(16, 24, 40, 0.15);
 }
 
 :root[data-op-style="minimal"] .row.off {
@@ -1234,40 +1270,57 @@ const shown = computed<Row[]>(() => contacts.value)
 }
 
 :root[data-op-style="minimal"] .row.off .who {
+  font-weight: 300;
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .row.off .dot {
   background: transparent;
-  box-shadow: inset 0 0 0 1px var(--op-text-faint);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
 }
 
 :root[data-op-style="minimal"] .why {
   font-size: var(--op-fs-label);
+  font-weight: 300;
   color: var(--op-text-faint);
 }
 
 :root[data-op-style="minimal"] .empty {
+  font-weight: 300;
   color: var(--op-text-dim);
 }
 
 /* --- the sphere, passive: a call arriving with nothing open ------------------
-   Three lines of type where the projection would rise -- who, what, and the
-   two keys. It is one thing, not a box of things, so it has its own ground. */
+   A small white sheet where the projection would rise -- who in bold, what in
+   light, and the two keys -- with the rainbow line sliding along its top: it
+   only exists while a call is in the air. */
 :root[data-op-style="minimal"] .passive {
+  position: relative;
   margin-bottom: 0;
-  padding: var(--op-space-3) var(--op-space-5);
-  background: var(--op-plate);
-  box-shadow: inset 0 0 0 1px var(--op-edge);
-  text-shadow: var(--op-ink);
+  padding: var(--op-space-4) var(--op-space-5);
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-line), var(--op-sheet-shadow);
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .passive::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  animation: op-rainbow-slide 4s linear infinite;
 }
 
 :root[data-op-style="minimal"] .passive-who {
   font-size: var(--op-fs-title);
+  font-weight: 700;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .passive-what {
+  font-weight: 300;
   color: var(--op-text-dim);
 }
 
@@ -1276,6 +1329,7 @@ const shown = computed<Row[]>(() => contacts.value)
   margin-top: var(--op-space-3);
   color: var(--op-text-dim);
   font-size: var(--op-fs-meta);
+  font-weight: 300;
 }
 
 :root[data-op-style="minimal"] .prompt {
@@ -1287,10 +1341,11 @@ const shown = computed<Row[]>(() => contacts.value)
   height: 20px;
   padding: 0 6px;
   border: 0;
-  background: rgba(255, 255, 255, 0.10);
-  box-shadow: none;
+  background: var(--op-sheet-sunk);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
   color: var(--op-text);
   font-size: var(--op-fs-label);
+  font-weight: 500;
 }
 
 /* --- the catalogue's capitals ------------------------------------------------

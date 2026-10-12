@@ -121,6 +121,16 @@ local GROUNDS = {
 	{ key = 'plateLit', sat = 0.558, light = 0.1863 },
 }
 
+-- THE WHITE LOOK'S GROUNDS. The minimal style is a white sheet with black type
+-- on it, so its ground is not derived from the accent at all: a dark plate
+-- under black letters would be the one thing on the surface nobody could read.
+-- `plate` is the sheet and `plateLit` the hovered row (`#f6f6f7`, a hair of
+-- blue so it reads as light and not as grey). Applied after the ladder, only
+-- for the style that draws on white.
+local LIGHT_GROUNDS = {
+	minimal = { plate = { 255, 255, 255 }, plateLit = { 246, 246, 247 } },
+}
+
 -- Where the ladder above an accent stops having room to climb. Outside this band
 -- `hi` and `alarm` both land on the ceiling and the two brightest states stop
 -- being distinguishable, which is a thing the operator should be told once at
@@ -336,6 +346,11 @@ function Palette.Resolve(settings)
 				:format(tostring(accent))
 		else
 			for key, triple in pairs(Palette.Ladder(rgb)) do raw[key] = triple end
+			local grounds = raw.style and LIGHT_GROUNDS[raw.style]
+			if grounds then
+				raw.plate = { grounds.plate[1], grounds.plate[2], grounds.plate[3] }
+				raw.plateLit = { grounds.plateLit[1], grounds.plateLit[2], grounds.plateLit[3] }
+			end
 			local _, _, light = toHsl(rgb)
 			if light < COMFORTABLE_LIGHT[1] or light > COMFORTABLE_LIGHT[2] then
 				notes[#notes + 1] = ('ACCENT %s has a lightness of %.2f; the rungs above '

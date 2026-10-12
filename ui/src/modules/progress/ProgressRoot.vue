@@ -190,26 +190,28 @@ onUnmounted(clearRaise)
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The action written above a line that fills, the two on one small dark
-   square -- a progress is a single THING -- with no frame and no chamfered
-   fill. The line keeps a faint track, because a bar that is a third full has
-   to show the rest. The
-   action arrives in capitals and is lowered, first letter back; the cancel
-   hint sits below it, quieter. */
+   A white card: the action written above a line that fills, the cancel hint
+   below it, quieter. The line is the grid's grey track with the rainbow
+   filling it, sliding while it runs -- a progress is the one transient,
+   active thing on screen, which is exactly what the accent is for. No frame
+   and no chamfered fill. The action arrives in capitals and is lowered,
+   first letter back. */
 /* Clear of the vehicle dial: 96px up put the bar across the dial's ring. */
 :root[data-op-style="minimal"] .progress {
   bottom: calc(var(--op-inset-y) + 172px);
 }
 
 :root[data-op-style="minimal"] .progress .plate {
-  gap: 6px;
-  padding: var(--op-space-2) var(--op-space-3);
-  background: var(--op-plate);
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .progress .label,
 :root[data-op-style="minimal"] .progress .hint {
-  font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  font: 300 var(--op-fs-meta) / 1.2 var(--op-font-body);
   text-transform: lowercase !important;
 }
 
@@ -219,6 +221,7 @@ onUnmounted(clearRaise)
 }
 
 :root[data-op-style="minimal"] .progress .label {
+  font-weight: 600;
   color: var(--op-text);
 }
 
@@ -229,13 +232,20 @@ onUnmounted(clearRaise)
 
 :root[data-op-style="minimal"] .progress .track {
   --aug-border-bg: transparent;
-  height: 2px;
+  height: 4px;
   padding: 0;
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--op-line);
+}
+
+:root[data-op-style="minimal"] .progress .track::after {
+  content: none;
 }
 
 :root[data-op-style="minimal"] .progress .bar {
-  background: var(--op-text);
+  background-color: var(--op-rainbow-2);
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  animation: op-rainbow-slide 3s linear infinite;
   clip-path: none;
 }
 </style>

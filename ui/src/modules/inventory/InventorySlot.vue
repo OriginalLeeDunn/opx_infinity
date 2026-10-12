@@ -529,78 +529,86 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A cell is a THING, so it has its own dark square: the quiet ground when it
-   is empty, so a forty-slot bag reads as the few things in it rather than as
-   forty boxes, and the full ground once it holds something. The pointer adds a
-   wash over that ground, and a pick or a drop target is the lit ground with
-   the one white line in the grid. The bag around the cells has nothing behind
-   it -- that is the grid's own business, in InventoryView.
+   A cell is a white square in a white sheet, drawn by one hairline in the
+   rule colour (the augmented ring, at 1px). The grid's 10px gap is held by
+   the virtualiser's arithmetic (`geometry.ts`), so the house `.cells` trick --
+   a 1px gap over the rule colour -- is not available; a hairline per square
+   on the same white reads the same: one printed table, not forty boxes. Empty is the sunk white, full is the sheet; the pointer greys the
+   ground a step, and a pick or a drop target takes the rainbow wash -- the one
+   colour in the bag, on the one cell that is active.
 
-   The count and the hotbar number are plain figures in two corners, labels on
-   the square rather than badges on it. */
+   The count and the hotbar number are light figures in two corners, the name
+   the one bold word on the square. */
 :root[data-op-style="minimal"] .cell {
-  --aug-border-bg: var(--op-edge);
+  --aug-border-bg: var(--op-line);
+  --aug-border-all: 1px;
   padding: 6px 8px;
-  color: var(--op-text-dim);
-  background: var(--op-plate-quiet);
+  color: var(--op-text-faint);
+  background: var(--op-sheet-sunk);
   box-shadow: none;
+  text-shadow: none;
+  transition: background-color var(--op-dur-fast) var(--op-ease);
 }
 
 :root[data-op-style="minimal"] .cell.filled {
-  --aug-border-bg: rgba(255, 255, 255, 0.18);
+  --aug-border-bg: var(--op-line);
   color: var(--op-text);
-  background: var(--op-plate);
+  background: var(--op-sheet);
 }
 
-/* The weight stays the house hover weight (1.5px, held by the suite); only the
-   line's brightness is this look's. */
 :root[data-op-style="minimal"] .cell.filled:hover:not(.over):not(.dragging) {
-  --aug-border-bg: var(--op-edge-on);
+  --aug-border-bg: var(--op-edge-hover);
   color: var(--op-text);
-  background: linear-gradient(var(--op-wash), var(--op-wash)), var(--op-plate);
+  background: var(--op-sheet-hover);
 }
 
+/* The active cell: the pastel band, sliding while it is held. */
 :root[data-op-style="minimal"] .cell.over,
 :root[data-op-style="minimal"] .cell.selected {
-  --aug-border-bg: var(--op-text);
+  --aug-border-bg: var(--op-edge-hover);
   --aug-border-all: 1px;
   color: var(--op-text);
-  background: var(--op-plate-lit);
+  background-color: var(--op-sheet);
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 200%;
+  animation: op-rainbow-slide 6s linear infinite;
   filter: none;
 }
 
-/* The slot the stack left: a dashed square, the shape a reader takes for
-   "this came from here", instead of the cyberpunk sprite's corner brackets. */
+/* The slot the stack left: a dashed square inside the cell, the shape a
+   reader takes for "this came from here". */
 :root[data-op-style="minimal"] .cell.dragging,
 :root[data-op-style="minimal"] .cell.dragging:hover {
-  border: 1px dashed rgba(255, 255, 255, 0.35);
+  border: 1px dashed var(--op-edge-hover);
   border-image: none;
-  background: var(--op-plate-quiet);
+  background: var(--op-sheet-sunk);
 }
 
 :root[data-op-style="minimal"] .key {
   top: 6px;
   left: 8px;
-  font: 500 var(--op-fs-micro) / 1 var(--op-font-body);
-  opacity: 0.5;
+  font: 400 var(--op-fs-micro) / 1 var(--op-font-body);
+  color: var(--op-text-faint);
+  opacity: 1;
 }
 
 :root[data-op-style="minimal"] .cell.filled .key {
-  opacity: 0.7;
+  color: var(--op-text-dim);
+  opacity: 1;
 }
 
 :root[data-op-style="minimal"] .art {
   inset: 14px 10px 24px;
 }
 
-/* A soft shadow under the picture lifts it off the street. A filter, but on
-   an image that changes when the player moves a stack and never on a clock. */
+/* A soft shadow pushed down under the picture, the house card shadow at the
+   scale of an item, never a halo. */
 :root[data-op-style="minimal"] .art img {
-  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.55));
+  filter: drop-shadow(0 3px 4px rgba(16, 24, 40, 0.18));
 }
 
 :root[data-op-style="minimal"] .initials {
-  font: 600 var(--op-fs-title) / 1 var(--op-font-display);
+  font: 300 var(--op-fs-title) / 1 var(--op-font-display);
   color: var(--op-text-dim);
   opacity: 1;
 }
@@ -612,33 +620,34 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
   font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text);
   background: none;
-  text-shadow: var(--op-ink);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .rounds {
   right: 8px;
   bottom: 24px;
-  font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text-dim);
+  text-shadow: none;
 }
 
-/* Wear: a 1px track and a 2px reading on it, like the load. */
+/* Wear: the rule-coloured track and a black reading on it, like the load. */
 :root[data-op-style="minimal"] .wear {
   left: 8px;
   right: 8px;
   bottom: 21px;
   height: 2px;
   overflow: hidden;
-  background: linear-gradient(rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.18)) center / 100% 1px no-repeat;
+  background: var(--op-line);
   box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .wear i {
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .wear.worn i {
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .wear.spent i {
@@ -646,12 +655,18 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
 }
 
 :root[data-op-style="minimal"] .name {
-  font: 500 var(--op-fs-micro) / 1.25 var(--op-font-body);
+  font: 600 var(--op-fs-micro) / 1.25 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .cell.filled:hover .name,
+:root[data-op-style="minimal"] .cell.over .name,
+:root[data-op-style="minimal"] .cell.selected .name {
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .mass {
-  font: 400 var(--op-fs-micro) / 1.25 var(--op-font-body);
+  font: 300 var(--op-fs-micro) / 1.25 var(--op-font-body);
   color: var(--op-text-dim);
   opacity: 1;
 }

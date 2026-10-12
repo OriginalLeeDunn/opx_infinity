@@ -648,69 +648,110 @@ select.input option {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A settings form, drawn the way the rest of this look draws one -- each
-   control a thing on its own dark plate, nothing behind the form itself:
+   A settings form, printed on the doorlock sheet:
 
-     the tabs      a sidebar of plates; the chosen one lifted and white
-     an input      a plate with a 1px line under its text, white with focus
-     a flag        the square switch the menu draws, not a ticked box
-     a button      a plate around a word; saving is a white plate, dark words
-     an icon       a small square plate that lifts under the pointer
+     the tabs      a column of words cut by hairlines; the chosen one bold on
+                   the grey-white ground with a 2px rainbow line under it
+     an input      a white field in a #d4d4d4 hairline, black while focused
+     a flag        a square box; ticked, it fills with the rainbow and the
+                   tick is drawn in black
+     a button      a ghost hairline box around a word; saving -- the one
+                   action of the editor -- is the rainbow, black words
+     an icon       a small ghost square, black under the pointer
 
-   The section rules above the door list and the submit row are hairlines in
-   the look's own edge colour. */
+   The section rules above the door list and the submit row are the grid's
+   hairline. */
 :root[data-op-style="minimal"] svg {
   stroke-width: 1.5;
 }
 
+/* --- the tabs ---------------------------------------------------------------------- */
+:root[data-op-style="minimal"] .tabs {
+  gap: 0;
+  padding-right: var(--op-space-4);
+  box-shadow: inset -1px 0 0 var(--op-edge);
+}
+
 :root[data-op-style="minimal"] .tab {
   --aug-border-bg: transparent;
-  padding: 8px var(--op-space-3);
-  background: var(--op-plate);
+  position: relative;
+  padding: 10px var(--op-space-3);
+  background: transparent;
   box-shadow: none;
   color: var(--op-text-dim);
-  text-shadow: var(--op-ink);
+  text-shadow: none;
   transition:
     color var(--op-dur-fast) linear,
-    background-color var(--op-dur-fast) linear,
-    box-shadow var(--op-dur-fast) linear;
+    background-color var(--op-dur-fast) linear;
+}
+
+:root[data-op-style="minimal"] .tab + .tab {
+  box-shadow: inset 0 1px 0 var(--op-edge);
 }
 
 :root[data-op-style="minimal"] .tab:hover:not(.is-off):not(.is-on) {
   --aug-border-bg: transparent;
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .tab.is-on {
   --aug-border-bg: transparent;
   transform: none;
-  background: var(--op-plate-lit);
-  box-shadow: none;
+  filter: none;
+  background: var(--op-sheet-hover);
   color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .tab.is-on::after {
+  content: '';
+  position: absolute;
+  left: var(--op-space-3);
+  right: var(--op-space-3);
+  bottom: 4px;
+  height: 2px;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  animation: op-rainbow-slide 4s linear infinite;
 }
 
 :root[data-op-style="minimal"] .tab .op-label {
   font-size: var(--op-fs-meta);
-  font-weight: 500;
+  font-weight: 300;
 }
 
+:root[data-op-style="minimal"] .tab.is-on .op-label {
+  font-weight: 600;
+}
+
+/* --- the fields ----------------------------------------------------------------------- */
 :root[data-op-style="minimal"] .field {
   gap: 6px;
   color: var(--op-text-dim);
 }
 
+:root[data-op-style="minimal"] .field .op-eyebrow,
+:root[data-op-style="minimal"] .doors > .op-eyebrow {
+  font-weight: 400;
+  color: var(--op-text-dim);
+}
+
 :root[data-op-style="minimal"] .input {
   box-sizing: border-box;
-  height: 32px;
+  height: 34px;
   padding: 0 var(--op-space-3);
   border: 0;
-  background: var(--op-plate);
-  box-shadow: inset 0 -1px 0 var(--op-edge-hover);
-  font: 400 var(--op-fs-body) / 1 var(--op-font-body);
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  font: 300 var(--op-fs-body) / 1 var(--op-font-body);
   color: var(--op-text);
-  text-shadow: var(--op-ink);
+  text-shadow: none;
+  caret-color: var(--op-text);
   transition: box-shadow var(--op-dur-fast) linear;
+}
+
+:root[data-op-style="minimal"] .input::placeholder {
+  color: var(--op-text-faint);
 }
 
 /* Inside a field the column is the flex axis, and `flex: 1` there sizes the
@@ -727,14 +768,16 @@ select.input option {
 }
 
 :root[data-op-style="minimal"] .input:focus {
-  background: var(--op-plate-lit);
-  box-shadow: inset 0 -1px 0 var(--op-text);
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-on);
 }
 
 :root[data-op-style="minimal"] .input:disabled {
-  opacity: 0.5;
+  background: var(--op-sheet-sunk);
+  opacity: 0.6;
 }
 
+/* --- the flags: a square box, filled with the rainbow when ticked ------------------- */
 :root[data-op-style="minimal"] .switches {
   gap: var(--op-space-2) var(--op-space-5);
 }
@@ -743,7 +786,7 @@ select.input option {
 :root[data-op-style="minimal"] .mini {
   gap: var(--op-space-3);
   color: var(--op-text-dim);
-  text-shadow: var(--op-ink);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .switch.on,
@@ -753,45 +796,40 @@ select.input option {
 
 :root[data-op-style="minimal"] .switch .op-label {
   font-size: var(--op-fs-meta);
+  font-weight: 300;
+}
+
+:root[data-op-style="minimal"] .switch.on .op-label {
   font-weight: 500;
 }
 
-/* The box becomes a switch: a hairline track and a square knob that crosses
-   it. The knob is a state mark, not a ground. */
 :root[data-op-style="minimal"] .box {
-  position: relative;
-  width: 26px;
+  width: 14px;
   height: 14px;
-  border: 1px solid var(--op-edge-hover);
-  background: none;
-  transition: border-color var(--op-dur) var(--op-ease);
+  border: 0;
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  transition: box-shadow var(--op-dur-fast) linear;
+}
+
+:root[data-op-style="minimal"] .switch:hover .box,
+:root[data-op-style="minimal"] .mini:hover .box {
+  box-shadow: inset 0 0 0 1px var(--op-text-faint);
 }
 
 :root[data-op-style="minimal"] .box svg {
-  display: none;
+  stroke: var(--op-text);
+  stroke-width: 1.8;
 }
 
-:root[data-op-style="minimal"] .box::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 8px;
-  height: 8px;
-  background: var(--op-text-dim);
-  transition: transform var(--op-dur) var(--op-ease), background var(--op-dur) var(--op-ease);
+:root[data-op-style="minimal"] .box.ticked,
+:root[data-op-style="minimal"] .switch:hover .box.ticked,
+:root[data-op-style="minimal"] .mini:hover .box.ticked {
+  background: var(--op-rainbow);
+  box-shadow: inset 0 0 0 1px var(--op-text);
 }
 
-:root[data-op-style="minimal"] .box.ticked {
-  background: none;
-  border-color: var(--op-text);
-}
-
-:root[data-op-style="minimal"] .box.ticked::after {
-  transform: translateX(12px);
-  background: var(--op-text);
-}
-
+/* --- the doors and the submit row ----------------------------------------------------- */
 :root[data-op-style="minimal"] .doors,
 :root[data-op-style="minimal"] .submit {
   border-top: 1px solid var(--op-edge);
@@ -802,38 +840,64 @@ select.input option {
   padding-top: var(--op-space-3);
 }
 
+:root[data-op-style="minimal"] .leaves li {
+  font-weight: 300;
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .dim,
+:root[data-op-style="minimal"] .hint {
+  font-weight: 300;
+  color: var(--op-text-faint);
+}
+
 :root[data-op-style="minimal"] .warn,
 :root[data-op-style="minimal"] .notice.bad {
   color: var(--op-text);
   font-weight: 600;
 }
 
+/* --- buttons: ghost, and the rainbow for saving -------------------------------------- */
 :root[data-op-style="minimal"] .btn {
   --aug-border-bg: transparent;
   --aug-border-all: 1px;
-  padding: 9px var(--op-space-4);
-  background: var(--op-plate);
-  box-shadow: none;
-  color: var(--op-red-text);
-  text-shadow: var(--op-ink);
+  padding: 10px var(--op-space-4);
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  color: var(--op-text);
+  text-shadow: none;
+  transition:
+    background-color var(--op-dur-fast) linear,
+    box-shadow var(--op-dur-fast) linear,
+    filter var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .btn:hover:not(.is-off):not(.is-on) {
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
+  box-shadow: inset 0 0 0 1px var(--op-text-faint);
   color: var(--op-text);
 }
 
-/* Saving: a white plate, dark words. */
+/* Saving: the editor's one action, in the rainbow, black words. */
 :root[data-op-style="minimal"] .btn.is-on {
   --aug-border-bg: transparent;
-  background: var(--op-text);
-  color: rgb(var(--op-plate-rgb));
-  text-shadow: none;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 200%;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.2),
+    0 1px 2px rgba(10, 10, 10, 0.12),
+    0 8px 20px -10px var(--op-rainbow-glow);
+  color: var(--op-text);
+  animation: op-rainbow-slide 6s linear infinite;
+}
+
+:root[data-op-style="minimal"] .btn.is-on:hover {
+  filter: saturate(1.2) brightness(1.03);
 }
 
 :root[data-op-style="minimal"] .btn .op-label {
   font-size: var(--op-fs-body);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 :root[data-op-style="minimal"] .btn.is-on .op-label {
@@ -843,16 +907,17 @@ select.input option {
 :root[data-op-style="minimal"] .add {
   --aug-border-bg: transparent;
   --aug-border-all: 1px;
-  height: 32px;
-  background: var(--op-plate);
-  box-shadow: none;
-  font: 400 18px / 1 var(--op-font-body);
+  height: 34px;
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge);
+  font: 200 18px / 1 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .add:hover:not(:disabled) {
   --aug-border-bg: transparent;
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
+  box-shadow: inset 0 0 0 1px var(--op-text-faint);
   color: var(--op-text);
 }
 
@@ -860,14 +925,19 @@ select.input option {
   width: 30px;
   height: 30px;
   padding: 0;
-  background: var(--op-plate);
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge);
   color: var(--op-text-dim);
-  transition: color var(--op-dur-fast) linear, background-color var(--op-dur-fast) linear;
+  transition:
+    color var(--op-dur-fast) linear,
+    background-color var(--op-dur-fast) linear,
+    box-shadow var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .icon:hover:not(.off):not(:disabled),
 :root[data-op-style="minimal"] .icon.danger:hover:not(.off):not(:disabled) {
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
+  box-shadow: inset 0 0 0 1px var(--op-text);
   color: var(--op-text);
 }
 </style>

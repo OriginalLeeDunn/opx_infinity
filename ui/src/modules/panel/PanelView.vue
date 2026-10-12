@@ -2366,42 +2366,34 @@ function filter(value: string): void {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The same room with the walls taken away. THINGS KEEP A GROUND, PLACES DO
-   NOT: the column, the rail, the tool strip and the dialog have no ground and
-   no frame, and every control inside them -- a tab, the search, a range, an
-   item, a button, a tile, a slot -- sits on its own square of dark plate:
+   The same room, printed on a white sheet. The column, the rail, the tool
+   strip and the dialog are each ONE sheet (`.op-bay` in minimal.css: white, a
+   soft shadow under it), and everything inside is cut by 1px hairlines rather
+   than boxed:
 
-     tabs        plates side by side; the chosen one lifts and goes white with
-                 a 2px line under it
-     search      a plate with a 1px line under the entry, white while it has
-                 focus; its eyebrow goes, the placeholder says it
-     a range     a 1px line and a square white thumb on a plate
-     an item     a plate with the detail UNDER the name, so a two-column grid
-                 stops cutting both in half; pointed at it lifts, chosen it
-                 lifts further and its words go white
-     a button    a plate around a word; the primary one is a white plate with
-                 dark words, the one solid thing on the sheet
-     a tile      a plate that lifts on hover and goes white-edged when chosen
+     tabs        words in a row; the chosen one black and bold with a 2px
+                 rainbow line under it -- the strip itself sits on a hairline,
+                 which is the sheet's header rule
+     search      a white field with a #d4d4d4 hairline, black while focused
+     a range     a 1px grey track and a square black thumb
+     an item     a cell of the hairline grid, the detail UNDER the name;
+                 pointed at it goes grey-white, chosen it takes the rainbow
+     a button    ghost: a hairline box around a word; the primary one is solid
+                 black with white words -- the one heavy thing on the sheet
+     a tile      a cell; chosen, a rainbow ground and a black hairline
 
    The dial's thumb and the slider's thumb are pseudo-elements, so they take
    their shape here and not from `shapes.css`. */
-:root[data-op-style="minimal"] .column .bay,
-:root[data-op-style="minimal"] .rail-bay,
-:root[data-op-style="minimal"] .tool-row,
-:root[data-op-style="minimal"] .dialog .bay {
-  background: none;
-  box-shadow: none;
-}
-
 :root[data-op-style="minimal"] .bay-inner,
 :root[data-op-style="minimal"] .rail-inner {
   gap: var(--op-space-4);
   padding: var(--op-space-5) var(--op-space-5) var(--op-space-4);
-  text-shadow: var(--op-ink);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .tool-row {
   padding: var(--op-space-2);
+  gap: var(--op-space-2);
 }
 
 :root[data-op-style="minimal"] .foot {
@@ -2411,7 +2403,8 @@ function filter(value: string): void {
 }
 
 /* Every control on the sheet is a native <button>, which brings the browser's
-   own border and face with it. The border goes; the face becomes the plate. */
+   own border and face with it. Both go: a control is white like the sheet,
+   and its edge is the grid's hairline. */
 :root[data-op-style="minimal"] .row,
 :root[data-op-style="minimal"] .tab,
 :root[data-op-style="minimal"] .tile,
@@ -2421,59 +2414,78 @@ function filter(value: string): void {
 :root[data-op-style="minimal"] .slot-step,
 :root[data-op-style="minimal"] .field,
 :root[data-op-style="minimal"] .dial {
+  --aug-border-bg: transparent;
   border: 0;
-  background: var(--op-plate);
+  background: var(--op-sheet);
   box-shadow: none;
-  text-shadow: var(--op-ink);
+  text-shadow: none;
   transition:
     color var(--op-dur-fast) linear,
     background-color var(--op-dur-fast) linear,
     box-shadow var(--op-dur-fast) linear;
 }
 
-/* --- the tabs ------------------------------------------------------------------- */
+/* --- the tabs: the sheet's header ------------------------------------------------ */
 :root[data-op-style="minimal"] .tabs {
-  gap: 2px;
-  align-self: flex-start;
+  gap: 0;
+  align-self: stretch;
   padding: 0;
+  box-shadow: inset 0 -1px 0 var(--op-edge);
 }
 
 :root[data-op-style="minimal"] .tab {
-  --aug-border-bg: transparent;
-  padding: 8px var(--op-space-3);
-  font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
+  position: relative;
+  padding: 10px var(--op-space-3) 12px;
+  background: transparent;
+  font: 300 var(--op-fs-meta) / 1 var(--op-font-body);
   color: var(--op-text-dim);
-  transition: color var(--op-dur-fast) linear, box-shadow var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .tab:hover:not(.is-off):not(.is-on) {
   --aug-border-bg: transparent;
-  background: var(--op-plate-lit);
+  background: transparent;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .tab.is-on {
   --aug-border-bg: transparent;
-  background: var(--op-plate-lit);
+  background: transparent;
   color: var(--op-text);
-  box-shadow: inset 0 -2px 0 var(--op-text);
+  font-weight: 600;
+}
+
+/* The line under the chosen tab: the rainbow, sliding. */
+:root[data-op-style="minimal"] .tab.is-on::after {
+  content: '';
+  position: absolute;
+  left: var(--op-space-3);
+  right: var(--op-space-3);
+  bottom: 0;
+  height: 2px;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  animation: op-rainbow-slide 4s linear infinite;
 }
 
 :root[data-op-style="minimal"] .mark {
   color: var(--op-text);
 }
 
-/* --- the search line --------------------------------------------------------------- */
+:root[data-op-style="minimal"] .intro,
+:root[data-op-style="minimal"] .lead {
+  font: 300 var(--op-fs-body) / 1.6 var(--op-font-body);
+  color: var(--op-text-dim);
+}
+
+/* --- the search field --------------------------------------------------------------- */
 :root[data-op-style="minimal"] .field {
-  --aug-border-bg: transparent;
-  padding: 8px var(--op-space-3);
-  box-shadow: inset 0 -1px 0 var(--op-edge-hover);
-  transition: box-shadow var(--op-dur-fast) linear;
+  padding: 9px var(--op-space-3);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
 }
 
 :root[data-op-style="minimal"] .field:focus-within {
   --aug-border-bg: transparent;
-  box-shadow: inset 0 -1px 0 var(--op-text);
+  box-shadow: inset 0 0 0 1px var(--op-edge-on);
 }
 
 :root[data-op-style="minimal"] .field-label {
@@ -2481,19 +2493,25 @@ function filter(value: string): void {
 }
 
 :root[data-op-style="minimal"] .field-entry {
+  color: var(--op-text);
+  font-weight: 300;
   caret-color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .field-entry::placeholder {
+  color: var(--op-text-faint);
 }
 
 /* --- a range -------------------------------------------------------------------------- */
 :root[data-op-style="minimal"] .dial {
-  --aug-border-bg: transparent;
   padding: var(--op-space-2) var(--op-space-3);
+  box-shadow: inset 0 0 0 1px var(--op-edge);
 }
 
 :root[data-op-style="minimal"] .dial-track::-webkit-slider-runnable-track,
 :root[data-op-style="minimal"] .slot-track::-webkit-slider-runnable-track {
   height: 1px;
-  background: var(--op-edge-on);
+  background: var(--op-edge-hover);
 }
 
 :root[data-op-style="minimal"] .dial-track::-webkit-slider-thumb,
@@ -2503,7 +2521,7 @@ function filter(value: string): void {
   margin-top: -5px;
   border: 0;
   background: var(--op-text);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  box-shadow: none;
   clip-path: none;
 }
 
@@ -2512,30 +2530,34 @@ function filter(value: string): void {
   background: var(--op-text-faint);
 }
 
-/* --- the items --------------------------------------------------------------------- */
+/* --- the items: a hairline grid ------------------------------------------------------
+   Each cell draws its own 1px ring into the 1px gap, so neighbours share one
+   line and an unfilled last row leaves no grey hole. The grid's 1px padding is
+   where the outer ring lands, inside its `overflow: hidden`. */
 :root[data-op-style="minimal"] .grid {
-  gap: 2px;
+  gap: 1px;
+  padding: 1px;
 }
 
 :root[data-op-style="minimal"] .grid .row {
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 2px;
-  --aug-border-bg: transparent;
-  padding: 8px var(--op-space-3);
-  color: var(--op-red-text);
+  gap: 3px;
+  padding: 9px var(--op-space-3);
+  box-shadow: 0 0 0 1px var(--op-edge);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .grid .row-label {
   max-width: 100%;
-  font-weight: 500;
+  font-weight: 400;
 }
 
 :root[data-op-style="minimal"] .grid .row-hint {
   flex: none;
   max-width: 100%;
-  font: 400 var(--op-fs-meta) / 1.3 var(--op-font-body);
+  font: 300 var(--op-fs-label) / 1.3 var(--op-font-body);
   color: var(--op-text-dim);
   opacity: 1;
 }
@@ -2543,21 +2565,31 @@ function filter(value: string): void {
 :root[data-op-style="minimal"] .grid .row.is-hover,
 :root[data-op-style="minimal"] .grid .row:hover:not(.is-off):not(.is-on) {
   --aug-border-bg: transparent;
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
+  box-shadow: 0 0 0 1px var(--op-edge);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .grid .row.is-on {
   --aug-border-bg: transparent;
-  background: var(--op-plate-lit);
+  background: var(--op-rainbow);
+  box-shadow: 0 0 0 1px var(--op-edge-hover);
   color: var(--op-text);
-  box-shadow: none;
+}
+
+:root[data-op-style="minimal"] .grid .row.is-on .row-label {
+  font-weight: 600;
+}
+
+:root[data-op-style="minimal"] .grid .row.is-on .row-hint {
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .empty,
 :root[data-op-style="minimal"] .count,
 :root[data-op-style="minimal"] .status {
   font-family: var(--op-font-body);
+  font-weight: 300;
   color: var(--op-text-dim);
 }
 
@@ -2567,7 +2599,7 @@ function filter(value: string): void {
 }
 
 :root[data-op-style="minimal"] .spinner {
-  border-color: var(--op-edge-hover);
+  border-color: var(--op-edge);
   border-top-color: var(--op-text);
 }
 
@@ -2584,7 +2616,8 @@ function filter(value: string): void {
 }
 
 :root[data-op-style="minimal"] .plate-value {
-  font: 600 var(--op-fs-title) / 1.1 var(--op-font-body);
+  font: 600 var(--op-fs-head) / 1.05 var(--op-font-body);
+  letter-spacing: -0.035em !important;
   color: var(--op-text);
 }
 
@@ -2594,38 +2627,43 @@ function filter(value: string): void {
   min-width: 8rem;
 }
 
-/* --- buttons: a plate around a word --------------------------------------------------- */
+/* --- buttons: ghost, and one solid black ---------------------------------------------- */
 :root[data-op-style="minimal"] .button {
-  --aug-border-bg: transparent;
   --aug-border-all: 1px;
-  padding: 10px var(--op-space-4);
-  color: var(--op-red-text);
-}
-
-:root[data-op-style="minimal"] .button .row-label {
-  font-weight: 500;
-}
-
-:root[data-op-style="minimal"] .button:hover:not(.is-off):not(.is-on) {
-  background: var(--op-plate-lit);
+  padding: 11px var(--op-space-4);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
   color: var(--op-text);
 }
 
-/* The primary: a white plate, dark words -- the one solid thing on the sheet. */
+:root[data-op-style="minimal"] .button .row-label {
+  font-weight: 400;
+}
+
+:root[data-op-style="minimal"] .button:hover:not(.is-off):not(.is-on) {
+  background: var(--op-sheet-hover);
+  box-shadow: inset 0 0 0 1px var(--op-text-faint);
+  color: var(--op-text);
+}
+
+/* The primary: solid black, white words -- the one heavy thing on the sheet. */
 :root[data-op-style="minimal"] .button.is-on {
   --aug-border-bg: transparent;
   background: var(--op-text);
-  color: rgb(var(--op-plate-rgb));
-  text-shadow: none;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.12);
+  color: var(--op-sheet);
+}
+
+:root[data-op-style="minimal"] .button.is-on:hover:not(.is-off) {
+  background: #262626;
 }
 
 :root[data-op-style="minimal"] .button.is-on .row-label {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 :root[data-op-style="minimal"] .tool {
   min-width: 0;
-  padding: 8px var(--op-space-4);
+  padding: 9px var(--op-space-4);
 }
 
 :root[data-op-style="minimal"] .row-icon {
@@ -2634,81 +2672,89 @@ function filter(value: string): void {
 
 /* --- the rail: view buttons, categories, tiles, the slot ---------------------------- */
 :root[data-op-style="minimal"] .views {
-  gap: var(--op-space-1);
+  gap: 0;
+  box-shadow: inset 0 -1px 0 var(--op-edge);
 }
 
 :root[data-op-style="minimal"] .view-btn {
-  --aug-border-bg: transparent;
   padding: var(--op-space-3) var(--op-space-2) var(--op-space-2);
+  background: transparent;
   color: var(--op-text-dim);
-  transition: color var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .view-icon {
   width: 20px;
   height: 20px;
-  stroke-width: 1.5;
+  stroke-width: 1.4;
 }
 
 :root[data-op-style="minimal"] .view-btn:hover:not(:disabled),
 :root[data-op-style="minimal"] .view-btn:focus-visible {
   --aug-border-bg: transparent;
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .view-label {
   color: inherit;
-  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  font: 400 var(--op-fs-label) / 1 var(--op-font-body);
 }
 
 :root[data-op-style="minimal"] .cats .cat {
   min-width: 0;
-  padding: 8px var(--op-space-4);
+  padding: 9px var(--op-space-4);
 }
 
+/* The tiles: the same hairline grid as the items. */
 :root[data-op-style="minimal"] .tiles {
-  gap: var(--op-space-2);
+  gap: 1px;
+  padding: 1px;
 }
 
 :root[data-op-style="minimal"] .tile {
-  --aug-border-bg: transparent;
   --aug-border-all: 1px;
   padding: var(--op-space-2);
-  color: var(--op-red-text);
+  box-shadow: 0 0 0 1px var(--op-edge);
+  color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .tile:hover:not(:disabled):not(.is-on),
 :root[data-op-style="minimal"] .tile:focus-visible:not(.is-on) {
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
+  box-shadow: 0 0 0 1px var(--op-edge);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .tile.is-on {
-  --aug-border-bg: var(--op-text);
-  --aug-border-all: 1px;
-  background: var(--op-plate-lit);
+  --aug-border-bg: transparent;
+  background: var(--op-rainbow);
+  box-shadow: 0 0 0 1px var(--op-edge-on);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .tile-mono {
-  font: 300 var(--op-fs-title) / 1 var(--op-font-body);
+  font: 200 var(--op-fs-head) / 1 var(--op-font-body);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .tile-name {
-  font: 500 var(--op-fs-label) / 1.3 var(--op-font-body);
+  font: 400 var(--op-fs-label) / 1.3 var(--op-font-body);
   text-align: center;
 }
 
+:root[data-op-style="minimal"] .tile-more {
+  color: var(--op-text-faint);
+}
+
 :root[data-op-style="minimal"] .slot {
-  --aug-border-bg: transparent;
   padding: var(--op-space-2) var(--op-space-3);
+  box-shadow: inset 0 0 0 1px var(--op-edge);
 }
 
 :root[data-op-style="minimal"] .slot.is-on {
   --aug-border-bg: transparent;
-  background: var(--op-plate-lit);
-  box-shadow: none;
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
 }
 
 :root[data-op-style="minimal"] .slot-value {
@@ -2717,29 +2763,38 @@ function filter(value: string): void {
 }
 
 :root[data-op-style="minimal"] .slot-step {
-  --aug-border-bg: transparent;
   --aug-border-all: 1px;
   padding: 5px var(--op-space-3);
-  background: var(--op-wash);
+  background: var(--op-sheet-sunk);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
 }
 
 :root[data-op-style="minimal"] .slot-step:focus-within {
-  --aug-border-bg: var(--op-text);
+  --aug-border-bg: transparent;
+  box-shadow: inset 0 0 0 1px var(--op-edge-on);
 }
 
-:root[data-op-style="minimal"] .slot-number {
+:root[data-op-style="minimal"] .slot-number,
+:root[data-op-style="minimal"] .slot-of {
+  color: var(--op-text);
   caret-color: var(--op-text);
 }
 
 /* --- the confirm --------------------------------------------------------------------- */
-/* The scrim stays: it darkens the world behind a modal, which is not a ground
-   under a component but the room dimming. */
+/* The scrim stays and turns white: the world behind a modal fades out rather
+   than darkening, which is the room going quiet on a white look. */
 :root[data-op-style="minimal"] .scrim {
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(255, 255, 255, 0.55);
 }
 
 :root[data-op-style="minimal"] .dialog h2 {
-  font: 600 var(--op-fs-title) / 1.2 var(--op-font-body);
+  font: 300 var(--op-fs-head) / 1.1 var(--op-font-body);
+  letter-spacing: -0.035em !important;
   color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .ask {
+  font: 300 var(--op-fs-body) / 1.6 var(--op-font-body);
+  color: var(--op-text-dim);
 }
 </style>

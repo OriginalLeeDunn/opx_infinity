@@ -370,41 +370,45 @@ onUnmounted(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A ground under each LINE, never under the log. Each line sits on its own
-   slim dark square that hugs its text, so a scroll of chat is a stack of
-   separate things on the street rather than a panel with words in it -- and
-   not the red rule down the leading edge that is the cyberpunk log's whole
-   identity. The author is the line's weight -- white, set heavier -- and what
-   they said is the grey after it, so a scroll of chat reads as names first.
+   A WHITE SHEET, CUT INTO LINES. The log is one white sheet with a soft
+   shadow under it, and each line is a row of it, separated from the next by a
+   1px hairline -- the house grid, not the red rule down the leading edge that
+   is the cyberpunk log's whole identity. The author is the line's weight --
+   black, set bold -- and what they said is the light grey after it, so a
+   scroll of chat reads as names first.
 
    THE SYSTEM'S OWN AUTHORS ARE CAPITALS IN THE CATALOGUE (`NETWORK`,
    `COMMAND`), and the minimal look never sets capitals. A player's name is
    theirs and is left exactly as typed; only the kinds the server speaks in
    are lowered and given back their initial. */
 :root[data-op-style="minimal"] .chat-log {
-  gap: 4px;
+  gap: 0;
   padding: 0;
   border-left: 0;
-  background: none;
-  box-shadow: none;
-  text-shadow: var(--op-ink);
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .chat-line {
-  align-self: flex-start;
   max-width: 100%;
   box-sizing: border-box;
-  padding: 3px var(--op-space-2);
-  line-height: 1.45;
-  background: var(--op-plate-quiet);
-  color: var(--op-red-text);
+  padding: 7px var(--op-space-3);
+  line-height: 1.5;
+  background: none;
+  color: var(--op-text-dim);
+  font-weight: 300;
+}
+
+:root[data-op-style="minimal"] .chat-line + .chat-line {
+  border-top: 1px solid var(--op-line);
 }
 
 :root[data-op-style="minimal"] .chat-author {
   margin-right: var(--op-space-2);
   font-family: var(--op-font-body);
   font-size: var(--op-fs-body);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--op-text);
 }
 
@@ -414,7 +418,8 @@ onUnmounted(() => {
 :root[data-op-style="minimal"] .is-error .chat-author {
   display: inline-block;
   text-transform: lowercase !important;
-  color: var(--op-text-dim);
+  color: var(--op-text-faint);
+  font-weight: 500;
 }
 
 :root[data-op-style="minimal"] .is-system .chat-author::first-letter,
@@ -426,11 +431,17 @@ onUnmounted(() => {
 
 :root[data-op-style="minimal"] .is-system .chat-text,
 :root[data-op-style="minimal"] .is-info .chat-text {
-  color: var(--op-text-dim);
+  color: var(--op-text-faint);
 }
 
-/* Something went wrong: the one line in full white, author and text alike,
-   which among grey lines is as loud as this look gets. */
+/* Something went wrong: the one line in full black on the sunk ground, author
+   and text alike, which among grey lines is as loud as this look gets. */
+:root[data-op-style="minimal"] .chat-line.is-error,
+:root[data-op-style="minimal"] .chat-line.is-warning {
+  background: var(--op-sheet-sunk);
+  box-shadow: inset 2px 0 0 var(--op-alarm);
+}
+
 :root[data-op-style="minimal"] .is-error .chat-author,
 :root[data-op-style="minimal"] .is-error .chat-text,
 :root[data-op-style="minimal"] .is-warning .chat-text {

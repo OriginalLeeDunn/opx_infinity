@@ -566,26 +566,39 @@ const gearClass = computed(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The dial is two fine arcs and a figure, and nothing behind them: the outer
-   arc is speed-in-the-band (the rpm), the inner one the car's condition. Both
-   run over a faint track on the same path, so the empty part still reads as
-   "room left", and both end square -- there is no rounded thing on this look.
-   The rails, the redline tick and the black shading are the instrument
-   cluster's, and go.
+   One white sheet, two cells: the dial above, the read-outs below, a hairline
+   between them -- the house site's grid at HUD scale. The dial is two fine
+   arcs and a figure: the outer arc is speed-in-the-band (the rpm), the inner
+   one the car's condition. Both run over the grid's grey on the same path, so
+   the empty part still reads as "room left", and both end square. The rails,
+   the redline tick and the black shading are the instrument cluster's, and go.
 
-   The figure is the dial's whole voice: large, light, white. Redline is the
-   rpm arc going white rather than a red band -- there is no red here. */
+   The figure is the dial's whole voice: large, light, black. Redline is the
+   rpm arc going heavier -- there is no red here. The fuel line is the one
+   fill that takes the rainbow, static; the gear is a sunk keycap. */
+:root[data-op-style="minimal"] .vehicle {
+  gap: 0;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+  transition-timing-function: var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .vehicle .dial {
+  margin: 6px 10px 2px;
+}
+
 :root[data-op-style="minimal"] .vehicle .rings {
   stroke-linecap: butt;
 }
 
+/* The track: the shading path, redrawn as the grid's grey. */
 :root[data-op-style="minimal"] .vehicle .shade {
-  stroke: rgba(255, 255, 255, 0.12);
-  stroke-width: 2;
+  stroke: var(--op-line);
+  stroke-width: 3;
 }
 
 :root[data-op-style="minimal"] .vehicle .shade-in {
-  stroke: rgba(255, 255, 255, 0.08);
+  stroke: var(--op-line);
   stroke-width: 1.5;
 }
 
@@ -596,86 +609,94 @@ const gearClass = computed(() => {
 }
 
 :root[data-op-style="minimal"] .vehicle .rpm {
-  stroke: var(--op-red-hi);
-  stroke-width: 2;
+  stroke: var(--op-text);
+  stroke-width: 3;
 }
 
 :root[data-op-style="minimal"] .vehicle.hot .rpm {
   stroke: var(--op-alarm);
-  stroke-width: 3;
+  stroke-width: 5;
 }
 
 :root[data-op-style="minimal"] .vehicle .integrity {
-  stroke: rgba(var(--op-red-idle-rgb), 0.7);
+  stroke: var(--op-text-faint);
   stroke-width: 1.5;
 }
 
 :root[data-op-style="minimal"] .vehicle .integrity.warn {
-  stroke: var(--op-red-hi);
+  stroke: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .vehicle .integrity.bad {
   stroke: var(--op-alarm);
+  stroke-width: 2.5;
 }
 
 :root[data-op-style="minimal"] .vehicle .core {
-  gap: 0;
+  gap: 2px;
   margin-top: -6px;
 }
 
 /* No colour transition: the dial is mounted before the theme arrives, and the
    cyberpunk 90ms fade would otherwise carry the shipped red into this look. */
 :root[data-op-style="minimal"] .vehicle .speed {
-  font: 300 32px / 1 var(--op-font-display);
+  font: 200 30px / 1 var(--op-font-display);
+  letter-spacing: -0.04em !important;
   color: var(--op-text);
   transition: none;
 }
 
 :root[data-op-style="minimal"] .vehicle.hot .speed {
-  font-weight: 500;
+  font-weight: 600;
 }
 
 /* `KM/H` arrives in capitals and a unit is the one caption that wants no
    capital at all. */
 :root[data-op-style="minimal"] .vehicle .unit {
-  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text-dim);
   text-transform: lowercase !important;
 }
 
-/* The gear is a letter in a hairline box. Reverse is the box and the letter
-   going white and heavy -- a warning, said without a fill. */
 :root[data-op-style="minimal"] .vehicle .gear {
-  --aug-border-bg: var(--op-edge-hover);
-  --aug-border-all: 1px;
+  --aug-border-bg: transparent;
   bottom: 12px;
   min-width: 22px;
-  padding: 3px 8px;
+  padding: 3px 7px;
   font: 600 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text);
-  /* The gear is a thing in the dial -- the one with a ground; the dial is not. */
-  background: var(--op-plate);
+  background: var(--op-sheet-sunk);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
 }
 
 :root[data-op-style="minimal"] .vehicle .gear.idle {
-  --aug-border-bg: var(--op-edge);
+  font-weight: 300;
   color: var(--op-text-dim);
+  box-shadow: inset 0 0 0 1px var(--op-line);
 }
 
+/* Reverse is inverted: white on black, said without a colour. */
 :root[data-op-style="minimal"] .vehicle .gear.reverse {
-  --aug-border-bg: var(--op-alarm);
-  font-weight: 900;
-  color: var(--op-alarm);
+  color: var(--op-sheet);
+  background: var(--op-alarm);
+  box-shadow: none;
 }
 
 :root[data-op-style="minimal"] .vehicle .meta {
-  gap: var(--op-space-3);
-  margin-top: 2px;
+  align-self: stretch;
+  gap: 12px;
+  margin-top: 0;
+  padding: 6px 10px 7px;
+  border-top: 1px solid var(--op-line);
+}
+
+:root[data-op-style="minimal"] .vehicle .meta:empty {
+  display: none;
 }
 
 :root[data-op-style="minimal"] .vehicle .integrity-row .label,
 :root[data-op-style="minimal"] .vehicle .fuel-row .label {
-  font: 400 var(--op-fs-label) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text-dim);
   text-transform: lowercase !important;
 }
@@ -687,40 +708,44 @@ const gearClass = computed(() => {
 
 :root[data-op-style="minimal"] .vehicle .integrity-row b,
 :root[data-op-style="minimal"] .vehicle .fuel-row b {
-  font: 600 var(--op-fs-meta) / 1 var(--op-font-body);
+  font: 600 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .vehicle .integrity-row.bad b,
 :root[data-op-style="minimal"] .vehicle .fuel-row.bad b {
   color: var(--op-alarm);
-  font-weight: 900;
+  font-weight: 700;
+  text-decoration: underline 1.5px;
+  text-underline-offset: 2px;
 }
 
-/* The fuel gauge is the same line as the vitals: a 2px faint track and the
-   fill along it. */
 :root[data-op-style="minimal"] .vehicle .fuel-track {
-  width: 40px;
-  height: 2px;
+  width: 36px;
+  height: 4px;
   overflow: hidden;
   border: none;
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--op-line);
 }
 
 :root[data-op-style="minimal"] .vehicle .fuel-fill {
-  background: var(--op-red-hi);
+  background: var(--op-rainbow);
+}
+
+:root[data-op-style="minimal"] .vehicle .fuel-row.warn .fuel-fill {
+  background: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .vehicle .fuel-row.bad .fuel-fill {
   background: var(--op-alarm);
 }
 
+/* Airborne: inverted, the one alert the dial can raise. */
 :root[data-op-style="minimal"] .vehicle .chip {
-  --aug-border-bg: var(--op-alarm);
-  --aug-border-all: 1px;
-  padding: 4px var(--op-space-3);
-  font: 700 var(--op-fs-label) / 1 var(--op-font-body);
-  background: var(--op-plate-lit);
-  color: var(--op-alarm);
+  --aug-border-bg: transparent;
+  padding: 4px 8px;
+  font: 600 var(--op-fs-label) / 1 var(--op-font-body);
+  background: var(--op-alarm);
+  color: var(--op-sheet);
 }
 </style>

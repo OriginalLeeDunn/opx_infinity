@@ -642,29 +642,48 @@ function giveKey(): void {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The editor's shell as a window drawn in one hairline: no ground -- it is a
-   place, and what it holds carries its own -- the title alone in the header
-   (the `OPX // 77` kicker is the instrument's serial plate), a small square
-   `x` to close, and a delete confirm that is a hairline box over the dimmed
-   window. Its buttons are things, so each has a dark plate; the destructive
-   answer is the white one: this look has no red to spend on danger, so the
-   one answer that acts is the one solid thing on screen. */
+   The editor's shell as one white sheet: a soft shadow under it and no frame
+   line, the title alone in the header -- large and light, with a 2px rainbow
+   rule under it (the `OPX // 77` kicker is the instrument's serial plate) --
+   a small square `x` to close, and a delete confirm that is a second sheet
+   over the window faded to white. Buttons are ghost hairline boxes; the
+   destructive answer is the solid black one: this look has no red to spend on
+   danger, so the one answer that acts is the one heavy thing on screen. */
 :root[data-op-style="minimal"] .bay {
-  --aug-border-bg: var(--op-edge);
-  background: none;
-  box-shadow: none;
+  --aug-border-bg: transparent;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
 }
 
 :root[data-op-style="minimal"] .bay-inner {
   padding: var(--op-space-5);
   color: var(--op-text);
-  text-shadow: var(--op-ink);
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .bay-inner::before,
+:root[data-op-style="minimal"] .ask-inner::before {
+  content: none;
 }
 
 :root[data-op-style="minimal"] .head {
+  position: relative;
   padding: 0 var(--op-space-7) var(--op-space-4) 0;
   margin-bottom: var(--op-space-4);
-  border-bottom: 1px solid var(--op-edge);
+  border-bottom: 0;
+}
+
+/* The header's rule: the rainbow, sliding. */
+:root[data-op-style="minimal"] .head::after {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--op-space-5));
+  right: calc(-1 * var(--op-space-5));
+  bottom: 0;
+  height: 2px;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  animation: op-rainbow-slide 4s linear infinite;
 }
 
 :root[data-op-style="minimal"] .head-kicker {
@@ -672,12 +691,14 @@ function giveKey(): void {
 }
 
 :root[data-op-style="minimal"] .head-title {
-  font: 600 var(--op-fs-title) / 1.2 var(--op-font-body);
+  font: 300 var(--op-fs-head) / 1.1 var(--op-font-body);
+  letter-spacing: -0.035em !important;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .head-mode {
-  font-family: var(--op-font-body);
+  font: 300 var(--op-fs-meta) / 1 var(--op-font-body);
+  color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .close {
@@ -686,16 +707,23 @@ function giveKey(): void {
   right: var(--op-space-4);
   width: 28px;
   height: 28px;
-  background: var(--op-plate);
-  box-shadow: none;
-  font: 400 15px / 1 var(--op-font-body);
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  font: 300 15px / 1 var(--op-font-body);
   color: var(--op-text-dim);
+  transition: box-shadow var(--op-dur-fast) linear, color var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .close:hover {
   --aug-border-bg: transparent;
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
+  box-shadow: inset 0 0 0 1px var(--op-text);
   color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .notice {
+  font-weight: 300;
+  color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .notice.bad {
@@ -703,17 +731,16 @@ function giveKey(): void {
   font-weight: 600;
 }
 
-/* The veil stays: it dims the window behind the question, it is not a ground
-   under a component. */
+/* The veil stays and turns white: the window behind the question fades out. */
 :root[data-op-style="minimal"] .veil {
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(255, 255, 255, 0.6);
 }
 
 :root[data-op-style="minimal"] .ask {
-  --aug-border-bg: var(--op-edge-on);
-  background: none;
-  box-shadow: none;
-  text-shadow: var(--op-ink);
+  --aug-border-bg: transparent;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .ask-inner {
@@ -721,30 +748,43 @@ function giveKey(): void {
   padding: var(--op-space-5);
 }
 
+:root[data-op-style="minimal"] .ask-text {
+  font: 300 var(--op-fs-body) / 1.6 var(--op-font-body);
+  color: var(--op-text);
+}
+
 :root[data-op-style="minimal"] .btn {
   --aug-border-bg: transparent;
   --aug-border-all: 1px;
-  padding: 9px var(--op-space-5);
-  background: var(--op-plate);
-  box-shadow: none;
-  color: var(--op-red-text);
-  transition: background-color var(--op-dur-fast) linear, color var(--op-dur-fast) linear;
+  padding: 10px var(--op-space-5);
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  color: var(--op-text);
+  transition:
+    background-color var(--op-dur-fast) linear,
+    box-shadow var(--op-dur-fast) linear,
+    color var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .btn:hover {
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
+  box-shadow: inset 0 0 0 1px var(--op-text-faint);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .btn.danger,
 :root[data-op-style="minimal"] .btn.danger:hover {
   background: var(--op-text);
-  color: rgb(var(--op-plate-rgb));
-  text-shadow: none;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.12);
+  color: var(--op-sheet);
+}
+
+:root[data-op-style="minimal"] .btn.danger:hover {
+  background: #262626;
 }
 
 :root[data-op-style="minimal"] .btn .op-label {
-  font-weight: 500;
+  font-weight: 400;
 }
 
 :root[data-op-style="minimal"] .btn.danger .op-label {

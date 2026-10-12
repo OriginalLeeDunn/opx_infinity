@@ -859,33 +859,52 @@ onUnmounted(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The field is a THING, so it has a ground: one dark square with a 1px line
-   under what is being typed, which comes up to white while the field is live.
-   No prompt glyph -- the `>` is a terminal's, and the placeholder already says
-   what to do. The keys at its end are the house keycaps.
+   The field is a white box with a 1px black edge while it is live, and a 2px
+   rainbow line along its foot -- the one colour on the chat, and it is there
+   because this is the one place the player is typing. No prompt glyph -- the
+   `>` is a terminal's, and the placeholder already says what to do. The keys
+   at its end are the house keycaps.
 
-   The completion LIST is a place and has no ground; each ROW is a thing and
-   has its own. The row Tab will take is the lit ground with white type, and
-   the argument being typed is the white
-   word among grey ones, underlined, where the others are not. */
+   The completion list is a white sheet cut into rows by hairlines. The row
+   Tab will take carries the rainbow wash, and the argument being typed is the
+   black word among grey ones, underlined, where the others are not. */
 :root[data-op-style="minimal"] .chat-input {
   gap: 8px;
-  text-shadow: var(--op-ink);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .chat-field {
-  --aug-border-bg: transparent;
+  --aug-border-bg: var(--op-edge-hover);
+  --aug-border-all: 1px;
   gap: var(--op-space-3);
-  padding: 8px var(--op-space-3) 7px;
-  border-bottom: 1px solid var(--op-edge-hover);
-  background: var(--op-plate);
-  box-shadow: none;
+  padding: 10px var(--op-space-3);
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
   color: var(--op-text);
-  transition: border-color var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .chat-field:focus-within {
-  border-bottom-color: var(--op-text);
+  --aug-border-bg: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .chat-field::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  opacity: 0;
+  animation: op-rainbow-slide 4s linear infinite paused;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+
+:root[data-op-style="minimal"] .chat-field:focus-within::before {
+  opacity: 1;
+  animation-play-state: running;
 }
 
 :root[data-op-style="minimal"] .chat-caret {
@@ -895,6 +914,7 @@ onUnmounted(() => {
 :root[data-op-style="minimal"] .chat-entry {
   color: var(--op-text);
   caret-color: var(--op-text);
+  font-weight: 300;
 }
 
 :root[data-op-style="minimal"] .chat-entry::placeholder {
@@ -913,38 +933,53 @@ onUnmounted(() => {
 
 :root[data-op-style="minimal"] .cap {
   min-width: 22px;
-  padding: 2px 7px;
+  padding: 3px 7px;
   font-size: var(--op-fs-label);
 }
 
 :root[data-op-style="minimal"] .chat-suggestions {
   --aug-border-bg: transparent;
-  gap: 2px;
+  gap: 0;
   padding: 0;
-  background: none;
-  box-shadow: none;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .chat-suggestion {
+  position: relative;
+  isolation: isolate;
   gap: var(--op-space-3);
-  padding: 5px var(--op-space-3);
-  background: var(--op-plate);
+  padding: 8px var(--op-space-3);
+  background: none;
 }
 
-:root[data-op-style="minimal"] .chat-suggestion.is-selected {
-  background: var(--op-plate-lit);
+:root[data-op-style="minimal"] .chat-suggestion + .chat-suggestion {
+  border-top: 1px solid var(--op-line);
+}
+
+:root[data-op-style="minimal"] .chat-suggestion.is-selected::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 200%;
+  opacity: 0.5;
+  animation: op-rainbow-slide 6s linear infinite;
+  pointer-events: none;
 }
 
 :root[data-op-style="minimal"] .chat-suggestion-name {
   font-family: var(--op-font-body);
   font-size: var(--op-fs-body);
-  font-weight: 700;
+  font-weight: 400;
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .chat-suggestion.is-selected .chat-suggestion-name {
   color: var(--op-text);
+  font-weight: 600;
 }
 
 :root[data-op-style="minimal"] .chat-suggestion-params {
@@ -959,6 +994,7 @@ onUnmounted(() => {
 :root[data-op-style="minimal"] .chat-param.is-here {
   border-bottom: 1px solid var(--op-text);
   color: var(--op-text);
+  font-weight: 500;
 }
 
 :root[data-op-style="minimal"] .chat-suggestion-help {

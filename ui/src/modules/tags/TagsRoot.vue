@@ -525,21 +525,22 @@ useBridge('open77:anchors', (payload: Payload) => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   ONE COMPACT BAND, ON ONE LINE: the id in grey, then the name in white, on a
-   single dark strip that hugs them. A tag is a THING, so it has a ground --
-   and a ground is what keeps a name legible against a bright sky, which the
-   ink alone did not. The account and citizen id, when the operator shows them,
-   stay on the same line, small and grey, so the band never grows a second row.
+   ONE COMPACT WHITE CHIP, ON ONE LINE: the id in grey, then the name in black
+   at weight, on a small white sheet with a soft shadow under it so it stands
+   off the world rather than being pasted on it. The account and citizen id,
+   when the operator shows them, stay on the same line, small and grey, so the
+   chip never grows a second row.
 
      [ 12  Valerie Kaine  valerie_k ]
 
-   STAFF INVERTS IT: a light band with dark type. It is the one tag in a crowd
-   that is not dark, which is all the emphasis it needs. */
+   STAFF INVERTS IT: a black chip with white type. It is the one tag in a crowd
+   that is not white, which is all the emphasis it needs. */
 :root[data-op-style="minimal"] .tag {
   align-items: baseline;
   gap: var(--op-space-2);
-  padding: 4px var(--op-space-2);
-  background: var(--op-plate);
+  padding: 5px 9px;
+  background: var(--op-sheet);
+  box-shadow: var(--op-pop-shadow);
   text-shadow: none;
 }
 
@@ -550,8 +551,8 @@ useBridge('open77:anchors', (payload: Payload) => {
   height: auto;
   padding: 0;
   background: none;
-  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
-  color: var(--op-text-dim);
+  font: 400 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-faint);
 }
 
 :root[data-op-style="minimal"] .plate,
@@ -569,29 +570,32 @@ useBridge('open77:anchors', (payload: Payload) => {
 
 :root[data-op-style="minimal"] .user,
 :root[data-op-style="minimal"] .cid {
-  font: 400 var(--op-fs-micro) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text-dim);
   opacity: 1;
 }
 
 :root[data-op-style="minimal"] .tag.staff {
-  background: rgba(245, 245, 245, 0.92);
+  background: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .id.staff,
 :root[data-op-style="minimal"] .plate.staff .user,
 :root[data-op-style="minimal"] .plate.staff .cid {
-  color: rgba(var(--op-plate-rgb), 0.6);
+  color: rgba(255, 255, 255, 0.6);
   opacity: 1;
 }
 
 :root[data-op-style="minimal"] .plate.staff .name {
-  color: rgb(var(--op-plate-rgb));
+  color: var(--op-sheet);
 }
 
+/* The badge: the one coloured thing on a staff chip, a rainbow word. */
 :root[data-op-style="minimal"] .badge {
+  padding: 2px 5px;
+  background: var(--op-rainbow);
   font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
-  color: rgb(var(--op-plate-rgb));
+  color: var(--op-text);
   opacity: 1;
   text-transform: lowercase !important;
 }

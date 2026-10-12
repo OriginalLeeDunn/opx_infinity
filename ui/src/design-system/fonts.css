@@ -71,26 +71,26 @@
 }
 
 /* --- the minimal style's face -------------------------------------------------
-   Space Grotesk, as ONE variable file under a family name of its own -- 'OPX
+   Unbounded, as ONE variable file under a family name of its own -- 'OPX
    Minimal' -- because the name is where the weight cap lives. Every surface
    asks for the weights the cyberpunk look was drawn at (700 labels, 900
-   marks), and the minimal look wants none of them that heavy. The face is
-   declared over 300..600 only, and a request outside a variable face's range
-   is drawn at the nearest end of it: a 700 or a 900 is drawn at 600, a 400 at
-   400. No component restates a weight.
+   marks); the white look draws its words light and its marks bold, never
+   black. The face is declared over 200..700 only, and a request outside a
+   variable face's range is drawn at the nearest end of it: a 900 is drawn at
+   700, a 400 at 400. No component restates a weight.
 
-   Chosen by the owner over Manrope, which read large and generic: Space
-   Grotesk's figures and its a, g and t have a drawn, slightly technical cut
-   that is this look's own without borrowing anything from the cyberpunk one.
+   Chosen by the owner after Space Grotesk, to match the house site: a wide,
+   round, geometric face that is light by default and loud only where a word
+   is bolded.
 
-   One variable file and not several statics, for the page's weight: 22 KB for
+   One variable file and not several statics, for the page's weight: 50 KB for
    every weight, on a page that carries a byte budget (`tests/run.lua`, "webui:
    ... bundle weight"). Only `minimal.css` names this family, so under the
    cyberpunk look it is inlined and never matched. */
 @font-face {
   font-family: 'OPX Minimal';
   font-style: normal;
-  font-weight: 300 600;
+  font-weight: 200 700;
   font-display: block;
-  src: url('@fontsource-variable/space-grotesk/files/space-grotesk-latin-wght-normal.woff2') format('woff2');
+  src: url('@fontsource-variable/unbounded/files/unbounded-latin-wght-normal.woff2') format('woff2');
 }

@@ -286,13 +286,14 @@ onMounted(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   Nothing on the minimal HUD has a ground under it, so every glyph is held off
-   the street by the design system's ink alone -- which that look makes heavy
-   for exactly this. The HUD's own two-pass shadow is dropped so the two do not
-   stack, and the block arrives on the ease, not the stutter. */
+   The white look puts every read-out on a small white sheet of its own (each
+   block's own rules draw it), so black type needs nothing behind its letters:
+   the HUD's two-pass street shadow is dropped entirely, and the block arrives
+   on the house ease-out, not the stutter. */
 :root[data-op-style="minimal"] .hud {
   --hud-shadow: none;
-  text-shadow: var(--op-ink);
+  text-shadow: none;
+  color: var(--op-text);
   transition-timing-function: var(--op-ease);
 }
 </style>

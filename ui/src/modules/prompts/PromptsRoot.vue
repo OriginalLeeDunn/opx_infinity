@@ -529,17 +529,29 @@ onBeforeUnmount(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   Keys and words, and nothing behind them. A key is a letter in a hairline box
-   (the design system's `.op-cap`), the action beside it is in the body face,
-   regular weight, in sentence case -- the catalogue writes `OPEN`, the player
-   reads "Open". A key name stays as the key is printed (`SHIFT`): a keycap is
-   a picture of a key, and a cap is an inline-flex box, which `::first-letter`
-   does not reach. A group -- one door, one vehicle -- is a THING and sits on
-   its own dark square; the strip that lines the groups up has none. */
+   A group -- one door, one vehicle -- is a small white card, cut into cells by
+   hairlines like the house site's lists: its title as a light grey header
+   cell, then one row per action. A row is a keycap (the design system's sunk
+   `.op-cap`), the action in light black type beside it, sentence case -- the
+   catalogue writes `OPEN`, the player reads "Open" -- and its value, bold, at
+   the far end. A key name stays as the key is printed (`SHIFT`): a keycap is
+   a picture of a key, and `::first-letter` does not reach an inline-flex box.
+   The strip that lines the cards up has no ground and no street shadow. */
+:root[data-op-style="minimal"] .strip {
+  text-shadow: none;
+  transition-timing-function: var(--op-ease);
+}
+
 :root[data-op-style="minimal"] .group {
-  gap: var(--op-space-2) var(--op-space-4);
-  padding: var(--op-space-2) var(--op-space-3);
-  background: var(--op-plate);
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  min-width: 160px;
+  padding: 0;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+  transform: none;
 }
 
 :root[data-op-style="minimal"] .title,
@@ -553,36 +565,66 @@ onBeforeUnmount(() => {
 }
 
 :root[data-op-style="minimal"] .title {
-  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  padding: 8px 12px 7px;
+  border-bottom: 1px solid var(--op-line);
+  font: 300 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text-dim);
+}
+
+:root[data-op-style="minimal"] .row {
+  gap: 10px;
+  padding: 6px 12px 6px 8px;
+  animation-name: prompt-min-in;
+  animation-timing-function: var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .row + .row {
+  border-top: 1px solid var(--op-line);
 }
 
 :root[data-op-style="minimal"] .cap {
   text-transform: none;
   min-width: 22px;
-  height: 22px;
-  padding: 0 7px;
-  font: 600 var(--op-fs-meta) / 1 var(--op-font-body);
+  height: 20px;
+  padding: 0 6px;
+  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .join {
-  font: 400 var(--op-fs-meta) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-meta) / 1 var(--op-font-body);
   color: var(--op-text-faint);
 }
 
 :root[data-op-style="minimal"] .label {
-  font: 500 var(--op-fs-body) / 1.2 var(--op-font-body);
+  font: 300 var(--op-fs-body) / 1.2 var(--op-font-body);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .value {
-  font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
-  color: var(--op-text-dim);
+  font: 600 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .dim .cap {
-  --aug-border-bg: var(--op-edge);
+  box-shadow: inset 0 0 0 1px var(--op-line);
   color: var(--op-text-faint);
+}
+
+:root[data-op-style="minimal"] .dim .label,
+:root[data-op-style="minimal"] .dim .value {
+  color: var(--op-text-faint);
+}
+
+@keyframes prompt-min-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }
 </style>

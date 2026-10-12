@@ -622,10 +622,11 @@ onUnmounted(stop)
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A toast fades in on a short rise and leaves the same way -- no three-step
-   cut, no sideways push off the plane. The stack breathes a little more. */
+   A toast fades in on a short rise, on the house ease-out, and leaves the same
+   way -- no three-step cut, no sideways push off the plane. The cards stack
+   with a little air between them so each one's shadow reads as its own. */
 :root[data-op-style="minimal"] .stack {
-  gap: var(--op-space-2);
+  gap: 8px;
   perspective: none;
 }
 
@@ -635,19 +636,19 @@ onUnmounted(stop)
 }
 
 :root[data-op-style="minimal"] .entry.out {
-  transform: translate3d(0, -4px, 0);
+  transform: translate3d(0, -6px, 0);
 }
 
 :root[data-op-style="minimal"] .bottom_left .entry.out,
 :root[data-op-style="minimal"] .bottom_center .entry.out,
 :root[data-op-style="minimal"] .bottom_right .entry.out {
-  transform: translate3d(0, 4px, 0);
+  transform: translate3d(0, 6px, 0);
 }
 
 @keyframes toast-min-in {
   0% {
     opacity: 0;
-    transform: translate3d(0, 6px, 0);
+    transform: translate3d(0, 8px, 0);
   }
 
   100% {

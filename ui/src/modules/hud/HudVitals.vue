@@ -362,34 +362,43 @@ useBridge('opx:hud:vitals', (payload: Payload) => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   Five lines of type and five rules, and nothing behind them. Each gauge is
-   its icon, a 2px track -- a faint line, the one ground this block keeps,
-   because an empty bar has to show where full would be -- the fill along it,
-   and the figure. No frame, no segment ticks: "how many tenths" is the
-   figure's job.
+   One white sheet, cut into five rows by hairlines. Each row is the icon in
+   grey, a flat track (#ebebeb, the empty part of the bar is the grid's own
+   grey), the fill along it, and the figure. No frame, no segment ticks: "how
+   many tenths" is the figure's job.
 
-   THE STATE MOVES TO THE FILL AND THE FIGURE. The frame that carried it went
-   with the frame. A healthy bar is the brightest grey, a resting one a step
-   down, and a bad one is white with its figure white and heavy beside it: on
-   a grey HUD, the loudest thing it can do. */
+   THE STATE IS THE FILL. Health -- the one bar a player watches -- fills with
+   the rainbow, static: an idle HUD does not move. Every other vital fills in
+   mid grey; `warn` goes black; `bad` goes black on a heavier track with its
+   figure bold and its icon black, the loudest a black-and-white sheet gets. */
 :root[data-op-style="minimal"] .vitals {
-  /* 6px, not more: five rows have to fit the ~110px the status strip's
-     `statusOffset` leaves above the block. */
-  gap: 6px;
+  gap: 0;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
 }
 
 :root[data-op-style="minimal"] .gauge {
-  gap: var(--op-space-3);
-  --tone: rgba(var(--op-red-idle-rgb), 0.75);
+  gap: 10px;
+  /* 4px, not more: five rows have to fit the ~110px the status strip's
+     `statusOffset` leaves above the block. */
+  padding: 4px 10px;
+  --tone: var(--op-red);
+  animation-name: vital-min-in;
+  animation-timing-function: var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .gauge + .gauge {
+  border-top: 1px solid var(--op-line);
 }
 
 :root[data-op-style="minimal"] .gauge .track {
   align-self: center;
-  height: 2px;
+  height: 4px;
   padding: 0;
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--op-line);
 }
 
+/* The ticks and the augmented ring are both this pseudo-element. */
 :root[data-op-style="minimal"] .gauge .track::after {
   content: none;
 }
@@ -399,34 +408,67 @@ useBridge('opx:hud:vitals', (payload: Payload) => {
 }
 
 :root[data-op-style="minimal"] .gauge .glyph {
-  color: var(--op-text-dim);
+  width: 12px;
+  height: 12px;
+  color: var(--op-text-faint);
+  filter: none;
+}
+
+:root[data-op-style="minimal"] .gauge .glyph svg {
+  stroke-width: 1.4;
 }
 
 :root[data-op-style="minimal"] .gauge .readout {
   min-width: 24px;
-  font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-meta) / 1 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
-:root[data-op-style="minimal"] .gauge.health {
-  --tone: var(--op-red-hi);
+:root[data-op-style="minimal"] .gauge.health .fill {
+  background: var(--op-rainbow);
 }
 
+:root[data-op-style="minimal"] .gauge.health .glyph,
 :root[data-op-style="minimal"] .gauge.health .readout {
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .gauge.warn {
-  --tone: var(--op-red-hi);
+  --tone: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .gauge.warn .readout {
+  color: var(--op-text);
+  font-weight: 500;
 }
 
 :root[data-op-style="minimal"] .gauge.bad {
   --tone: var(--op-alarm);
 }
 
+:root[data-op-style="minimal"] .gauge.bad .track {
+  height: 6px;
+}
+
+:root[data-op-style="minimal"] .gauge.bad .fill {
+  background: var(--op-alarm);
+}
+
 :root[data-op-style="minimal"] .gauge.bad .glyph,
 :root[data-op-style="minimal"] .gauge.bad .readout {
   color: var(--op-alarm);
-  font-weight: 900;
+  font-weight: 700;
+}
+
+@keyframes vital-min-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }
 </style>

@@ -237,46 +237,54 @@ const cells = computed(() =>
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   Five squares in a row at the bottom of the screen and no dock under them:
-   each slot is a thing with its own dark ground and hairline around the
-   item's picture, the key a quiet figure in one corner and the count a plain
-   figure in the other. The inventory's cells are the same square, so the peek
-   reads as five cells of the bag lifted out of it. */
+   One white strip at the bottom of the screen, cut into five squares by
+   hairlines -- the house `.cells` row: no gap, a 1px rule between two cells,
+   one soft shadow under the whole strip. The key is a light figure in one
+   corner, the count a bold one in the other; the picture sits on the white
+   with the card shadow under it. The bag's cells are the same square, so the
+   peek reads as one row of the bag lifted out of it. */
 :root[data-op-style="minimal"] .slotbar {
-  gap: var(--op-space-2);
+  gap: 0;
   padding: 0;
-  background: none;
-  box-shadow: none;
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-line), var(--op-sheet-shadow);
 }
 
 :root[data-op-style="minimal"] .cell {
-  --aug-border-bg: rgba(255, 255, 255, 0.22);
+  --aug-border-bg: transparent;
+  --aug-border-all: 0px;
   width: 64px;
   height: 64px;
   padding: 10px;
-  background: var(--op-plate);
+  background: none;
   box-shadow: none;
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .cell + .cell {
+  box-shadow: inset 1px 0 0 var(--op-line);
 }
 
 :root[data-op-style="minimal"] .art {
-  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.55));
+  filter: drop-shadow(0 3px 4px rgba(16, 24, 40, 0.18));
 }
 
 :root[data-op-style="minimal"] .mark {
   font: 600 var(--op-fs-body) / 1 var(--op-font-display);
-  color: var(--op-text-dim);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .mark.faint {
-  font: 500 var(--op-fs-micro) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text-faint);
 }
 
 :root[data-op-style="minimal"] .cap {
   top: 5px;
   left: 7px;
-  font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text-dim);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .count {
@@ -286,6 +294,6 @@ const cells = computed(() =>
   font: 600 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text);
   background: none;
-  text-shadow: var(--op-ink);
+  text-shadow: none;
 }
 </style>

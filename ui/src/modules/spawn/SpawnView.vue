@@ -608,85 +608,138 @@ onUnmounted(() => {
    THE MINIMAL STYLE
    =============================================================================
    The three rules above hold -- a grid, no step out of the column, no tilt --
-   and the bay is the one the form draws: no ground, a plain title, no eyebrow.
-   A place is a thing, so it is a dark plate with its name and its district
-   under it; the pointer lifts the plate and turns it white, the chosen one is
-   lifted with a white line under it. The bay around them stays bare. The ordinal goes: `01 02 03` is the instrument counting its
-   own rows, and the choice here is a place, not a position in a list. */
+   and the bay is a white sheet with a soft shadow under it and the house's 2px
+   rainbow line along its top. The title is large and light. The places are
+   the house grid: cells of the sheet with a 1px hairline between them (the
+   grid's gap over a hairline-grey ground), each with a faint ordinal, its name
+   and its district under it. The pointer greys a cell; the chosen one takes
+   the pastel rainbow wash, the only colour on the sheet. */
 :root[data-op-style="minimal"] .scrim {
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(10, 10, 10, 0.32);
 }
 
 :root[data-op-style="minimal"] .bay {
-  background: none;
-  box-shadow: none;
-  text-shadow: var(--op-ink);
+  --aug-border-bg: transparent;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+  color: var(--op-text);
+  text-shadow: none;
+}
+
+:root[data-op-style="minimal"] .bay-inner::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  animation: op-rainbow-slide 4s linear infinite;
+  pointer-events: none;
 }
 
 :root[data-op-style="minimal"] .head {
-  padding: var(--op-space-6) var(--op-space-6) var(--op-space-1);
+  padding: var(--op-space-6) var(--op-space-6) var(--op-space-4);
   border-bottom: 0;
 }
 
-:root[data-op-style="minimal"] .eyebrow,
-:root[data-op-style="minimal"] .index {
-  display: none;
+:root[data-op-style="minimal"] .eyebrow {
+  font: 400 var(--op-fs-label) / 1.2 var(--op-font-body);
+  color: var(--op-text-faint);
 }
 
 :root[data-op-style="minimal"] .head h1 {
-  font: 600 var(--op-fs-head) / 1.15 var(--op-font-body);
+  font: 200 var(--op-fs-hero) / 1.05 var(--op-font-display);
+  letter-spacing: -0.04em !important;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .note {
-  padding: var(--op-space-1) var(--op-space-6) 0;
+  padding: 0 var(--op-space-6) var(--op-space-4);
+  font: 300 var(--op-fs-body) / 1.6 var(--op-font-body);
+  color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .grid {
-  gap: 2px;
-  padding: var(--op-space-5) var(--op-space-6);
+  gap: 1px;
+  padding: 0;
+  border-top: 1px solid var(--op-line);
+  border-bottom: 1px solid var(--op-line);
+  background: var(--op-line);
+}
+
+:root[data-op-style="minimal"] .slot {
+  background: var(--op-sheet);
 }
 
 :root[data-op-style="minimal"] .card {
   --aug-border-bg: transparent;
-  min-height: 56px;
-  padding: var(--op-space-3) var(--op-space-4);
+  isolation: isolate;
+  min-height: 72px;
+  padding: var(--op-space-4) var(--op-space-5);
   border: 0;
-  background: var(--op-plate);
+  background: var(--op-sheet);
   box-shadow: none;
-  color: var(--op-red-text);
-  transition:
-    color var(--op-dur-fast) linear,
-    background-color var(--op-dur-fast) linear,
-    box-shadow var(--op-dur-fast) linear;
+  color: var(--op-text);
+  filter: none;
+  transition: background-color var(--op-dur-fast) linear;
+}
+
+:root[data-op-style="minimal"] .card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 200%;
+  opacity: 0;
+  animation: op-rainbow-slide 6s linear infinite paused;
+  transition: opacity 250ms ease;
+  pointer-events: none;
 }
 
 :root[data-op-style="minimal"] .card:hover:not(.is-on) {
   --aug-border-bg: transparent;
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .card.is-on {
   --aug-border-bg: transparent;
-  background: var(--op-plate-lit);
-  box-shadow: inset 0 -2px 0 var(--op-text);
+  background: var(--op-sheet);
+  box-shadow: none;
   color: var(--op-text);
 }
 
+:root[data-op-style="minimal"] .card.is-on::before {
+  opacity: 0.5;
+  animation-play-state: running;
+}
+
+:root[data-op-style="minimal"] .index {
+  font: 300 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-faint);
+}
+
 :root[data-op-style="minimal"] .card .label {
-  font-weight: 500;
+  font-weight: 400;
+}
+
+:root[data-op-style="minimal"] .card.is-on .label {
+  font-weight: 600;
 }
 
 :root[data-op-style="minimal"] .district,
 :root[data-op-style="minimal"] .card.is-on .district {
-  font: 400 var(--op-fs-meta) / 1.3 var(--op-font-body);
+  font: 300 var(--op-fs-meta) / 1.4 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .foot {
-  padding: var(--op-space-4) var(--op-space-6) var(--op-space-5);
-  border-top: 1px solid var(--op-edge);
+  padding: var(--op-space-4) var(--op-space-6);
+  border-top: 0;
+  background: var(--op-sheet-sunk);
 }
 
 :root[data-op-style="minimal"] .hint {

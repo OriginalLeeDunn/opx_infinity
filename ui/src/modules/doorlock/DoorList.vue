@@ -394,27 +394,40 @@ svg {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   The door list is a table in the doorlock window. The window is bare; each
-   row is a thing on its own dark plate that lifts under the pointer, the
-   header is a quiet line of grey over a hairline, the search is a plate with a
-   1px line under its text, and the add and page steps are small square
-   plates. An unlocked door says so in white, the one loud word here. */
+   The door list is a printed table on the doorlock sheet. The header is a
+   quiet line of grey words over a hairline; each row is a line of the index,
+   one hairline between rows, going grey-white under the pointer; the search
+   is a white field with a #d4d4d4 hairline, black while focused; the add and
+   page steps are small ghost squares. An unlocked door says so on a small
+   rainbow chip, the one coloured word here. */
 :root[data-op-style="minimal"] .list {
-  text-shadow: var(--op-ink);
+  color: var(--op-text);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .list .search {
   --aug-border-bg: transparent;
   padding: 0 var(--op-space-3);
-  background: var(--op-plate);
-  box-shadow: inset 0 -1px 0 var(--op-edge-hover);
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  color: var(--op-text);
   transition: box-shadow var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .list .search:focus-within {
   --aug-border-bg: transparent;
-  box-shadow: inset 0 -1px 0 var(--op-text);
+  box-shadow: inset 0 0 0 1px var(--op-edge-on);
   color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .list .search input {
+  color: var(--op-text);
+  font-weight: 300;
+  caret-color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .list .search input::placeholder {
+  color: var(--op-text-faint);
 }
 
 :root[data-op-style="minimal"] .list .add,
@@ -422,68 +435,108 @@ svg {
   --aug-border-bg: transparent;
   --aug-border-all: 1px;
   width: 30px;
-  background: var(--op-plate);
-  box-shadow: none;
-  color: var(--op-text-dim);
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .list .add:hover,
 :root[data-op-style="minimal"] .list .step:hover:not(.is-off) {
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
+  box-shadow: inset 0 0 0 1px var(--op-text);
   color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .list .count {
+  font-weight: 300;
+  color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .list .thead {
   padding-bottom: var(--op-space-2);
   border-bottom: 1px solid var(--op-edge);
   color: var(--op-text-faint);
+  font-weight: 400;
+}
+
+:root[data-op-style="minimal"] .list .th {
+  color: inherit;
 }
 
 :root[data-op-style="minimal"] .list .th:hover {
   color: var(--op-text);
 }
 
+/* The rows: an index, one hairline between each. */
 :root[data-op-style="minimal"] .list .rows {
-  gap: 2px;
+  gap: 0;
+}
+
+:root[data-op-style="minimal"] .list .rows > li + li {
+  box-shadow: inset 0 1px 0 var(--op-edge);
 }
 
 :root[data-op-style="minimal"] .list .row {
   --aug-border-bg: transparent;
-  background: var(--op-plate);
+  background: transparent;
   box-shadow: none;
-  color: var(--op-red-text);
-  transition: color var(--op-dur-fast) linear, background-color var(--op-dur-fast) linear;
+  color: var(--op-text);
+  transition: background-color var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .list .row:hover {
-  background: var(--op-plate-lit);
+  background: var(--op-sheet-hover);
   color: var(--op-text);
 }
 
+:root[data-op-style="minimal"] .list .c-id {
+  font-weight: 300;
+  color: var(--op-text-faint);
+}
+
 :root[data-op-style="minimal"] .list .c-name {
-  font-weight: 500;
+  font-weight: 400;
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .list .row:hover .c-name {
   color: var(--op-text);
 }
 
-:root[data-op-style="minimal"] .list .c-state {
+:root[data-op-style="minimal"] .list .tag {
+  padding: 1px 5px;
+  background: var(--op-sheet-sunk);
+  box-shadow: inset 0 0 0 1px var(--op-edge);
+  color: var(--op-text-dim);
+  font-weight: 400;
+}
+
+:root[data-op-style="minimal"] .list .c-state,
+:root[data-op-style="minimal"] .list .c-dist {
+  font-weight: 300;
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .list .c-state.unlocked {
+  justify-self: start;
+  padding: 2px 6px;
+  background: var(--op-rainbow);
   color: var(--op-text);
   font-weight: 600;
 }
 
 :root[data-op-style="minimal"] .list .icon {
   background: none;
-  color: var(--op-text-dim);
+  color: var(--op-text-faint);
+  transition: color var(--op-dur-fast) linear;
 }
 
 :root[data-op-style="minimal"] .list .icon:hover:not(.off) {
   background: none;
   color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .list .pager {
+  color: var(--op-text-dim);
 }
 </style>

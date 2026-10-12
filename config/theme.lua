@@ -16,9 +16,9 @@ OPX.Config.MODULES.theme = {
 	-- The look, and the only two there are:
 	--   'cyberpunk'  red, outlined, chamfered, tilted toward the screen edge,
 	--                with a scanline over every enclosure. The house look.
-	--   'minimal'    the same surfaces, square and quiet: Space Grotesk, a dark ground
-	--                under each thing but never a panel around them, grey and
-	--                white only.
+	--   'minimal'    the same surfaces, drawn white: a white sheet with black type
+	--                in Unbounded, hairline rules between rows, square corners,
+	--                and a pastel rainbow on what is active.
 	-- Anything else is refused with a line in the journal and the page keeps
 	-- the cyberpunk look its stylesheet ships with.
 	STYLE = 'cyberpunk',
@@ -62,19 +62,18 @@ OPX.Config.MODULES.theme = {
 	-- The colour knobs only. Everything else about this look -- the type, the
 	-- square shapes, the bare containers -- is `ui/src/design-system/minimal.css`.
 	minimal = {
-		-- A neutral light grey, and nothing but grey and white on this surface: no
-		-- saturation anywhere, so every rung derived from it is a grey too. It
-		-- sits just inside the band where the lit state still has room above it.
-		ACCENT = '#c6c6c6',
+		-- A mid grey, for the strokes and figures drawn on the white sheet: an icon,
+		-- a bar's track, a figure that is not the headline. Black is the type's
+		-- and the rainbow is the active state's; the accent is only what is left.
+		ACCENT = '#525252',
 
-		-- Pure white. The voice is a grey here, so the alarm escalates in
-		-- luminance alone -- the one step left above the lit rung -- and the
-		-- surfaces give it a heavier stroke to carry the rest.
-		ALARM = '#ffffff',
+		-- Near-black. The alarm on a white sheet escalates in contrast, not in
+		-- hue: the surfaces give it a heavier stroke and a black fill.
+		ALARM = '#0a0a0a',
 
-		-- The ground under a THING -- a row, a cell, a button, a toast. Panels,
-		-- windows and HUD clusters have none on this look, whatever this says.
-		PLATE_OPACITY = 0.72,
+		-- How opaque the white sheet is over the game. High, because black type
+		-- on a sheet the street shows through is type on the street.
+		PLATE_OPACITY = 0.88,
 
 		-- No scanline and no lean: both are the cyberpunk look's, not this one's.
 		INTERLACE = 0,

@@ -302,74 +302,96 @@ const percent = computed(() => Math.floor(fraction.value * 100))
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A title card, not a terminal booting: the film still plays behind a deeper,
-   neutral scrim -- the cover's own, and the one dark thing this look allows,
-   because it is a cover over the game and not a ground under a component --
-   and the bay is no box at all: the wordmark in Space Grotesk, the phase and the
-   percentage on one line, and a 1px line for the progress. The `//` in the
-   wordmark keeps its place and loses its red: it is set in the dim grey,
-   which is the only accent this look has. */
+   THE HOUSE PAGE, NOT A TERMINAL BOOTING. The cover is a white page with two
+   hairline rails down its sides, as the house site is drawn; the film still
+   plays, but framed -- a picture set into the page on the right, with a
+   hairline and a soft shadow -- rather than as the ground under everything.
+   The wordmark is huge and in the lightest weight the face has, with the `//`
+   the one bold mark in it; under it, the phase and the percentage on one line
+   and a 2px progress line filled with the rainbow, the only colour on the
+   page. */
+:root[data-op-style="minimal"] .cover {
+  background: var(--op-sheet);
+}
+
+:root[data-op-style="minimal"] .cover::before {
+  content: '';
+  position: absolute;
+  inset: 0 24px;
+  border-left: 1px solid var(--op-line);
+  border-right: 1px solid var(--op-line);
+  pointer-events: none;
+}
+
+:root[data-op-style="minimal"] .stage {
+  inset: 10vh 6vw 10vh auto;
+  width: 46vw;
+  background-color: var(--op-sheet-sunk);
+  box-shadow: 0 0 0 1px var(--op-line), var(--op-sheet-shadow);
+}
+
 :root[data-op-style="minimal"] .scrim {
-  background:
-    linear-gradient(to top, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.45) 30%, rgba(0, 0, 0, 0) 65%),
-    linear-gradient(to right, rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0) 55%);
+  background: none;
 }
 
 :root[data-op-style="minimal"] .dock {
-  width: min(420px, 44vw);
+  left: 6vw;
+  bottom: 10vh;
+  width: min(560px, 40vw);
 }
 
 :root[data-op-style="minimal"] .bay {
   --aug-border-bg: transparent;
   background: none;
   box-shadow: none;
-  text-shadow: var(--op-ink);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .bay-inner {
-  gap: var(--op-space-5);
+  gap: var(--op-space-6);
   padding: 0;
 }
 
 :root[data-op-style="minimal"] .brand {
-  gap: 2px;
+  gap: var(--op-space-3);
 }
 
 :root[data-op-style="minimal"] .mark {
-  font: 700 clamp(var(--op-fs-head), 2.6vw, 34px) / 1 var(--op-font-display);
+  font: 200 clamp(44px, 6.4vw, 104px) / 0.95 var(--op-font-display);
+  letter-spacing: -0.05em !important;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .mark b {
-  margin: 0 1px;
-  font-weight: 400;
-  color: var(--op-text-faint);
+  margin: 0 0.04em;
+  font-weight: 700;
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .mode {
-  font-size: var(--op-fs-meta);
+  font: 300 var(--op-fs-lead) / 1.4 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .progress {
-  gap: var(--op-space-2);
+  gap: var(--op-space-3);
 }
 
 :root[data-op-style="minimal"] .bar-phase {
-  font-size: var(--op-fs-meta);
+  font: 400 var(--op-fs-meta) / 1.2 var(--op-font-body);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .bar-pct {
-  font-size: var(--op-fs-meta);
-  color: var(--op-text-dim);
+  font: 600 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  color: var(--op-text);
 }
 
-/* The track is the hairline itself: 1px of the edge, filled in white. */
+/* The track is a 2px hairline-grey line; the fill is the rainbow sliding. */
 :root[data-op-style="minimal"] .track {
-  height: 1px;
+  height: 2px;
   padding: 0;
-  background: var(--op-edge-hover);
+  background: var(--op-line);
 }
 
 :root[data-op-style="minimal"] .track::after {
@@ -381,11 +403,20 @@ const percent = computed(() => Math.floor(fraction.value * 100))
 }
 
 :root[data-op-style="minimal"] .fill {
-  background: var(--op-text);
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  animation: op-rainbow-slide 4s linear infinite;
+}
+
+/* Busy: the sweep stays, the slide rides along with it. */
+:root[data-op-style="minimal"] .track.busy .fill {
+  animation:
+    loading-sweep 1.1s var(--op-ease) infinite,
+    op-rainbow-slide 4s linear infinite;
 }
 
 :root[data-op-style="minimal"] .detail {
-  font-size: var(--op-fs-meta);
-  color: var(--op-text-dim);
+  font: 300 var(--op-fs-meta) / 1.5 var(--op-font-body);
+  color: var(--op-text-faint);
 }
 </style>

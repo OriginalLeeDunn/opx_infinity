@@ -735,24 +735,27 @@ onUnmounted(() => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   Not a biomonitor readout: words in the middle of a darkened screen, saying
-   what has happened in a large light word and offering the two things that
-   can be done about it as two hairline boxes. No card and no ground under any
-   of it -- the darkening is the screen's, not a pane's, and it is the one wash
-   kept, because it is the moment itself: the street going dark.
+   A WHITE SHEET IN THE MIDDLE OF A DIMMED SCREEN. What has happened is the
+   sheet's head, one large word in the lightest weight the face has; the three
+   readouts are cells of the sheet cut by hairlines, their figures large and
+   light so the clock is what the eye lands on; the two things that can be
+   done are the sheet's foot, a black button and a ghost one. The dimming is
+   the screen's, kept soft: it is the moment itself, the street going quiet.
 
    Every caption here comes from the catalogue in capitals (`FLATLINE`, `DOWN
    FOR`, `CALL FOR HELP`) and is lowered with its first letter put back; the
    figures are tabular so the clock does not shuffle as it counts. Holding a
-   choice draws a line along its foot rather than filling it. */
+   choice fills it with the rainbow from the left, the one colour on the
+   sheet. */
 :root[data-op-style="minimal"] .room {
-  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.30) 0%, rgba(0, 0, 0, 0.62) 100%);
+  background: radial-gradient(ellipse at center, rgba(10, 10, 10, 0.18) 0%, rgba(10, 10, 10, 0.48) 100%);
 }
 
 :root[data-op-style="minimal"] .bay {
   --aug-border-bg: transparent;
-  background: none;
-  box-shadow: none;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .eyebrow,
@@ -772,121 +775,170 @@ onUnmounted(() => {
 }
 
 :root[data-op-style="minimal"] .head {
-  gap: 6px;
+  position: relative;
+  gap: 10px;
   padding: var(--op-space-6) var(--op-space-6) var(--op-space-5);
-  border-bottom: 1px solid var(--op-edge);
+  border-bottom: 1px solid var(--op-line);
+}
+
+/* The 2px rainbow line along the sheet's top: the house header line. */
+:root[data-op-style="minimal"] .head::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 100%;
+  animation: op-rainbow-slide 4s linear infinite;
 }
 
 :root[data-op-style="minimal"] .eyebrow {
-  font: 500 var(--op-fs-label) / 1.2 var(--op-font-body);
+  font: 400 var(--op-fs-label) / 1.2 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .head h1 {
-  font: 300 44px / 1.05 var(--op-font-display);
+  font: 200 44px / 1.05 var(--op-font-display);
+  letter-spacing: -0.04em !important;
   color: var(--op-text);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .subtitle {
-  font: 400 var(--op-fs-body) / 1.4 var(--op-font-body);
+  font: 300 var(--op-fs-body) / 1.6 var(--op-font-body);
   color: var(--op-text-dim);
+  text-shadow: none;
 }
 
+/* The readouts: three cells, a hairline between them, nothing around them. */
 :root[data-op-style="minimal"] .vitals {
-  gap: var(--op-space-5);
-  padding: var(--op-space-4) var(--op-space-6);
-  border-bottom: 1px solid var(--op-edge);
+  gap: 1px;
+  padding: 0;
+  background: var(--op-line);
+  border-bottom: 1px solid var(--op-line);
 }
 
 :root[data-op-style="minimal"] .read {
-  gap: 6px;
+  gap: 8px;
+  padding: var(--op-space-4) var(--op-space-5);
+  background: var(--op-sheet);
 }
 
 :root[data-op-style="minimal"] .read dt {
-  font: 500 var(--op-fs-label) / 1.2 var(--op-font-body);
-  color: var(--op-text-dim);
+  font: 400 var(--op-fs-label) / 1.2 var(--op-font-body);
+  color: var(--op-text-faint);
 }
 
 :root[data-op-style="minimal"] .read dd,
 :root[data-op-style="minimal"] .read dd.live {
   gap: var(--op-space-2);
   color: var(--op-text);
+  text-shadow: none;
 }
 
 :root[data-op-style="minimal"] .glyph {
-  width: 16px;
-  height: 16px;
-  stroke-width: 1.6;
-  color: var(--op-text-dim);
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.5;
+  color: var(--op-text-faint);
 }
 
 :root[data-op-style="minimal"] .read .figure {
-  font: 500 var(--op-fs-lead) / 1.2 var(--op-font-body);
+  font: 200 26px / 1 var(--op-font-display);
+  letter-spacing: -0.03em !important;
 }
 
 :root[data-op-style="minimal"] .read .unit {
-  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
-  color: var(--op-text-dim);
+  font: 400 var(--op-fs-label) / 1 var(--op-font-body);
+  color: var(--op-text-faint);
   text-transform: lowercase !important;
 }
 
 :root[data-op-style="minimal"] .choices {
   gap: var(--op-space-3);
-  padding: var(--op-space-5) var(--op-space-6) var(--op-space-5);
+  padding: var(--op-space-5) var(--op-space-6);
 }
 
+/* Waiting for help is the black button; giving up is the ghost one. */
 :root[data-op-style="minimal"] .choice {
-  --aug-border-bg: var(--op-edge);
+  --aug-border-bg: transparent;
   --aug-border-all: 1px;
+  isolation: isolate;
   gap: var(--op-space-3);
   padding: var(--op-space-4);
-  /* A choice is a THING, so it has a ground; the room around the two does not. */
-  background: var(--op-plate);
+  background: var(--op-text);
+  color: var(--op-sheet);
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.12);
+  text-shadow: none;
+  transition: background-color 0.2s ease, transform 0.15s var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .choice:active:not(.is-off) {
+  transform: scale(0.98);
+}
+
+:root[data-op-style="minimal"] .choice:hover:not(.is-off):not(.give-up) {
+  background: #262626;
+}
+
+:root[data-op-style="minimal"] .choice.is-on:not(.give-up) {
+  --aug-border-bg: transparent;
+  background: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .choice.give-up {
+  --aug-border-bg: var(--op-edge-hover);
+  background: var(--op-sheet);
+  color: var(--op-text);
   box-shadow: none;
 }
 
-:root[data-op-style="minimal"] .choice:hover:not(.is-off) {
-  --aug-border-bg: var(--op-edge-hover);
-  background: var(--op-plate-lit);
+:root[data-op-style="minimal"] .choice.give-up:hover:not(.is-off) {
+  --aug-border-bg: var(--op-text-faint);
+  background: var(--op-sheet);
 }
 
-:root[data-op-style="minimal"] .choice.is-on {
-  --aug-border-bg: var(--op-edge-on);
-  background: var(--op-plate-lit);
+:root[data-op-style="minimal"] .choice.give-up.is-on {
+  --aug-border-bg: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .choice.is-off {
+  opacity: 0.4;
 }
 
 :root[data-op-style="minimal"] .mark {
-  width: 20px;
-  height: 20px;
-  stroke-width: 1.6;
-  color: var(--op-text-dim);
-}
-
-:root[data-op-style="minimal"] .choice:hover:not(.is-off) .mark,
-:root[data-op-style="minimal"] .choice.is-on .mark {
-  color: var(--op-text);
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.5;
+  color: currentcolor;
 }
 
 :root[data-op-style="minimal"] .choice-label {
   font: 600 var(--op-fs-lead) / 1.2 var(--op-font-body);
-  color: var(--op-text);
+  color: currentcolor;
 }
 
 :root[data-op-style="minimal"] .choice-hint {
-  font: 400 var(--op-fs-meta) / 1.35 var(--op-font-body);
-  color: var(--op-text-dim);
+  font: 300 var(--op-fs-meta) / 1.45 var(--op-font-body);
+  color: currentcolor;
+  opacity: 0.7;
 }
 
-/* The hold, as a 2px line filling along the choice's foot. */
+/* The hold, as the rainbow filling the ghost button from the left, under its
+   type. */
 :root[data-op-style="minimal"] .charge {
-  inset: auto 0 0 0;
-  height: 2px;
-  background: var(--op-text);
+  inset: 0;
+  z-index: -1;
+  height: auto;
+  background: var(--op-rainbow);
 }
 
 :root[data-op-style="minimal"] .notice {
   padding: 0 var(--op-space-6) var(--op-space-4);
-  font: 500 var(--op-fs-meta) / 1.4 var(--op-font-body);
+  font: 400 var(--op-fs-meta) / 1.5 var(--op-font-body);
   color: var(--op-text);
+  text-shadow: none;
 }
 </style>

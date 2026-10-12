@@ -6496,8 +6496,8 @@ do
 			minimal.style == 'minimal' and #minimalNotes == 0,
 			table.concat(minimalNotes, ' | '))
 		check('and reads the minimal block, not the red one',
-			type(minimal.accent) == 'table' and minimal.accent[1] == 198
-				and minimal.accent[2] == 198 and minimal.accent[3] == 198
+			type(minimal.accent) == 'table' and minimal.accent[1] == 82
+				and minimal.accent[2] == 82 and minimal.accent[3] == 82
 				and minimal.interlaceAlpha == 0 and minimal.tiltDeg == 0,
 			minimal.accent and table.concat(minimal.accent, ',') or 'no accent')
 
@@ -6526,6 +6526,18 @@ do
 		table.sort(drift)
 		check('the fallbacks in minimal.css are the ladder the shipped block derives',
 			#drift == 0, table.concat(drift, ' '))
+
+		-- The white look draws black type on its ground, so its ground is white
+		-- whatever accent the operator picks: a dark plate derived from a dark
+		-- accent would be black on black.
+		local inked = Palette.Resolve({ STYLE = 'minimal', minimal = { ACCENT = '#203040' } })
+		check('the minimal style is grounded on white, whatever its accent',
+			inked.plate and inked.plate[1] == 255 and inked.plate[2] == 255 and inked.plate[3] == 255
+				and inked.plateLit and inked.plateLit[1] == 246,
+			inked.plate and table.concat(inked.plate, ',') or 'no plate')
+		local red = Palette.Resolve({ STYLE = 'cyberpunk', cyberpunk = { ACCENT = '#ff3b47' } })
+		check('and the cyberpunk one keeps the dark ground its accent derives',
+			red.plate and red.plate[1] < 64, red.plate and table.concat(red.plate, ',') or 'no plate')
 
 		local unknown, unknownNotes = Palette.Resolve({ STYLE = 'vaporwave', TILT = 3 })
 		check('a style that is not one is refused and named, and the knobs still apply',
@@ -39650,12 +39662,13 @@ do
 			and slurp('ui/src/design-system/shapes.css'):find('@import', 1, true) == nil)
 	check('the build refuses a shape token shapes.css does not draw',
 		slurp('vite.config.ts'):find("new Set(['tr-clip', 'bl-clip', 'border'])", 1, true) ~= nil)
-	-- 600 kB, raised from 520 when the page grew a second look: the minimal style is
-	-- ~72 kB of rules across every surface and one 25 kB variable face, inlined.
+	-- 640 kB, raised from 520 when the page grew a second look: the minimal style is
+	-- ~75 kB of rules across every surface and one 50 kB variable face (Unbounded),
+	-- inlined.
 	-- The guard still does its job -- the library's core alone was 130 kB, and the
 	-- checks above find its tokens by name -- it just no longer pretends the page
 	-- carries one look.
-	check('the page stays under 600 kB, two looks and no library', #built > 0 and #built < 600000,
+	check('the page stays under 640 kB, two looks and no library', #built > 0 and #built < 640000,
 		tostring(#built))
 
 	local types = slurp('ui/src/bridge/types.ts')

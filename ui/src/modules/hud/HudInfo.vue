@@ -254,20 +254,30 @@ useBridge('opx:hud:info', (payload: Payload) => {
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   Two lines of type in the corner and nothing around them: each is a dim
-   caption over its value, the value the larger of the two, figures tabular.
-   The captions arrive from the catalogue in capitals, so they are lowered and
-   the first letter put back -- a caption here is a word, not a stencil. */
+   A small white sheet in the corner, cut into rows by hairlines -- the house
+   site's grid at HUD scale. Each row is a light dim caption over its value,
+   and the value is the one bold word in the row, figures tabular. The
+   captions arrive from the catalogue in capitals, so they are lowered and the
+   first letter put back -- a caption here is a word, not a stencil. */
 :root[data-op-style="minimal"] .info .inner {
-  gap: var(--op-space-3);
+  gap: 0;
+  padding: 0;
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
 }
 
 :root[data-op-style="minimal"] .info .line {
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  font: 400 var(--op-fs-meta) / 1.25 var(--op-font-body);
+  padding: 7px 12px 8px;
+  font: 300 var(--op-fs-meta) / 1.25 var(--op-font-body);
   animation-name: line-min-in;
+  animation-timing-function: var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .info .line + .line {
+  border-top: 1px solid var(--op-line);
 }
 
 :root[data-op-style="minimal"] .info.to-end .line {
@@ -288,22 +298,33 @@ useBridge('opx:hud:info', (payload: Payload) => {
   margin-left: 0;
   font-size: var(--op-fs-lead);
   font-weight: 600;
+  letter-spacing: -0.02em !important;
   color: var(--op-text);
+  text-shadow: none;
+}
+
+/* On duty: the value sits on a short rainbow underline -- the accent, on the
+   one line that is "active". Static: the HUD idles, so it does not move. */
+:root[data-op-style="minimal"] .info .on .value {
+  background: var(--op-rainbow) no-repeat 0 100% / 100% 4px;
+  padding-bottom: 2px;
 }
 
 :root[data-op-style="minimal"] .info .warn .value {
-  color: var(--op-red-hi);
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .info .bad .value {
   color: var(--op-alarm);
-  font-weight: 900;
+  font-weight: 700;
+  text-decoration: underline 2px;
+  text-underline-offset: 3px;
 }
 
 @keyframes line-min-in {
   0% {
     opacity: 0;
-    transform: translate3d(0, 3px, 0);
+    transform: translate3d(0, 4px, 0);
   }
 
   100% {

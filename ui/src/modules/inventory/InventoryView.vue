@@ -2051,32 +2051,33 @@ try {
    THE MINIMAL STYLE
    =============================================================================
    The cyberpunk bag is two tilted columns of outlined cells on dark plates,
-   held together by red rules. Here no pane envelops anything: each side is its
-   title, a hairline under it, its grid and its buttons, standing on the street.
-   The grid is what gives a side its shape, so nothing is drawn around it.
-
-   THE THINGS HAVE GROUNDS, THE PLACES DO NOT. A button, a tab, a cap, a row of
-   the card, the drop square and the refusal line each sit on their own dark
-   square; a side, the card and the count dialog, which hold several things,
-   have nothing behind them. A state is the thing's ground lighting up and its
-   words going white; the confirming button is the one white ground.
+   held together by red rules. Here each side is a printed white sheet with a
+   soft shadow under it: its title in black, light then bold, a hairline under
+   it, its grid of hairline squares, and a row of buttons cut off by one more
+   hairline. Everything is black on white; the one colour is the pastel
+   rainbow, on the thing that is active -- the chosen tab, the cell held or
+   aimed at, the drop square while it is aimed at.
 
    The two-column arrangement, the fit-to-screen scale and every interaction
    are untouched. */
 :root[data-op-style="minimal"] .room {
-  --ink: var(--op-ink);
+  --ink: none;
   --ink-tight: none;
-  --red-track: rgba(255, 255, 255, 0.18);
+  --red-track: var(--op-line);
   --bloom: none;
 }
 
 :root[data-op-style="minimal"] .frame {
-  gap: var(--op-space-6);
+  gap: var(--op-space-4);
   perspective: none;
 }
 
 :root[data-op-style="minimal"] .panel {
-  padding: var(--op-space-4) 0;
+  padding: var(--op-space-5);
+  color: var(--op-text);
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+  text-shadow: none;
 }
 
 /* A fade and a rise instead of a plate swinging into its slot. */
@@ -2087,12 +2088,12 @@ try {
 /* --- the head ----------------------------------------------------------------- */
 :root[data-op-style="minimal"] .head {
   min-height: 0;
-  padding-bottom: var(--op-space-3);
-  border-bottom: 1px solid var(--op-edge-hover);
+  padding-bottom: var(--op-space-4);
+  border-bottom: 1px solid var(--op-line);
 }
 
 :root[data-op-style="minimal"] .eyebrow {
-  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
@@ -2102,61 +2103,71 @@ try {
 }
 
 :root[data-op-style="minimal"] .head h1 {
-  font: 600 22px / 1.15 var(--op-font-display);
+  font: 700 22px / 1.1 var(--op-font-display);
+  letter-spacing: -0.035em !important;
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .head h2 {
-  font: 600 var(--op-fs-title) / 1.2 var(--op-font-display);
+  font: 700 var(--op-fs-title) / 1.2 var(--op-font-display);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .cap {
+  --aug-border-bg: var(--op-edge-hover);
   padding: 4px 8px;
   font: 500 var(--op-fs-label) / 1 var(--op-font-body);
-  color: var(--op-text-dim);
-  --aug-border-bg: var(--op-edge-hover);
-  background: var(--op-plate);
+  color: var(--op-text);
+  background: var(--op-sheet-sunk);
+  text-shadow: none;
 }
 
-/* --- the tabs: small squares side by side -------------------------------------
-   Each tab is a thing with its own ground; the strip that holds them has none.
-   The chosen one is the lit ground with white words and a 1px rule under it.
-   The rule is an inset shadow because the tab is clipped to its box and a
-   border would change its height. */
+/* --- the tabs: a strip of cells cut by hairlines ------------------------------
+   The strip is one hairline box; the tabs inside it are separated by a rule
+   on their left. The chosen one keeps its white and takes a 2px rainbow line
+   along its foot, the header's line on the house site. */
 :root[data-op-style="minimal"] .tabs {
-  gap: 2px;
+  gap: 0;
   align-self: flex-start;
-  margin: var(--op-space-3) 0;
+  margin: var(--op-space-4) 0 var(--op-space-3);
   background: none;
+  box-shadow: inset 0 0 0 1px var(--op-line);
 }
 
 :root[data-op-style="minimal"] .tab {
   --aug-border-bg: transparent;
-  padding: 6px 12px;
-  font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
+  position: relative;
+  padding: 8px 14px;
+  font: 300 var(--op-fs-meta) / 1 var(--op-font-body);
   color: var(--op-text-dim);
-  background: var(--op-plate);
+  background: none;
   box-shadow: none;
+  text-shadow: none;
+  transition: background-color var(--op-dur-fast) var(--op-ease), color var(--op-dur-fast) var(--op-ease);
+}
+
+:root[data-op-style="minimal"] .tab + .tab {
+  box-shadow: inset 1px 0 0 var(--op-line);
 }
 
 :root[data-op-style="minimal"] .tab:hover:not(.on) {
   --aug-border-bg: transparent;
   color: var(--op-text);
-  background: linear-gradient(var(--op-wash), var(--op-wash)), var(--op-plate);
+  background: var(--op-sheet-hover);
 }
 
 :root[data-op-style="minimal"] .tab.on {
   --aug-border-bg: transparent;
+  font-weight: 600;
   color: var(--op-text);
-  background: var(--op-plate-lit);
-  box-shadow: inset 0 -1px 0 var(--op-text);
+  background:
+    var(--op-rainbow-band) left bottom / 200% 2px no-repeat,
+    var(--op-sheet);
+  animation: op-rainbow-slide 4s linear infinite;
   filter: none;
 }
 
-/* --- the load: a line, not a ruler -------------------------------------------
-   A 1px track and a 2px reading laid on it. The ruler's tick mask goes: the
-   figure beside the line already says how much. */
+/* --- the load: a hairline track and a black reading --------------------------- */
 :root[data-op-style="minimal"] .meter {
   padding-bottom: var(--op-space-4);
 }
@@ -2164,18 +2175,23 @@ try {
 :root[data-op-style="minimal"] .rule {
   height: 2px;
   overflow: hidden;
-  background: linear-gradient(var(--red-track), var(--red-track)) center / 100% 1px no-repeat;
+  background: var(--red-track);
   box-shadow: none;
   -webkit-mask-image: none;
   mask-image: none;
 }
 
 :root[data-op-style="minimal"] .rule i {
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .rule.high i {
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--op-text);
+}
+
+/* Full: the alarm is black too, and heavier -- the track thickens. */
+:root[data-op-style="minimal"] .rule.full {
+  height: 3px;
 }
 
 :root[data-op-style="minimal"] .rule.full i {
@@ -2183,78 +2199,89 @@ try {
 }
 
 :root[data-op-style="minimal"] .cap-mono {
-  font: 500 var(--op-fs-label) / 1 var(--op-font-body);
+  font: 300 var(--op-fs-label) / 1 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .figure {
-  font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
+  font: 600 var(--op-fs-meta) / 1 var(--op-font-body);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .figure.quiet {
+  font-weight: 300;
   color: var(--op-text-dim);
 }
 
-/* --- the buttons: square grounds with a hairline ------------------------------
+/* --- the buttons: ghost squares, one solid black ------------------------------
    The hairline is an inset shadow on every button rather than the augmented
    ring, because the card's and the dialog's buttons are not augmented and the
    two must be the same line. */
 :root[data-op-style="minimal"] .foot {
   padding-top: var(--op-space-4);
-  border-top: 1px solid var(--op-edge-hover);
+  margin-top: var(--op-space-4);
+  border-top: 1px solid var(--op-line);
 }
 
 :root[data-op-style="minimal"] .row {
   --aug-border-bg: transparent;
   border: 0;
-  padding: 9px var(--op-space-4);
-  font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
-  color: var(--op-text-dim);
-  background: var(--op-plate);
-  box-shadow: inset 0 0 0 1px var(--op-edge);
+  padding: 10px var(--op-space-4);
+  font: 400 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  text-shadow: none;
+  transition: background-color var(--op-dur-fast) var(--op-ease), box-shadow var(--op-dur-fast) var(--op-ease);
 }
 
 :root[data-op-style="minimal"] .row:hover:not(.off):not(.on) {
   --aug-border-bg: transparent;
   color: var(--op-text);
-  background: linear-gradient(var(--op-wash-on), var(--op-wash-on)), var(--op-plate);
-  box-shadow: inset 0 0 0 1px var(--op-edge-hover);
+  background: var(--op-sheet-hover);
+  box-shadow: inset 0 0 0 1px var(--op-text-faint);
 }
 
-/* The one confirming button is the one white ground in the bag: the answer
-   the dialog is waiting for, said by contrast alone. */
+/* The one confirming button is solid black: the answer the dialog is
+   waiting for, said by contrast alone. */
 :root[data-op-style="minimal"] .row.on {
   --aug-border-bg: transparent;
-  font-weight: 700;
-  color: rgb(var(--op-plate-rgb));
+  font-weight: 600;
+  color: var(--op-sheet);
   background: var(--op-text);
   box-shadow: none;
   text-shadow: none;
   filter: none;
 }
 
+:root[data-op-style="minimal"] .row.on:hover {
+  background: #262626;
+}
+
 :root[data-op-style="minimal"] .row.off {
   --aug-border-bg: transparent;
   color: var(--op-text-faint);
-  background: var(--op-plate-quiet);
-  box-shadow: inset 0 0 0 1px var(--op-off-line);
+  background: var(--op-sheet-sunk);
+  box-shadow: inset 0 0 0 1px var(--op-line);
 }
 
 /* --- the ground: a dashed square to drop into --------------------------------- */
 :root[data-op-style="minimal"] .ground {
   --aug-border-bg: transparent;
   color: var(--op-text-dim);
-  background: var(--op-plate-quiet);
-  border: 1px dashed rgba(255, 255, 255, 0.28);
+  background: var(--op-sheet-sunk);
+  border: 1px dashed var(--op-edge-hover);
   opacity: 0.7;
 }
 
 :root[data-op-style="minimal"] .ground.over {
   --aug-border-bg: transparent;
   color: var(--op-text);
-  background: var(--op-plate-lit);
-  border-color: var(--op-text);
+  background-color: var(--op-sheet);
+  background-image: var(--op-rainbow-band);
+  background-size: 200% 200%;
+  border: 1px solid var(--op-edge-hover);
+  animation: op-rainbow-slide 6s linear infinite;
   opacity: 1;
   filter: none;
 }
@@ -2264,40 +2291,52 @@ try {
 }
 
 :root[data-op-style="minimal"] .ground-hint {
-  font-family: var(--op-font-body);
+  font: 300 var(--op-fs-meta) / 1.4 var(--op-font-body);
 }
 
-/* --- the card and the count dialog: a hairline box over the grid --------------
-   No sheet under them: each holds several things, and a holder has no ground
-   on this look. Its rows and buttons carry their own. The box is drawn one
-   step brighter than a button so the two read as floating over the cells. */
+/* --- the card and the count dialog: small white sheets that pop ---------------
+   Each is a sheet of its own, with the house pop shadow -- it floats over the
+   bag, so it is the one surface whose shadow is heavier. Inside, rows are cut
+   by hairlines rather than spaced apart. */
 :root[data-op-style="minimal"] .menu,
 :root[data-op-style="minimal"] .dialog {
   border-left: 0;
   padding: var(--op-space-4);
-  background: none;
-  box-shadow: inset 0 0 0 1px var(--op-edge-on);
+  color: var(--op-text);
+  background: var(--op-sheet);
+  box-shadow: inset 0 0 0 1px var(--op-line), var(--op-pop-shadow);
+  text-shadow: none;
   animation-name: op-min-in;
-  animation-timing-function: var(--op-stutter);
+  animation-timing-function: var(--op-ease);
 }
 
 :root[data-op-style="minimal"] .menu {
   width: 220px;
 }
 
-/* A row of the card is a thing on its own ground; the pointed one lights up,
-   and goes white. */
+:root[data-op-style="minimal"] .list {
+  gap: 0;
+}
+
+/* A row of the card is a line in a list: white, a hairline under it, the
+   pointed one greys a step. */
 :root[data-op-style="minimal"] .menu .row {
-  padding: 8px 10px;
-  font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
-  background: var(--op-plate);
-  box-shadow: none;
+  padding: 9px 4px;
+  font: 400 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+  background: none;
+  box-shadow: inset 0 -1px 0 var(--op-line);
 }
 
 :root[data-op-style="minimal"] .menu .row:hover:not(.off) {
   color: var(--op-text);
-  background: var(--op-plate-lit);
-  box-shadow: none;
+  background: var(--op-sheet-hover);
+  box-shadow: inset 0 -1px 0 var(--op-line);
+}
+
+:root[data-op-style="minimal"] .row-value {
+  font-weight: 300;
+  color: var(--op-text-dim);
 }
 
 :root[data-op-style="minimal"] .dialog .row {
@@ -2307,34 +2346,41 @@ try {
 :root[data-op-style="minimal"] .told {
   gap: var(--op-space-2);
   padding-bottom: var(--op-space-3);
-  border-bottom: 1px solid var(--op-edge-hover);
+  border-bottom: 1px solid var(--op-line);
 }
 
 :root[data-op-style="minimal"] .told-name {
-  font: 600 var(--op-fs-lead) / 1.2 var(--op-font-display);
+  font: 700 var(--op-fs-lead) / 1.2 var(--op-font-display);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .told-times {
-  font: 500 var(--op-fs-label) / 1.2 var(--op-font-body);
+  font: 300 var(--op-fs-label) / 1.2 var(--op-font-body);
   color: var(--op-text-dim);
   background: none;
 }
 
-:root[data-op-style="minimal"] .fact {
-  border-bottom: 1px solid var(--op-edge);
-}
-
-:root[data-op-style="minimal"] .fact .value {
-  font: 500 var(--op-fs-meta) / 1.2 var(--op-font-body);
-}
-
-:root[data-op-style="minimal"] .sep {
+:root[data-op-style="minimal"] .prose {
+  font: 300 var(--op-fs-meta) / 1.6 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
+:root[data-op-style="minimal"] .fact {
+  border-bottom: 1px solid var(--op-line);
+}
+
+:root[data-op-style="minimal"] .fact .value {
+  font: 600 var(--op-fs-meta) / 1.2 var(--op-font-body);
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .sep {
+  font-weight: 300;
+  color: var(--op-text-faint);
+}
+
 :root[data-op-style="minimal"] .sep::after {
-  background: var(--op-edge-hover);
+  background: var(--op-line);
 }
 
 :root[data-op-style="minimal"] .stepper .row {
@@ -2345,24 +2391,27 @@ try {
 }
 
 :root[data-op-style="minimal"] .stepper .count {
-  font: 300 36px / 1 var(--op-font-display);
+  font: 200 36px / 1 var(--op-font-display);
+  letter-spacing: -0.04em !important;
+  color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .hint {
-  font-family: var(--op-font-body);
+  font: 300 var(--op-fs-meta) / 1.4 var(--op-font-body);
   color: var(--op-text-dim);
 }
 
-/* A refusal is said once, quietly, as one line on its own ground. */
+/* A refusal is said once, as a small black sheet: the alarm on this look is
+   contrast, not hue. */
 :root[data-op-style="minimal"] .status {
   left: 50%;
   right: auto;
   transform: translateX(-50%);
-  padding: 8px 16px;
-  font: 500 var(--op-fs-meta) / 1.4 var(--op-font-body);
-  color: var(--op-text);
-  background: var(--op-plate);
-  box-shadow: inset 0 0 0 1px var(--op-edge-on);
-  text-shadow: var(--op-ink);
+  padding: 10px 18px;
+  font-weight: 400;
+  color: var(--op-sheet);
+  background: var(--op-alarm);
+  box-shadow: var(--op-pop-shadow);
+  text-shadow: none;
 }
 </style>

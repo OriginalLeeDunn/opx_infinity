@@ -334,29 +334,32 @@ onUnmounted(stop)
 /* =============================================================================
    THE MINIMAL STYLE
    =============================================================================
-   A chip is a THING, so it stands on its own small dark square -- the strip
-   holding them has no ground, the chips sit on the street side by side. The
-   tone climbs on the square and the type: resting is dim on the plate, lit is
-   white on the lit plate with the line up, and a BAD chip is white, bold, in
-   a white line, the loudest thing on the strip.
+   Each chip is a small white cell -- the strip holding them has no ground,
+   the cells stand side by side, each with the grid's hairline round it and a
+   soft shadow under it so it reads over the street. Light black type, the
+   one-letter icon set apart by a hairline after it.
 
-   Labels arrive in capitals from whoever raised the chip; they are lowered and
-   the first letter put back. The countdown is a fine line along the box's foot. */
+   THE TONE CLIMBS ON THE CELL. Resting is grey type on white; `accent` is the
+   active state, so it takes the rainbow (static -- an idle HUD does not
+   move); `warn` and `shock` go black, bold, in a black hairline; `bad` is
+   inverted -- white type on a black cell -- the loudest thing a black-and-
+   white sheet can do. Labels arrive in capitals; they are lowered and the
+   first letter put back. The countdown is a 2px line along the cell's foot. */
 :root[data-op-style="minimal"] .strip {
   gap: 6px;
-}
-
-:root[data-op-style="minimal"] .strip {
   background: none;
 }
 
 :root[data-op-style="minimal"] .strip .chip {
   --aug-border-bg: var(--op-edge);
   --aug-border-all: 1px;
-  padding: 4px var(--op-space-3);
-  font: 500 var(--op-fs-meta) / 1 var(--op-font-body);
+  padding: 5px 10px;
+  font: 300 var(--op-fs-meta) / 1 var(--op-font-body);
   color: var(--op-text-dim);
-  background: var(--op-plate);
+  background: var(--op-sheet);
+  box-shadow: var(--op-sheet-shadow);
+  animation-name: chip-min-in;
+  animation-timing-function: var(--op-ease);
 }
 
 :root[data-op-style="minimal"] .strip .chip .label {
@@ -367,44 +370,72 @@ onUnmounted(stop)
   text-transform: uppercase !important;
 }
 
-/* The letter is set apart by weight and a thin rule after it, not by a disc. */
 :root[data-op-style="minimal"] .strip .chip .icon {
-  padding-right: var(--op-space-2);
-  border-right: 1px solid var(--op-edge-hover);
-  font: 900 var(--op-fs-micro) / 1 var(--op-font-body);
+  padding-right: 8px;
+  border-right: 1px solid var(--op-line);
+  font: 700 var(--op-fs-micro) / 1 var(--op-font-body);
   color: var(--op-text);
 }
 
 :root[data-op-style="minimal"] .strip .chip .time {
-  height: 1px;
-  background: currentcolor;
-  opacity: 0.5;
+  height: 2px;
+  background: var(--op-text);
 }
 
-:root[data-op-style="minimal"] .strip .chip.accent,
+:root[data-op-style="minimal"] .strip .chip.ok {
+  color: var(--op-text);
+}
+
+:root[data-op-style="minimal"] .strip .chip.accent {
+  --aug-border-bg: transparent;
+  color: var(--op-text);
+  font-weight: 500;
+  background: var(--op-rainbow);
+}
+
+:root[data-op-style="minimal"] .strip .chip.accent .icon {
+  border-right-color: rgba(10, 10, 10, 0.15);
+}
+
 :root[data-op-style="minimal"] .strip .chip.warn,
 :root[data-op-style="minimal"] .strip .chip.shock {
   --aug-border-bg: var(--op-edge-on);
   color: var(--op-text);
-  background: var(--op-plate-lit);
+  font-weight: 600;
 }
 
 :root[data-op-style="minimal"] .strip .chip.bad {
   --aug-border-bg: var(--op-alarm);
-  --aug-border-all: 1px;
-  font-weight: 700;
-  color: var(--op-alarm);
-  background: var(--op-plate-lit);
+  font-weight: 600;
+  color: var(--op-sheet);
+  background: var(--op-alarm);
 }
 
 :root[data-op-style="minimal"] .strip .chip.bad .icon {
-  border-right-color: var(--op-alarm);
-  color: var(--op-alarm);
+  border-right-color: rgba(255, 255, 255, 0.3);
+  color: var(--op-sheet);
+}
+
+:root[data-op-style="minimal"] .strip .chip.bad .time {
+  background: var(--op-sheet);
 }
 
 :root[data-op-style="minimal"] .strip .chip.overflow {
   border: 1px dashed var(--op-edge-hover);
   color: var(--op-text-faint);
-  background: var(--op-plate-quiet);
+  background: var(--op-sheet-sunk);
+  box-shadow: none;
+}
+
+@keyframes chip-min-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }
 </style>
