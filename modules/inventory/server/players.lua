@@ -87,6 +87,17 @@ function Players.Alive(source)
 		local deadRead, dead = pcall(players.isDead, source)
 		if deadRead and dead == true then return false end
 	end
+	-- A WOUNDED BODY IS ALIVE to the engine (`downed` MODE 'wounded') and down to
+	-- everybody else: it must not empty its bag into a pile before a search any
+	-- more than a dead one could.
+	local downed = OPX.Api.Get('downed')
+	if downed ~= nil and type(downed.IsDown) == 'function' then
+		local downRead, answer = pcall(downed.IsDown, source)
+		if downRead and type(answer) == 'table' and answer.ok and type(answer.value) == 'table'
+			and answer.value.down == true then
+			return false
+		end
+	end
 	return true
 end
 

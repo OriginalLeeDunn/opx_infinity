@@ -42638,6 +42638,107 @@ do
 	end
 end
 
+-- ── downed: a lethal hit leaves a player wounded, alive, and finishable ──────
+section('downed: wounded -- held at the edge, finished, bled out, revived, carried')
+do
+	local env, control, why = boot('server')
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local downedModule = OPX.Modules.Get('downed')
+		check('the shipped mode is wounded', downedModule.Settings.MODE == 'wounded')
+		local VICTIM, SHOOTER = 91, 92
+		control.Admit(VICTIM, 'user-wounded')
+		control.Admit(SHOOTER, 'user-shooter')
+		env.Open77.ready.isReady = function() return true end
+		local character = OPX.Api.Get('character')
+		character.GetPlayer = function(id)
+			return { PlayerData = { citizenId = 'CIT-W-' .. tostring(id) } }
+		end
+		env.Open77.players.name = function(id) return 'Player ' .. tostring(id) end
+		local health, frozen, regen, kills, teleports, poses = { [VICTIM] = 40 }, {}, {}, {}, {}, {}
+		local dead = {}
+		env.Open77.players.getHealth = function(id) return { health = health[id] or 250, maxHealth = 250 } end
+		env.Open77.players.setHealth = function(id, value) health[id] = value; return true end
+		env.Open77.players.setFrozen = function(id, on) frozen[id] = on; return true end
+		env.Open77.stats = env.Open77.stats or {}
+		env.Open77.stats.setHealthRegenEnabled = function(id, on) regen[id] = on; return true end
+		env.Open77.animations = env.Open77.animations or {}
+		env.Open77.animations.play = function(id, profile) poses[#poses + 1] = profile; return { playbackId = 'pose' } end
+		env.Open77.animations.stopAt = function() return true end
+		env.Open77.players.isDead = function(id) return dead[id] == true end
+		env.Open77.players.getLifeState = function(id)
+			return { phase = dead[id] and 'dead' or 'alive', position = { x = 0, y = 0, z = 0, bucket = 0 } }
+		end
+		env.Open77.players.kill = function(id, options)
+			kills[#kills + 1] = { id = id, options = options }
+			dead[id] = true
+			return true
+		end
+		env.Open77.players.teleport = function(id, position)
+			teleports[#teleports + 1] = { id = id, position = position }
+			return {}
+		end
+		local Wounded = downedModule.Wounded
+		local contract = OPX.Api.Get('downed')
+
+		-- A hit that would not kill lands untouched.
+		check('a hit that leaves health lands as it is',
+			Wounded.Arbitrate({ victim = VICTIM, attacker = SHOOTER, amount = 10 }) == nil)
+
+		-- The lethal one is cut to leave HEALTH, and the player goes down alive.
+		local cut = Wounded.Arbitrate({ victim = VICTIM, attacker = SHOOTER, amount = 100 })
+		check('a lethal hit is cut to leave one point', cut == 39, cut)
+		control.Pump(4)
+		local state = contract.IsDown(VICTIM).value
+		check('the player is down, and wounded rather than dead', state.down == true and state.stage == 'wounded')
+		check('held where they fell, not regenerating, in the wounded pose',
+			frozen[VICTIM] == true and regen[VICTIM] == false and poses[1] == 'wounded')
+
+		check('a wounded player\'s own shots are refused',
+			Wounded.Arbitrate({ victim = SHOOTER, attacker = VICTIM, amount = 50 }) == false)
+		check('an NPC or the world cannot finish them (FINISH.OTHERS false)',
+			Wounded.Arbitrate({ victim = VICTIM, attacker = 0, amount = 50 }) == false)
+		check('a player can (FINISH.PLAYERS true): the blow lands',
+			Wounded.Arbitrate({ victim = VICTIM, attacker = SHOOTER, amount = 50 }) == nil)
+
+		-- Carried: the hold lifts and comes back.
+		check('a medic may carry a wounded body: the freeze lifts',
+			contract.SetCarried(VICTIM, 'medical', true).ok and frozen[VICTIM] == false)
+		contract.SetCarried(VICTIM, 'medical', false)
+		check('and comes back when they are put down', frozen[VICTIM] == true)
+
+		-- Revived while wounded: a heal and a release, no life transition.
+		local revived = contract.Revive(VICTIM, 'medical', 'test', { health = 0.4 })
+		check('a wounded revive heals to the share and stands them up',
+			revived.ok and health[VICTIM] == 100 and contract.IsDown(VICTIM).value.down == false, health[VICTIM])
+		check('and lets go of the body', frozen[VICTIM] == false and regen[VICTIM] == true)
+
+		-- Down again, finished: a flatline keeps the record, only deader.
+		health[VICTIM] = 30
+		Wounded.Arbitrate({ victim = VICTIM, attacker = SHOOTER, amount = 100 })
+		control.Pump(4)
+		dead[VICTIM] = true
+		control.Fire('onPlayerLifeStateChanged', VICTIM)
+		control.Pump(4)
+		state = contract.IsDown(VICTIM).value
+		check('a finishing blow is a flatline: still down, now dead', state.down == true and state.stage == 'dead')
+
+		-- The bleed-out: a wounded body left alone dies on its own.
+		dead[VICTIM] = nil
+		control.Fire('onPlayerLifeStateChanged', VICTIM)
+		control.Pump(4)
+		health[SHOOTER] = 20
+		Wounded.Arbitrate({ victim = SHOOTER, attacker = VICTIM, amount = 100 })
+		control.Pump(4)
+		check('the second player is wounded too', contract.IsDown(SHOOTER).value.stage == 'wounded')
+		control.Advance(301000)
+		Wounded.Bleed()
+		check('after BLEED_OUT_S they bleed out', #kills == 1 and kills[1].id == SHOOTER
+			and kills[1].options.weapon == 'opx:downed:bleedout', #kills)
+	end
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the

@@ -129,7 +129,7 @@ local function downState(player)
 	if not read or type(answer) ~= 'table' or not answer.ok or type(answer.value) ~= 'table' then
 		return false
 	end
-	return answer.value.down == true, answer.value.waiting == true
+	return answer.value.down == true, answer.value.waiting == true, answer.value.stage
 end
 
 -- A living body's health and maximum, or nil.
@@ -363,8 +363,12 @@ local function unfit(patient, kind)
 	if kind == Kind.REVIVE then
 		return (not down) and 'not_down' or nil
 	end
-	-- The engine carries a living body only: a patient who is down is revived first.
-	if kind == Kind.CARRY then return down and 'is_down' or nil end
+	-- The engine carries a living body only: a WOUNDED patient (down, alive) can
+	-- be carried to the AV; a flatlined one is revived first.
+	if kind == Kind.CARRY then
+		local _, _, stage = downState(patient)
+		return (down and stage ~= 'wounded') and 'is_down' or nil
+	end
 	if down then return 'is_down' end
 	local current, maximum = healthOf(patient)
 	if current == nil then return 'no_health' end
@@ -420,7 +424,7 @@ local function optionsFor(medic, patient)
 			end
 		end
 		local carry = carryOf(svc)
-		if carry ~= nil and member(medic, svc, carry.minGrade) and not downState(patient) then
+		if carry ~= nil and member(medic, svc, carry.minGrade) and unfit(patient, Kind.CARRY) == nil then
 			rows[#rows + 1] = { service = key, short = svc.short, treatment = M.CARRY, label = carry.label,
 				kind = Kind.CARRY, fee = 0, stocked = true }
 		end
@@ -492,6 +496,16 @@ local function release(job)
 	end
 end
 
+-- A wounded patient is held on the ground by `downed`; the hold is lifted for
+-- the length of a carry and put back when it ends.
+local function holdWounded(job, carried)
+	if not job.wounded then return end
+	local downed = OPX.Api.Get('downed')
+	if downed ~= nil and type(downed.SetCarried) == 'function' then
+		pcall(downed.SetCarried, job.patient, OWNER, carried)
+	end
+end
+
 -- The act itself: a revive through the downed contract, a heal through the host.
 local function apply(job)
 	if job.treat.kind == Kind.REVIVE then
@@ -517,6 +531,7 @@ local function finish(job, completed, ending)
 	release(job)
 	-- A carry is not a treatment: however it ended, the patient is on their feet.
 	if job.treat.kind == Kind.CARRY then
+		holdWounded(job, false)
 		return answer(job.medic, true, 'put_down')
 	end
 	if not completed then
@@ -606,6 +621,9 @@ end
 local function startCarry(job)
 	local native = Open77.playerInteractions
 	if type(native) ~= 'table' or type(native.request) ~= 'function' then return false, 'carry_refused' end
+	local down, _, stage = downState(job.patient)
+	job.wounded = down and stage == 'wounded'
+	holdWounded(job, true)
 	local read, state, reason = pcall(native.request, job.medic, job.patient, 'carry', {
 		durationMs = job.treat.durationMs,
 		startDistance = math.min(10, config().reach),
@@ -614,6 +632,7 @@ local function startCarry(job)
 	})
 	if not read or type(state) ~= 'table' or type(state.id) ~= 'string' then
 		Open77.log.debug('[medical] carry refused: ' .. tostring(read and reason or state))
+		holdWounded(job, false)
 		return false, 'carry_refused'
 	end
 	job.interactionId = state.id
@@ -730,7 +749,7 @@ local function onTreat(player, payload)
 
 	-- CONSENT: a heal or a carry on a body that can still say no asks first. A
 	-- revive never does -- the body cannot answer, and a contract is the consent.
-	if (treat.kind == Kind.HEAL or treat.kind == Kind.CARRY) and treat.consent then
+	if (treat.kind == Kind.HEAL or (treat.kind == Kind.CARRY and not downState(patient))) and treat.consent then
 		nextInvite = nextInvite % 2147483646 + 1
 		job.inviteId, job.expiresMs = nextInvite, OPX.Now() + CONSENT_MS
 		invites[nextInvite] = job

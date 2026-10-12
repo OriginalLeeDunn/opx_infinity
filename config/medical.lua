@@ -140,9 +140,10 @@ OPX.Config.MODULES.medical = {
 
 			-- Carrying a patient to the AV or the clinic: the platform's two-player
 			-- `carry` (the medic walks, the patient is in their arms). The engine
-			-- refuses a dead body, so it is offered on a patient who is UP --
-			-- revived, or hurt and walking -- never on one who is down. CONSENT asks
-			-- the patient first, as a heal does.
+			-- refuses a dead body, so it is offered on a patient who is ALIVE: up and
+			-- hurt, or WOUNDED on the ground (`config/downed.lua` MODE 'wounded') --
+			-- the trip to the AV -- never on one who has flatlined. CONSENT asks a
+			-- patient who is up first; a wounded one cannot answer and is not asked.
 			CARRY = { ENABLED = true, DURATION_S = 180, CONSENT = true, MIN_GRADE = 0 },
 
 			-- Treatment beds. A patient standing within RADIUS of one when a heal

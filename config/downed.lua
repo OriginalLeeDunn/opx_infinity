@@ -4,6 +4,32 @@
 OPX.Config.MODULES.downed = {
 	enabled = true,
 
+	-- HOW A PLAYER GOES DOWN.
+	--   'wounded'  a lethal hit is held at the edge by the server's damage
+	--              arbiter: the player goes down ALIVE at WOUNDED.HEALTH, held on
+	--              the ground, and can be revived, carried, cuffed -- or finished.
+	--              They flatline (really die) on a finishing blow WOUNDED.FINISH
+	--              allows, when the bleed-out runs out, or from anything that went
+	--              round the arbiter; from there it is the 'death' screen.
+	--   'death'    the body dies and the screen opens on the dead body, as before.
+	--              The rollback: switch this and restart, nothing else changes.
+	MODE = 'wounded',
+
+	WOUNDED = {
+		-- Health points a held hit leaves, and what a wounded body is kept at.
+		HEALTH = 1,
+		-- Seconds wounded before the body flatlines on its own. 0: never.
+		BLEED_OUT_S = 300,
+		-- Hold the body where it fell (`Open77.players.setFrozen`).
+		FREEZE = true,
+		-- The RP pose a wounded body plays on the ground ('' for none). 'wounded'
+		-- is the seated, breathing-hard workspot; 'arrested' lies face down.
+		POSE = 'wounded',
+		-- Who may land a finishing blow on a wounded body. A hit from anybody
+		-- else is refused outright. OTHERS is NPCs, the world and explosions.
+		FINISH = { PLAYERS = true, OTHERS = false },
+	},
+
 	-- Seconds down before GIVE UP unlocks, and how long it is held so that a
 	-- stray click respawns nobody. The server enforces both.
 	GIVE_UP_AFTER_S = 120,
