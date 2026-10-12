@@ -875,6 +875,31 @@ the platform's own voice key never reach a radio channel. Contract `radio` (serv
 `Join(player, channel)`, `Leave(player, channel)`, `Channels(player)`; bus
 `opx:on:radio:changed`. `/opx.radio.channels` (staff) lists them.
 
+### Business: treasuries and the HR terminal
+
+`modules/business` + `config/business.lua`. **Who is a boss is the grade table** in
+`config/character.lua`: `isBoss = true` opens the HR terminal (`/opx.boss`, or the ALT
+row at an office of `JOBS.<job>.OFFICES` / `GANGS.<gang>.OFFICES`, all `0,0,0` =
+disabled and named at boot), `bankAuth = true` also moves money between the boss's
+`POCKET` (cash) and the company account. The terminal lists the roster online and
+offline (`GetGroupMembers`), recruits a nearby player (an offer they sign or decline,
+`HIRE.RADIUS`, `HIRE.TTL_S`), fires, promotes, demotes and clocks inside the grade
+table under `RANK_RULE` (`below`: only people strictly below the boss, never up to their
+grade), and caps head count at `MAX_EMPLOYEES`. Every change goes through the character
+contract (`SetJob`/`SetGang` on a primary group, `AddPlayerTo*` on a secondary one,
+`RemovePlayerFrom*`, `SetJobDuty`), so `job:beforeSet` vetoes and the offline ledger hold.
+
+Contract `accounts` v1: `Balance`, `Deposit`, `Withdraw` (`insufficient_funds`),
+`Transfer`, `History`, each with an optional `opId` -- the ledger
+(`opx77_company_ledger`, `op_id` UNIQUE, written in the same transaction as the balance)
+makes the same opId one movement, answered with its first receipt; a debit is an
+`INSERT ... SELECT ... WHERE balance >= amount`, so it cannot overdraw. The balance table
+is the dealership's `opx77_company_accounts`, taken over as it is; the dealership still
+banks its sales itself and files them with `Note` (history + bus). Bus
+`opx:on:accounts:changed` and `opx:on:business:staff`. Contract `business` v1:
+`IsBoss(player, job, kind?)`, `Employees(job, kind?)`. Staff: `/opx.accounts <job|gang>
+<name> [deposit|withdraw <amount>]`.
+
 ### Emotes
 
 `animations` offers **every animation the platform has** (**"toutes les animations,

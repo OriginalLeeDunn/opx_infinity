@@ -593,6 +593,13 @@ function Host.Environment(side, database)
 				-- stub keeping the live table by reference would hide that.
 				carried.blob = json.decode(json.encode(value))
 				carried.writes[#carried.writes + 1] = carried.blob
+				-- THE LAST FEW WRITES, NOT ALL OF THEM, for the reason the thread
+				-- list below is compacted: every periodic save of a whole section
+				-- kept its blob here, so the list was memory the RUNTIME never
+				-- holds, and the hostile battery's growth check measured it --
+				-- its array doubling past 16384 entries read as a +256 KB leak on
+				-- whichever door happened to be running when the count crossed.
+				if #carried.writes > 64 then table.remove(carried.writes, 1) end
 				return true
 			end,
 			load = function() return carried.blob end,
