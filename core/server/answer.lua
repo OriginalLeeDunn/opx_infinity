@@ -81,8 +81,8 @@ end
 --- to the `open77_notifications` package, which draws its own box in its own
 --- corner in its own style. So a server running this resource showed two kinds of
 --- notification side by side: ours, from anything raised on the client, and the
---- platform's, from anything raised here, and neither the theme nor the minimal
---- style reached the second. It now travels on the runtime's own channel to
+--- platform's, from anything raised here, and the theme never
+--- reached the second. It now travels on the runtime's own channel to
 --- `core/client/notify.lua`, which raises it through `OPX.Toast.Show` exactly as
 --- a client-side toast is raised.
 ---

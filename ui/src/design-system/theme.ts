@@ -78,10 +78,10 @@ const KNOBS: Record<string, Knob> = {
 /**
  * The looks this page can draw, as `modules/theme/shared/palette.lua` lists them.
  * A style is not CSS either: it is one of these words, written onto the root as
- * `data-op-style`, and `minimal.css` selects on it. A word not in here is
- * refused, so the attribute can only ever hold a value this file named.
+ * `data-op-style`, and a style's own stylesheet selects on it. A word not in
+ * here is refused, so the attribute can only ever hold a value this file named.
  */
-const STYLES: ReadonlySet<string> = new Set(['cyberpunk', 'minimal'])
+const STYLES: ReadonlySet<string> = new Set(['cyberpunk'])
 
 /** The attribute the style stylesheets select on. */
 const STYLE_ATTRIBUTE = 'data-op-style'

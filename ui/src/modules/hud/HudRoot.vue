@@ -282,18 +282,4 @@ onMounted(() => {
 .top-center {
   top: calc(var(--op-inset-y) + var(--block-offset, 0px) - var(--hud-bleed));
 }
-
-/* =============================================================================
-   THE MINIMAL STYLE
-   =============================================================================
-   The white look puts every read-out on a small white sheet of its own (each
-   block's own rules draw it), so black type needs nothing behind its letters:
-   the HUD's two-pass street shadow is dropped entirely, and the block arrives
-   on the house ease-out, not the stutter. */
-:root[data-op-style="minimal"] .hud {
-  --hud-shadow: none;
-  text-shadow: none;
-  color: var(--op-text);
-  transition-timing-function: var(--op-ease);
-}
 </style>

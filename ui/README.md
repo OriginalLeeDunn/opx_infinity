@@ -154,57 +154,25 @@ written into three separate gradients.
 - **What the operator's knobs do not reach:** border weights (thirty-nine
   component-local declarations at six values, with no token behind them), type scale
   (fixed pixel layouts are configured elsewhere), and the neutral ramp, which is
-  neutral on purpose. The minimal STYLE does move all three -- it is a stylesheet, not
-  a knob -- but no number on the wire does.
+  neutral on purpose. A STYLE may move all three -- it is a stylesheet, not a knob --
+  but no number on the wire does.
 
-### The two styles
+### Styles
 
-`STYLE` in `config/theme.lua` picks the look, `'cyberpunk'` or `'minimal'`, and the block
-of the same name holds that look's knobs, so switching is one word and each look keeps
-its own colours. The style is the one word on the wire: `palette.lua` and `theme.ts` each
-hold the same two-word allowlist, and the page writes it as `data-op-style` on `<html>`.
+`STYLE` in `config/theme.lua` picks the look, and the block of the same name holds that
+look's knobs, so switching is one word and each look keeps its own colours. The style is
+the one word on the wire: `palette.lua` and `theme.ts` each hold the same allowlist, and
+the page writes it as `data-op-style` on `<html>`. A word not on the list is refused on
+both sides.
 
-**The minimal style is a different object, not a quieter cyberpunk.** The cyberpunk look
-is an instrument -- outlined, chamfered, tilted, in capitals and mono, on dark plates.
-The minimal look is a printed white sheet, the house site's look: black Unbounded type,
-light by default and bold only for the word that matters, rows and cells cut by 1px
-hairlines, square corners, and a pastel rainbow on what is active and nowhere else.
+One look ships today, `'cyberpunk'`, which is what the other sheets draw with no
+attribute at all. Adding a second is:
 
-`design-system/minimal.css` is its vocabulary, every rule scoped to
-`:root[data-op-style="minimal"]` -- with the attribute absent or `cyberpunk`, the page is
-exactly what the other sheets draw. Geometry there outranks every module; paint is
-wrapped in `:where()` so states and module rules still beat it.
-
-- **The face is Unbounded, as `'OPX Minimal'`** (`fonts.css`): one variable file
-  declared over 200..700, so a surface asking for 900 is drawn at 700 and no surface
-  restates a weight. All three font tokens point at it, mono included; figures are
-  tabular page-wide. The face is wide, so the type scale is smaller than the house one.
-- **No capitals and no tracking, anywhere.** An `!important` rule in `minimal.css`: thirty-three module rules ask for uppercase by
-  name, and "never, on this look" is a claim about all of them at once.
-- **No radius anywhere.** Every radius on the page is forced to zero (the second
-  `!important` rule).
-- **The ground is white.** `palette.lua` grounds the minimal style on white whatever
-  its accent (`LIGHT_GROUNDS`), and `minimal.css` adds the opaque sheet tokens:
-  `--op-sheet`, `--op-sheet-hover`, `--op-sheet-sunk`, `--op-sheet-shadow`. A panel, a
-  window, a toast and a HUD cluster are each a white sheet with a soft shadow, because
-  black type needs a ground over the game.
-- **The edge is a token**: `--op-edge` (the hairline), `--op-edge-hover`, `--op-edge-on`
-  (black, a chosen or focused thing). A surface's minimal block speaks in these, not in
-  its own literal.
-- **One accent, the rainbow, for active things only**: `--op-rainbow` (a static
-  diagonal), `--op-rainbow-band` (a strip `op-rainbow-slide` moves along), and
-  `op-liquid-swirl` for a small fill. A selected row, a ticked box, a filled bar, the
-  line under a title. Nothing on an idle HUD animates forever, and there is no red: an
-  alarm is black and heavier.
-- **A new surface needs nothing for the minimal style** if it is built from the presets
-  and the tokens. A literal chamfer (`clip-path: polygon(...)`) stays a chamfer in both.
-- **What is true of one surface lives in that surface.** Each module's `THE MINIMAL
-  STYLE` block sits at the end of its own `<style scoped>`, under
-  `:root[data-op-style="minimal"]`. Scoping adds the component attribute, so those rules
-  outrank `minimal.css` whatever the bundle order.
-- **The fallback ladder in `minimal.css` is held equal** to what the shipped `minimal`
-  block derives, by `tests/run.lua`. Change the block's `ACCENT` and the suite names the
-  rungs to update.
+- the word in `STYLES` in `modules/theme/shared/palette.lua` and in `theme.ts`;
+- a block of the same name in `config/theme.lua` for its colour knobs;
+- a stylesheet whose every rule is scoped to `:root[data-op-style="<word>"]`, imported
+  by `boot/createSurface.ts` after `surface.css`, plus, where one surface needs it, a
+  block at the end of that surface's `<style scoped>` under the same selector.
 
 ### The join screen is outside all of this
 

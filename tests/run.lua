@@ -6482,71 +6482,26 @@ do
 		check('an absent block is still no theme at all', Palette.IsEmpty(Palette.Resolve(nil)))
 
 		-- ── the style ────────────────────────────────────────────────────────
-		-- One word picks the look AND the block of knobs read for it, so the
-		-- shipped red never follows an operator onto the minimal surface.
+		-- One word picks the look AND the block of knobs read for it, so a
+		-- second look's colours never leak into the first.
 		check('the shipped config names the cyberpunk style', shipped.style == 'cyberpunk',
 			tostring(shipped.style))
-
-		local block = OPX.Config.MODULES.theme
-		local asMinimal = {}
-		for key, value in pairs(block) do asMinimal[key] = value end
-		asMinimal.STYLE = 'minimal'
-		local minimal, minimalNotes = Palette.Resolve(asMinimal)
-		check('switching the shipped config to minimal is one word and no complaints',
-			minimal.style == 'minimal' and #minimalNotes == 0,
-			table.concat(minimalNotes, ' | '))
-		check('and reads the minimal block, not the red one',
-			type(minimal.accent) == 'table' and minimal.accent[1] == 82
-				and minimal.accent[2] == 82 and minimal.accent[3] == 82
-				and minimal.interlaceAlpha == 0 and minimal.tiltDeg == 0,
-			minimal.accent and table.concat(minimal.accent, ',') or 'no accent')
-
-		-- `minimal.css` carries the ladder as fallbacks for a server that names
-		-- the style and nothing else. They are only fallbacks if they are the
-		-- ladder the shipped block derives; a drift would be a surface that
-		-- changes colour the moment its knobs arrive.
-		local sheetHandle = io.open('ui/src/design-system/minimal.css', 'r')
-		local sheet = sheetHandle and sheetHandle:read('a') or ''
-		if sheetHandle then sheetHandle:close() end
-		local SHEET_RUNGS = {
-			accent = 'red', idle = 'red-idle', deep = 'red-deep', hi = 'red-hi',
-			text = 'red-text', alarm = 'alarm', plate = 'plate', plateLit = 'plate-lit',
-		}
-		local drift = {}
-		for key, name in pairs(SHEET_RUNGS) do
-			local r, g, b = sheet:match('%-%-op%-' .. name:gsub('%-', '%%-')
-				.. '%-rgb:%s*(%d+),%s*(%d+),%s*(%d+);')
-			local want = minimal[key]
-			if want == nil or tonumber(r) ~= want[1] or tonumber(g) ~= want[2]
-				or tonumber(b) ~= want[3] then
-				drift[#drift + 1] = ('%s sheet=%s,%s,%s'):format(key, tostring(r),
-					tostring(g), tostring(b))
-			end
-		end
-		table.sort(drift)
-		check('the fallbacks in minimal.css are the ladder the shipped block derives',
-			#drift == 0, table.concat(drift, ' '))
-
-		-- The white look draws black type on its ground, so its ground is white
-		-- whatever accent the operator picks: a dark plate derived from a dark
-		-- accent would be black on black.
-		local inked = Palette.Resolve({ STYLE = 'minimal', minimal = { ACCENT = '#203040' } })
-		check('the minimal style is grounded on white, whatever its accent',
-			inked.plate and inked.plate[1] == 255 and inked.plate[2] == 255 and inked.plate[3] == 255
-				and inked.plateLit and inked.plateLit[1] == 246,
-			inked.plate and table.concat(inked.plate, ',') or 'no plate')
-		local red = Palette.Resolve({ STYLE = 'cyberpunk', cyberpunk = { ACCENT = '#ff3b47' } })
-		check('and the cyberpunk one keeps the dark ground its accent derives',
-			red.plate and red.plate[1] < 64, red.plate and table.concat(red.plate, ',') or 'no plate')
+		check('and reads the cyberpunk block',
+			type(shipped.accent) == 'table' and shipped.accent[1] == 255
+				and shipped.accent[2] == 59 and shipped.accent[3] == 71,
+			shipped.accent and table.concat(shipped.accent, ',') or 'no accent')
 
 		local unknown, unknownNotes = Palette.Resolve({ STYLE = 'vaporwave', TILT = 3 })
 		check('a style that is not one is refused and named, and the knobs still apply',
 			unknown.style == nil and unknown.tiltDeg == 3 and #unknownNotes == 1,
 			table.concat(unknownNotes, ' | '))
+		local retired = Palette.Resolve({ STYLE = 'minimal', TILT = 3 })
+		check('the retired minimal style is refused like any unknown word',
+			retired.style == nil and retired.tiltDeg == 3)
 
-		local flat = Palette.Resolve({ STYLE = 'minimal', TILT = 4 })
+		local flat = Palette.Resolve({ STYLE = 'cyberpunk', TILT = 4 })
 		check('a style with no block of its own reads the knobs at the top level',
-			flat.style == 'minimal' and flat.tiltDeg == 4, tostring(flat.tiltDeg))
+			flat.style == 'cyberpunk' and flat.tiltDeg == 4, tostring(flat.tiltDeg))
 
 		-- ── the ladder is the shipped one, restated ──────────────────────────
 		-- The factors in `palette.lua` were measured off these seven literals.
@@ -6642,11 +6597,12 @@ do
 			tiltDeg = 99,
 			cutSm = 'six',
 			somethingElse = 1,
-			style = 'minimal;}html{display:none',
+			style = 'cyberpunk;}html{display:none',
 		})
 		check('a style this build does not know is dropped', fromWire.style == nil)
 		check('and a known one is kept, as the same word',
-			Palette.Sanitise({ style = 'minimal' }).style == 'minimal')
+			Palette.Sanitise({ style = 'cyberpunk' }).style == 'cyberpunk'
+				and Palette.Sanitise({ style = 'minimal' }).style == nil)
 		check('a channel out of range is clamped to a byte',
 			fromWire.accent[1] == 255 and fromWire.accent[2] == 0 and fromWire.accent[3] == 71,
 			table.concat(fromWire.accent, ','))
@@ -19522,7 +19478,7 @@ do
 	-- The stylesheets and every view, read once. Listed rather than globbed,
 	-- because a directory walk in the harness would quietly cover nothing on a
 	-- host whose `io.popen` is off and pass by finding no files at all.
-	local sheets = { 'tokens.css', 'shapes.css', 'surface.css', 'fonts.css', 'minimal.css' }
+	local sheets = { 'tokens.css', 'shapes.css', 'surface.css', 'fonts.css' }
 	local system = ''
 	for _, sheet in ipairs(sheets) do
 		system = system .. read('ui/src/design-system/' .. sheet)
@@ -39662,13 +39618,7 @@ do
 			and slurp('ui/src/design-system/shapes.css'):find('@import', 1, true) == nil)
 	check('the build refuses a shape token shapes.css does not draw',
 		slurp('vite.config.ts'):find("new Set(['tr-clip', 'bl-clip', 'border'])", 1, true) ~= nil)
-	-- 640 kB, raised from 520 when the page grew a second look: the minimal style is
-	-- ~75 kB of rules across every surface and one 50 kB variable face (Unbounded),
-	-- inlined.
-	-- The guard still does its job -- the library's core alone was 130 kB, and the
-	-- checks above find its tokens by name -- it just no longer pretends the page
-	-- carries one look.
-	check('the page stays under 640 kB, two looks and no library', #built > 0 and #built < 640000,
+	check('the page stays well under its 591 kB with the library', #built > 0 and #built < 520000,
 		tostring(#built))
 
 	local types = slurp('ui/src/bridge/types.ts')

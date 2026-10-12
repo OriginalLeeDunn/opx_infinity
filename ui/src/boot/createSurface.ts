@@ -12,7 +12,6 @@ import '@/design-system/fonts.css'
 import '@/design-system/tokens.css'
 import '@/design-system/shapes.css'
 import '@/design-system/surface.css'
-import '@/design-system/minimal.css'
 
 /**
  * The one `createApp`, and everything that has to happen around it in order.

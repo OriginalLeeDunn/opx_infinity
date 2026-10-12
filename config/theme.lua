@@ -13,12 +13,9 @@
 OPX.Config.MODULES.theme = {
 	enabled = true,
 
-	-- The look, and the only two there are:
+	-- The look. One ships today:
 	--   'cyberpunk'  red, outlined, chamfered, tilted toward the screen edge,
 	--                with a scanline over every enclosure. The house look.
-	--   'minimal'    the same surfaces, drawn white: a white sheet with black type
-	--                in Unbounded, hairline rules between rows, square corners,
-	--                and a pastel rainbow on what is active.
 	-- Anything else is refused with a line in the journal and the page keeps
 	-- the cyberpunk look its stylesheet ships with.
 	STYLE = 'cyberpunk',
@@ -56,29 +53,5 @@ OPX.Config.MODULES.theme = {
 		-- and more industrial, over 1 is a heavier cut; the three move together.
 		-- Never 0: augmented-ui needs a cut before it draws a border at all.
 		CUT = 1,
-	},
-
-	-- ── the minimal look ────────────────────────────────────────────────────
-	-- The colour knobs only. Everything else about this look -- the type, the
-	-- square shapes, the bare containers -- is `ui/src/design-system/minimal.css`.
-	minimal = {
-		-- A mid grey, for the strokes and figures drawn on the white sheet: an icon,
-		-- a bar's track, a figure that is not the headline. Black is the type's
-		-- and the rainbow is the active state's; the accent is only what is left.
-		ACCENT = '#525252',
-
-		-- Near-black. The alarm on a white sheet escalates in contrast, not in
-		-- hue: the surfaces give it a heavier stroke and a black fill.
-		ALARM = '#0a0a0a',
-
-		-- How opaque the white sheet is over the game. High, because black type
-		-- on a sheet the street shows through is type on the street.
-		PLATE_OPACITY = 0.88,
-
-		-- No scanline and no lean: both are the cyberpunk look's, not this one's.
-		INTERLACE = 0,
-		TILT = 0,
-
-		-- No CUT either: every corner on this look is square.
 	},
 }

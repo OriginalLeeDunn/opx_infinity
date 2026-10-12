@@ -45,9 +45,11 @@ local Clamp = OPX.Math.Clamp
 --
 --   cyberpunk   the house look: red, outlined, chamfered, tilted, interlaced.
 --               What `tokens.css` draws on its own.
---   minimal     the same surfaces, quiet: rounded hairlines, flat planes, no
---               scanline and no bloom. `design-system/minimal.css` is all of it.
-local STYLES = { cyberpunk = true, minimal = true }
+--
+-- One look today. A second is a word here and in `theme.ts`, a block of the
+-- same name in `config/theme.lua`, and a stylesheet scoped to
+-- `:root[data-op-style="<word>"]` imported by `boot/createSurface.ts`.
+local STYLES = { cyberpunk = true }
 Palette.STYLES = STYLES
 
 -- What a colour key is allowed to be once it has crossed the wire. Triplets are
@@ -119,16 +121,6 @@ local RUNGS = {
 local GROUNDS = {
 	{ key = 'plate',    sat = 0.556, light = 0.0706 },
 	{ key = 'plateLit', sat = 0.558, light = 0.1863 },
-}
-
--- THE WHITE LOOK'S GROUNDS. The minimal style is a white sheet with black type
--- on it, so its ground is not derived from the accent at all: a dark plate
--- under black letters would be the one thing on the surface nobody could read.
--- `plate` is the sheet and `plateLit` the hovered row (`#f6f6f7`, a hair of
--- blue so it reads as light and not as grey). Applied after the ladder, only
--- for the style that draws on white.
-local LIGHT_GROUNDS = {
-	minimal = { plate = { 255, 255, 255 }, plateLit = { 246, 246, 247 } },
 }
 
 -- Where the ladder above an accent stops having room to climb. Outside this band
@@ -308,7 +300,7 @@ end
 --- Turns the operator's block into the payload the page is sent.
 --
 -- THE STYLE PICKS WHICH KNOBS ARE READ. `STYLE` names a look, and a block keyed
--- by that same name (`minimal = { ACCENT = ... }`) holds that look's knobs, so
+-- by that same name (`cyberpunk = { ACCENT = ... }`) holds that look's knobs, so
 -- switching look is one word and each look keeps its own tuning: a red accent
 -- written for the cyberpunk surface does not follow the operator onto the
 -- minimal one. A style with no block of its own reads the knobs at the top
@@ -330,7 +322,7 @@ function Palette.Resolve(settings)
 	local style = settings.STYLE
 	if style ~= nil then
 		if type(style) ~= 'string' or not STYLES[style] then
-			notes[#notes + 1] = ('STYLE %q is not one of cyberpunk, minimal and was refused')
+			notes[#notes + 1] = ('STYLE %q is not a known style and was refused')
 				:format(tostring(style))
 		else
 			raw.style = style
@@ -346,11 +338,6 @@ function Palette.Resolve(settings)
 				:format(tostring(accent))
 		else
 			for key, triple in pairs(Palette.Ladder(rgb)) do raw[key] = triple end
-			local grounds = raw.style and LIGHT_GROUNDS[raw.style]
-			if grounds then
-				raw.plate = { grounds.plate[1], grounds.plate[2], grounds.plate[3] }
-				raw.plateLit = { grounds.plateLit[1], grounds.plateLit[2], grounds.plateLit[3] }
-			end
 			local _, _, light = toHsl(rgb)
 			if light < COMFORTABLE_LIGHT[1] or light > COMFORTABLE_LIGHT[2] then
 				notes[#notes + 1] = ('ACCENT %s has a lightness of %.2f; the rungs above '
