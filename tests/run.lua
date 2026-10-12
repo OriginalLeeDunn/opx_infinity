@@ -41027,7 +41027,12 @@ local function hostileReset(control)
 		local list = control.log[kind]
 		for index = #list, 1, -1 do list[index] = nil end
 	end
-	for _, list in ipairs({ control.clientEvents, control.notices, control.database.calls }) do
+	-- The carried-state writes too: every door the battery fires adds to them,
+	-- and the day the list crossed a power of two inside one door's growth
+	-- window (16,384 entries, when `bar` added its doors) the array's doubling
+	-- -- 256 KB of harness bookkeeping -- was charged to that door.
+	for _, list in ipairs({ control.clientEvents, control.notices, control.database.calls,
+		control.carried.writes }) do
 		for index = #list, 1, -1 do list[index] = nil end
 	end
 end
@@ -45116,6 +45121,530 @@ do
 			table.concat(problems, ' / '))
 		check('and the category still draws, with its sprite',
 			categories.garages ~= nil and categories.garages.icon == nil and categories.garages.color == nil)
+	end
+end
+
+-- ── bar ──────────────────────────────────────────────────────────────────────
+-- Bartenders, bars and food stalls (`modules/bar`). The model is pure and
+-- checked on its own numbers; the server is booted with the Afterlife and the
+-- Jig-Jig stall surveyed after `config/bar.lua` loads, real characters
+-- (`standCharacter`) so the money really moves, the real progress module so the
+-- mix bar is the server's, an inventory fake holding stashes and bags, a stub
+-- two-player coordinator and screen effect, and `accounts` / `invoices` stubs
+-- switched in and out to walk both billing paths.
+local function barSurvey(env, file)
+	if file ~= 'config/bar.lua' then return end
+	for _, venue in ipairs(env.OPX.Config.MODULES.bar.VENUES) do
+		if venue.ID == 'afterlife' then
+			venue.COUNTER = { X = 700.0, Y = 0.0, Z = 0.0 }
+			venue.STASH.X, venue.STASH.Y, venue.STASH.Z = 702.0, 0.0, 0.0
+			venue.SUPPLY.X, venue.SUPPLY.Y, venue.SUPPLY.Z = 704.0, 0.0, 0.0
+		elseif venue.ID == 'jigjig_noodles' then
+			venue.COUNTER = { X = 900.0, Y = 0.0, Z = 0.0 }
+			venue.STASH.X, venue.STASH.Y, venue.STASH.Z = 901.0, 0.0, 0.0
+		end
+	end
+end
+
+section('bar: the model, the validator and the arithmetic')
+do
+	local env, _, why = boot('server', nil, nil, barSurvey)
+	check('the server boots with the bar module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local bar = OPX.Modules.Get('bar')
+		local Model = bar.Model
+		check('the module is running', OPX.Modules.IsRunning('bar'), OPX.Modules.Record('bar').Reason)
+
+		local shipped = Model.Read(OPX.Table.DeepCopy(env.OPX.Config.MODULES.bar))
+		check('the config has no problem', #shipped.problems == 0, table.concat(shipped.problems, '; '))
+		local pristine = OPX.Table.DeepCopy(env.OPX.Config.MODULES.bar)
+		for _, venue in ipairs(pristine.VENUES) do
+			venue.COUNTER = { X = 0.0, Y = 0.0, Z = 0.0 }
+		end
+		local S0 = Model.Read(pristine)
+		check('the five lore venues ship disabled at 0,0,0 and are named', #S0.venueList == 0
+			and #S0.placeholders == 5, table.concat(S0.placeholders, ', '))
+		check('ten recipes and eighteen items are read', #S0.recipeList == 10 and #S0.itemList == 18,
+			#S0.recipeList .. '/' .. #S0.itemList)
+
+		local S = bar.S
+		local afterlife = S.venues.afterlife
+		check('a surveyed venue opens with its counter, stash and supplier', afterlife ~= nil
+			and afterlife.stash.name == 'bar_afterlife' and afterlife.supply ~= nil and #afterlife.supply.catalog == 5)
+		check('its menu is five drinks, each priced', afterlife ~= nil and #afterlife.menu == 5
+			and afterlife.prices.johnny_silverhand == 250 and #afterlife.sells == 5)
+		check('its treasury defaults to its first job', afterlife ~= nil and afterlife.account.kind == 'job'
+			and afterlife.account.key == 'bartender')
+		local stall = S.venues.jigjig_noodles
+		check('a venue whose supplier is at 0,0,0 opens without it, and the supplier is named', stall ~= nil
+			and stall.supply == nil and table.concat(S.placeholders, ','):find('jigjig_noodles.SUPPLY', 1, true) ~= nil)
+		local toten = Model.Read(OPX.Table.DeepCopy(pristine)).placeholders
+		check('Totentanz names the maelstrom gang treasury', (function()
+			local raw = OPX.Table.DeepCopy(pristine)
+			for _, venue in ipairs(raw.VENUES) do
+				if venue.ID == 'totentanz' then venue.COUNTER = { X = 1.0, Y = 1.0, Z = 1.0 }
+					venue.STASH.X = 2.0 end
+			end
+			local read = Model.Read(raw)
+			local v = read.venues.totentanz
+			return #toten == 5 and v ~= nil and v.account.kind == 'gang' and v.account.key == 'maelstrom'
+				and v.gangs.maelstrom == 0
+		end)())
+
+		-- The validator refuses what it cannot honour, and names it.
+		local broken = OPX.Table.DeepCopy(env.OPX.Config.MODULES.bar)
+		broken.ITEMS.bad_kind = { KIND = 'potion', LABEL = 'X' }
+		broken.RECIPES.ghost = { ITEM = 'not_an_item', INPUTS = { { ITEM = 'bar_vodka' } } }
+		broken.RECIPES.empty = { ITEM = 'rogue', INPUTS = {} }
+		broken.VENUES[#broken.VENUES + 1] = { ID = 'open_bar', LABEL = 'Anybody', COUNTER = { X = 1, Y = 1, Z = 1 },
+			STASH = { NAME = 'bar_open', X = 1, Y = 1, Z = 1 }, MENU = { 'rogue' }, PRICES = { rogue = 1 } }
+		broken.VENUES[#broken.VENUES + 1] = { ID = 'dupe', JOBS = { bartender = 0 }, COUNTER = { X = 1, Y = 1, Z = 1 },
+			STASH = { NAME = 'bar_afterlife', X = 1, Y = 1, Z = 1 }, MENU = { 'rogue', 'ghost' },
+			PRICES = { rogue = 1 } }
+		broken.BILLING = 'barter'
+		local B = Model.Read(broken)
+		local text = table.concat(B.problems, '\n')
+		check('an unknown KIND is refused', B.items.bad_kind == nil and text:find('ITEMS.bad_kind', 1, true) ~= nil)
+		check('a recipe making an unknown item, or out of nothing, is refused', B.recipes.ghost == nil
+			and B.recipes.empty == nil and text:find('RECIPES.ghost', 1, true) ~= nil
+			and text:find('RECIPES.empty', 1, true) ~= nil)
+		check('a venue nobody is staff of is refused', B.venues.open_bar == nil
+			and text:find('VENUES.open_bar: names no JOBS', 1, true) ~= nil)
+		check('a stash name used twice is refused', B.venues.dupe == nil and text:find('bar_afterlife is already', 1, true) ~= nil)
+		check('a bad BILLING reads as auto, and says so', B.billing == 'auto' and text:find('BILLING', 1, true) ~= nil)
+
+		-- The arithmetic.
+		local staffShare, house = Model.Split(250, 25)
+		check('a sale splits staff 25% / house the rest, summing to the total', staffShare == 62 and house == 188)
+		check('a split of nothing is nothing', select(1, Model.Split(0, 25)) == 0)
+		local recipe = S.recipes.neon_mox
+		local short = Model.Missing(recipe, { bar_vodka = 1, bar_mixer = 1 })
+		check('a recipe short of one ingredient names it, with the need and the stock', #short == 1
+			and short[1].item == 'bar_mixer' and short[1].need == 2 and short[1].have == 1)
+		check('and with the stock there it lacks nothing', #Model.Missing(recipe, { bar_vodka = 3, bar_mixer = 2 }) == 0)
+		check('a drunk level falls by the minute and never below zero', math.abs(Model.Sober(3, 60000 * 4, 0.25) - 2) < 1e-9
+			and Model.Sober(1, 60000 * 60, 0.25) == 0)
+		local strength, seconds = Model.Effect(S.drunk, 3)
+		check('three units play the drunk screen at half strength for 135 s', strength == 0.5 and seconds == 135,
+			strength .. '/' .. seconds)
+		strength, seconds = Model.Effect(S.drunk, 40)
+		check('and a bender is capped at full strength and MAX_SECONDS', strength == 1 and seconds == 300)
+		local drink = Model.Definition(S.items.johnny_silverhand)
+		local food = Model.Definition(S.items.noodles)
+		local stock = Model.Definition(S.items.bar_vodka)
+		check('a drink is a usable item that moves thirst through the inventory\'s use', drink.use ~= nil
+			and drink.use.consume == 1 and drink.use.status.thirst == 20 and drink.use.animation.name == 'drink')
+		check('food moves hunger and plays the hand-to-mouth clip', food.use.status.hunger == 45
+			and food.use.status.thirst == 10 and food.use.animation.variant == 1)
+		check('an ingredient is stock, not a use', stock.use == nil and stock.category == 'ingredient')
+		local inventory = OPX.Api.Get('inventory')
+		check('every item is registered in the catalogue at boot', inventory.GetItem('johnny_silverhand') ~= nil
+			and inventory.GetItem('broseph_ale') ~= nil and inventory.GetItem('noodles') ~= nil
+			and inventory.GetItem('scop_protein') ~= nil)
+	end
+end
+
+section('bar: stock, a mix, a serve and a bill on the server')
+do
+	local asked = { screen = {}, interactions = {} }
+	local function prelude(env)
+		env.Open77.effects = env.Open77.effects or {}
+		env.Open77.effects.screen = function(player, name, options)
+			asked.screen[#asked.screen + 1] = { player = player, name = name, options = options }
+			return true
+		end
+		local nextInteraction = 0
+		env.Open77.playerInteractions = {
+			request = function(actor, targetId, kind, options)
+				nextInteraction = nextInteraction + 1
+				local state = { id = ('bar%029x'):format(nextInteraction), kind = kind, actor = tostring(actor),
+					target = tostring(targetId), options = options }
+				asked.interactions[#asked.interactions + 1] = state
+				return state
+			end,
+			cancel = function() return true end,
+		}
+	end
+	local env, control, why = boot('server', nil, prelude, barSurvey)
+	check('the server boots with two venues surveyed', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local bar = OPX.Modules.Get('bar')
+		local progress = OPX.Modules.Get('progress')
+		local E = bar.Event
+
+		-- The inventory fake: stashes and bags as item -> count.
+		local stashes, bags, full = {}, {}, {}
+		local function bagOf(target)
+			bags[target] = bags[target] or {}
+			return bags[target]
+		end
+		local function stashOf(name)
+			stashes[name] = stashes[name] or {}
+			return stashes[name]
+		end
+		local fake = {
+			AddItem = function(target, name, count)
+				if full[target] then return { ok = false, error = 'too_heavy' } end
+				local bag = bagOf(target)
+				bag[name] = (bag[name] or 0) + (count or 1)
+				return { ok = true }
+			end,
+			RemoveItem = function(target, name, count)
+				local bag = bagOf(target)
+				if (bag[name] or 0) < (count or 1) then return { ok = false, error = 'not_enough' } end
+				bag[name] = bag[name] - (count or 1)
+				return { ok = true }
+			end,
+			GetItemCount = function(target, name) return { ok = true, value = bagOf(target)[name] or 0 } end,
+			CountInStash = function(name, item) return { ok = true, value = stashOf(name)[item] or 0 } end,
+			AddToStash = function(name, item, count)
+				if full[name] then return { ok = false, error = 'too_heavy' } end
+				local stash = stashOf(name)
+				stash[item] = (stash[item] or 0) + (count or 1)
+				return { ok = true }
+			end,
+			RemoveFromStash = function(name, item, count)
+				local stash = stashOf(name)
+				if (stash[item] or 0) < (count or 1) then return { ok = false, error = 'not_enough' } end
+				stash[item] = stash[item] - (count or 1)
+				return { ok = true }
+			end,
+			OpenStash = function(player, name, options)
+				asked.opened = { player = player, name = name, options = options }
+				return { ok = true, value = 1 }
+			end,
+			RegisterItem = function() return { ok = true } end,
+		}
+		local accountsStub, invoicesStub = nil, nil
+		local ledger = { balance = 0, moves = {} }
+		local issued = {}
+		local function useAccounts(on)
+			accountsStub = on and {
+				Deposit = function(kind, key, amount, reason, opId)
+					ledger.balance = ledger.balance + amount
+					ledger.moves[#ledger.moves + 1] = { kind = kind, key = key, amount = amount, reason = reason, opId = opId }
+					return { ok = true, value = { balance = ledger.balance } }
+				end,
+				Withdraw = function(kind, key, amount, reason, opId)
+					if ledger.balance < amount then return { ok = false, error = 'insufficient_funds' } end
+					ledger.balance = ledger.balance - amount
+					ledger.moves[#ledger.moves + 1] = { kind = kind, key = key, amount = -amount, reason = reason, opId = opId }
+					return { ok = true, value = { balance = ledger.balance } }
+				end,
+			} or nil
+		end
+		local function useInvoices(on, refuse)
+			invoicesStub = on and {
+				Issue = function(spec)
+					if refuse then return { ok = false, error = 'refused' } end
+					issued[#issued + 1] = spec
+					return { ok = true, value = { id = #issued } }
+				end,
+			} or nil
+		end
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if name == 'inventory' then return fake end
+			if name == 'accounts' then return accountsStub end
+			if name == 'invoices' then return invoicesStub end
+			return realGet(name, minimum)
+		end
+
+		local BT, CU, BB = 71, 72, 73
+		local tender = standCharacter(env, control, BT, 'BARTEND1', { BANK = 1000, EDDIES = 0 })
+		tender.PlayerData.job = { name = 'bartender', onDuty = true, grade = { name = 'Bartender', level = 1 } }
+		tender.PlayerData.jobs = { bartender = 1 }
+		local customer = standCharacter(env, control, CU, 'BARCUST1', { BANK = 1000, EDDIES = 0 })
+		customer.PlayerData.job = { name = 'unemployed', onDuty = true, grade = { level = 0 } }
+		customer.PlayerData.jobs = {}
+		local barback = standCharacter(env, control, BB, 'BARBACK1', { BANK = 1000, EDDIES = 0 })
+		barback.PlayerData.job = { name = 'bartender', onDuty = true, grade = { name = 'Barback', level = 0 } }
+		barback.PlayerData.jobs = { bartender = 0 }
+
+		local function last(name, player)
+			for index = #control.clientEvents, 1, -1 do
+				local event = control.clientEvents[index]
+				if event.name == name and event.source == player then return event[1] end
+			end
+			return nil
+		end
+		local function lastCode(player)
+			local answer = last(E.ANSWER, player)
+			return answer and answer.code
+		end
+		local function wait() control.Advance(1000) control.Pump(4) end
+		local function bar_(player, ms, ending)
+			for _ = 1, math.floor(ms / 500) do
+				control.Advance(400)
+				control.Pump(1)
+			end
+			local started = last(progress.Event.START, player)
+			env.source = player
+			control.netEvents[progress.Event.REPORT](started.id, ending)
+			env.source = nil
+			control.Pump(4)
+		end
+		local STASH = 'bar_afterlife'
+
+		-- ── the gate and the stash ────────────────────────────────────────
+		control.Stand(BT, 702.5, 0.0, 0.0)
+		tender.PlayerData.job.onDuty = false
+		local ok, code = bar.OpenStash(BT, 'afterlife')
+		check('an off-duty bartender is refused the back room', not ok and code == 'off_duty', code)
+		tender.PlayerData.job.onDuty = true
+		wait()
+		ok, code = bar.OpenStash(CU, 'afterlife')
+		check('a customer is refused the back room', not ok and code == 'job_required', code)
+		wait()
+		ok = bar.OpenStash(BT, 'afterlife')
+		check('staff open it, at its position and size', ok and asked.opened.name == STASH
+			and asked.opened.options.position.x == 702.0 and asked.opened.options.slots == 60)
+		wait()
+		ok, code = bar.OpenStash(BT, 'atlantis')
+		check('a venue that does not exist is no_venue', not ok and code == 'no_venue', code)
+
+		-- ── the supplier ──────────────────────────────────────────────────
+		control.Stand(BT, 704.5, 0.0, 0.0)
+		control.Stand(BB, 704.5, 1.0, 0.0)
+		wait()
+		ok, code = bar.Buy(BB, 'afterlife', 2)
+		check('a barback (grade 0) may not buy stock (SUPPLY_GRADE 1)', not ok and code == 'grade_too_low', code)
+		ok, code = bar.Buy(BT, 'afterlife', 2)
+		check('with no accounts module, stock is paid from the buyer\'s bank and lands in the stash',
+			ok and code == 'bought' and tender.PlayerData.money.BANK == 920 and stashOf(STASH).bar_vodka == 1, code)
+		useAccounts(true)
+		wait()
+		ok, code = bar.Buy(BT, 'afterlife', 4)
+		check('with accounts, an empty treasury refuses: venue_broke', not ok and code == 'venue_broke'
+			and tender.PlayerData.money.BANK == 920, code)
+		ledger.balance = 500
+		wait()
+		ok, code = bar.Buy(BT, 'afterlife', 4)
+		check('and a funded one pays: two mixers in, 40 out of the bartender job account',
+			ok and stashOf(STASH).bar_mixer == 2 and ledger.balance == 460 and ledger.moves[#ledger.moves].key == 'bartender'
+				and tender.PlayerData.money.BANK == 920, code)
+		full[STASH] = true
+		wait()
+		ok, code = bar.Buy(BT, 'afterlife', 5)
+		check('a full stash refunds the treasury', not ok and code == 'stash_full' and ledger.balance == 460, code)
+		full[STASH] = nil
+		wait()
+		bar.SupplyView(BT, 'afterlife')
+		local view = last(E.VIEW, BT)
+		check('the catalogue shows the stock on hand and who pays', view and view.kind == 'supply'
+			and view.funds == 'account' and view.rows[2].stock == 1)
+		control.Stand(BT, 760.0, 0.0, 0.0)
+		wait()
+		ok, code = bar.Buy(BT, 'afterlife', 2)
+		check('buying from across the street is too_far', not ok and code == 'too_far', code)
+		useAccounts(false)
+
+		-- ── the counter ───────────────────────────────────────────────────
+		control.Stand(BT, 700.5, 0.0, 0.0)
+		wait()
+		ok, code = bar.Mix(BT, 'afterlife', 'johnny_silverhand')
+		check('a recipe whose stock is short is refused before the bar', not ok and code == 'short', code)
+		wait()
+		ok, code = bar.Mix(BT, 'afterlife', 'noodles')
+		check('a recipe not on this venue\'s menu is refused', not ok and code == 'no_recipe', code)
+		wait()
+		local rows
+		ok, rows = bar.Counter(BT, 'afterlife')
+		local rogueRow
+		for _, row in ipairs(ok and rows or {}) do if row.key == 'rogue' then rogueRow = row end end
+		check('the counter lists the menu with stock, the Rogue ready', rogueRow ~= nil and rogueRow.ready == true
+			and rogueRow.price == 220 and rogueRow.inputs[1].have == 1)
+		wait()
+		ok, code = bar.Mix(BT, 'afterlife', 'rogue')
+		local started = last(progress.Event.START, BT)
+		check('a mix runs under a cancelable server bar of the recipe\'s length, nothing taken yet',
+			ok and code == 'mixing' and started ~= nil and started.durationMs == 5000 and started.cancelable == true
+				and stashOf(STASH).bar_vodka == 1)
+		ok, code = bar.Mix(BT, 'afterlife', 'rogue')
+		check('a second mix while one runs is refused', not ok and (code == 'busy' or code == 'too_fast'), code)
+		bar_(BT, 1000, 'cancelled')
+		check('a cancelled mix uses nothing', lastCode(BT) == 'mix_cancelled' and stashOf(STASH).bar_vodka == 1
+			and (bagOf(BT).rogue or 0) == 0, lastCode(BT))
+		wait()
+		ok = bar.Mix(BT, 'afterlife', 'rogue')
+		bar_(BT, 5000, 'finished')
+		check('a finished mix takes the ingredients from the stash and puts the drink in the bag',
+			lastCode(BT) == 'mixed' and stashOf(STASH).bar_vodka == 0 and stashOf(STASH).bar_mixer == 1
+				and bagOf(BT).rogue == 1, lastCode(BT))
+		stashOf(STASH).bar_malt = 1
+		full[BT] = true
+		wait()
+		bar.Mix(BT, 'afterlife', 'broseph_ale')
+		bar_(BT, 3000, 'finished')
+		check('with full hands the drink goes on the stash shelf instead', lastCode(BT) == 'mixed_to_stash'
+			and stashOf(STASH).broseph_ale == 2 and stashOf(STASH).bar_malt == 0, lastCode(BT))
+		full[BT] = nil
+		stashOf(STASH).bar_tequila, stashOf(STASH).bar_malt = 1, 1
+		wait()
+		bar.Mix(BT, 'afterlife', 'johnny_silverhand')
+		control.Stand(BT, 720.0, 0.0, 0.0)
+		bar_(BT, 6000, 'finished')
+		check('a bartender who walked off the counter mid-bar makes nothing and uses nothing',
+			lastCode(BT) == 'too_far' and stashOf(STASH).bar_tequila == 1 and (bagOf(BT).johnny_silverhand or 0) == 0,
+			lastCode(BT))
+		control.Stand(BT, 700.5, 0.0, 0.0)
+		wait()
+		bar.Mix(BT, 'afterlife', 'johnny_silverhand')
+		stashOf(STASH).bar_malt = 0
+		bar_(BT, 6000, 'finished')
+		check('stock taken by somebody else mid-bar: short, and what went is put back',
+			lastCode(BT) == 'short' and stashOf(STASH).bar_tequila == 1 and (bagOf(BT).johnny_silverhand or 0) == 0,
+			lastCode(BT))
+
+		-- ── serving ───────────────────────────────────────────────────────
+		bagOf(BT).johnny_silverhand = 2
+		control.Stand(CU, 701.5, 0.0, 0.0)
+		wait()
+		ok, code = bar.ServeMenu(BT, BT)
+		check('a bartender cannot serve themself', not ok and code == 'no_customer', code)
+		wait()
+		ok, rows = bar.ServeMenu(BT, CU)
+		check('the serve menu lists what the bartender carries from this menu, at the venue price',
+			ok and #rows == 2 and rows[1].item == 'johnny_silverhand' and rows[1].price == 250)
+		wait()
+		ok, code = bar.ServeMenu(CU, BT)
+		check('a customer is not staff anywhere here', not ok and code == 'job_required', code)
+		wait()
+		ok, code = bar.Serve(BT, CU, 'noodles')
+		check('an item this venue does not sell is refused', not ok and code == 'not_on_menu', code)
+		wait()
+		ok, code = bar.Serve(BT, CU, 'johnny_silverhand')
+		local state = asked.interactions[#asked.interactions]
+		check('a serve asks the coordinator for a give, with consent, and tells the customer the price',
+			ok and code == 'serve_offered' and state.kind == 'give' and state.options.consent == true
+				and state.target == tostring(CU) and last(E.ANSWER, CU).code == 'serve_invited'
+				and last(E.ANSWER, CU).params.price == 250)
+		control.Fire('onPlayerInteractionCompleted', { id = 'not-ours', kind = 'give' })
+		control.Pump(3)
+		check('another resource\'s interaction is not ours to settle', bagOf(BT).johnny_silverhand == 2)
+		control.Fire('onPlayerInteractionCompleted', state)
+		control.Pump(5)
+		check('direct billing: the customer pays 250 from BANK and gets the drink',
+			customer.PlayerData.money.BANK == 750 and bagOf(CU).johnny_silverhand == 1
+				and bagOf(BT).johnny_silverhand == 1, customer.PlayerData.money.BANK)
+		check('and with no accounts module the whole price goes to the bartender', tender.PlayerData.money.BANK == 1170,
+			tender.PlayerData.money.BANK)
+		control.Fire('onPlayerInteractionCompleted', state)
+		control.Pump(5)
+		check('a second completion of the same id changes nothing', customer.PlayerData.money.BANK == 750
+			and bagOf(CU).johnny_silverhand == 1)
+
+		useAccounts(true)
+		ledger.balance, ledger.moves = 0, {}
+		wait()
+		bar.Serve(BT, CU, 'johnny_silverhand')
+		control.Fire('onPlayerInteractionCompleted', asked.interactions[#asked.interactions])
+		control.Pump(5)
+		check('with accounts, the house share goes to the venue treasury and the cut to the bartender',
+			customer.PlayerData.money.BANK == 500 and ledger.balance == 188 and tender.PlayerData.money.BANK == 1232
+				and ledger.moves[1].opId:find('^bar:') ~= nil, ledger.balance .. '/' .. tender.PlayerData.money.BANK)
+
+		bagOf(BT).rogue = 1
+		customer.PlayerData.money.BANK = 10
+		wait()
+		bar.Serve(BT, CU, 'rogue')
+		control.Fire('onPlayerInteractionCompleted', asked.interactions[#asked.interactions])
+		control.Pump(5)
+		check('a customer who cannot pay gets nothing and the drink stays behind the bar',
+			lastCode(BT) == 'customer_short' and bagOf(BT).rogue == 1 and (bagOf(CU).rogue or 0) == 0
+				and customer.PlayerData.money.BANK == 10, lastCode(BT))
+
+		customer.PlayerData.money.BANK = 1000
+		useInvoices(true)
+		wait()
+		bar.Serve(BT, CU, 'rogue')
+		control.Fire('onPlayerInteractionCompleted', asked.interactions[#asked.interactions])
+		control.Pump(5)
+		local bill = issued[#issued]
+		check('with invoices, the drink is handed over and a bill is issued instead of a charge',
+			lastCode(BT) == 'served_invoiced' and bagOf(CU).rogue == 1 and customer.PlayerData.money.BANK == 1000
+				and bill ~= nil and bill.amount == 220 and bill.target == CU and bill.issuer == BT and bill.source == 'bar'
+				and bill.cutPct == 25 and bill.account.kind == 'job' and bill.account.key == 'bartender', lastCode(BT))
+
+		useInvoices(true, true)
+		bagOf(BT).rogue = 1
+		wait()
+		bar.Serve(BT, CU, 'rogue')
+		control.Fire('onPlayerInteractionCompleted', asked.interactions[#asked.interactions])
+		control.Pump(5)
+		check('a bill the invoices module refuses falls back to a charge on the spot',
+			lastCode(BT) == 'served' and customer.PlayerData.money.BANK == 780 and bagOf(CU).rogue == 2, lastCode(BT))
+		useInvoices(false)
+		useAccounts(false)
+
+		bagOf(BT).rogue = 1
+		wait()
+		bar.Serve(BT, CU, 'rogue')
+		control.Fire('onPlayerInteractionCancelled', asked.interactions[#asked.interactions])
+		control.Pump(3)
+		check('a hand-over the customer refused tells the bartender and moves nothing',
+			lastCode(BT) == 'serve_cancelled' and bagOf(BT).rogue == 1, lastCode(BT))
+
+		control.Stand(BT, 760.0, 0.0, 0.0)
+		control.Stand(CU, 761.0, 0.0, 0.0)
+		wait()
+		ok, code = bar.ServeMenu(BT, CU)
+		check('a bartender out of their venue cannot serve', not ok and code == 'not_at_venue', code)
+
+		-- ── drunk ─────────────────────────────────────────────────────────
+		local before = #asked.screen
+		env.TriggerEvent(OPX.Event(OPX.Channel.LOCAL, 'inventory', 'used'), CU, { name = 'johnny_silverhand', slot = 1 })
+		local played = asked.screen[before + 1]
+		check('a cocktail drunk plays the drunk screen on the drinker alone', played ~= nil and played.player == CU
+			and played.name == 'drunk' and played.options.duration > 0 and played.options.strength > 0)
+		env.TriggerEvent(OPX.Event(OPX.Channel.LOCAL, 'inventory', 'used'), CU, { name = 'noodles', slot = 1 })
+		check('noodles do not', #asked.screen == before + 1)
+		for _ = 1, 3 do
+			env.TriggerEvent(OPX.Event(OPX.Channel.LOCAL, 'inventory', 'used'), CU, { name = 'chrome_bomb', slot = 1 })
+		end
+		check('the level stacks, the screen grows, and past FULL_AT the drinker is told',
+			bar.DrunkLevel(CU) > 11 and asked.screen[#asked.screen].options.strength == 1 and lastCode(CU) == 'wasted')
+		control.Advance(60000 * 10)
+		check('and the level wears off with time', bar.DrunkLevel(CU) < 10, bar.DrunkLevel(CU))
+
+		-- ── hostile doors ─────────────────────────────────────────────────
+		local doors = { E.COUNTER, E.MIX, E.STASH, E.SUPPLY, E.BUY, E.SERVE_MENU, E.SERVE }
+		local raised = {}
+		for _, name in ipairs(doors) do
+			for _, args in ipairs({ { {}, 'x' }, { 1e308, -1 }, { ('a'):rep(5000), ('b'):rep(5000) } }) do
+				local fn = control.netEvents[name]
+				env.source = CU
+				local ran, failure = pcall(fn, args[1], args[2])
+				env.source = nil
+				control.Pump(3)
+				if not ran then raised[#raised + 1] = name .. ': ' .. tostring(failure) end
+			end
+		end
+		check('every door shrugs off junk payloads', #raised == 0, table.concat(raised, '\n'))
+		check('the staff command and the contract are published', control.commands[bar.Command.VENUES] ~= nil
+			and type(OPX.Api.Get('bar')) == 'table' and #OPX.Api.Get('bar').Venues() == 2)
+		OPX.Api.Get = realGet
+	end
+end
+
+section('bar: the client builds its rows inside the budget')
+do
+	local env, control, why = boot('client', nil, nil, barSurvey)
+	check('the client boots with the bar module', why == nil, why)
+	if why == nil then
+		check('and it runs', env.OPX.Modules.IsRunning('bar'), env.OPX.Modules.Record('bar').Reason)
+		local fresh, freshControl = Host.Environment('client')
+		for _, file in ipairs(Host.LoadOrder('open77.lua', 'client')) do
+			local chunk = loadfile(file, 't', fresh)
+			if chunk ~= nil and pcall(chunk) then barSurvey(fresh, file) end
+		end
+		local worst = resumeCost(fresh, freshControl, function()
+			freshControl.Fire('onClientResourceStart', 'opx_infinity')
+		end, 240)
+		check('a client booting with two surveyed venues keeps every resume under 10,000', worst < 10000, worst)
+		local _ = control
 	end
 end
 
