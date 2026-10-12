@@ -41232,6 +41232,11 @@ do
 		local growing = {}
 		for _, name in ipairs(names) do
 			local delta = grows(name) - baseline
+			-- Measured twice before it is reported: one window can land on a
+			-- one-off allocation of the harness itself (a ~256 KB block at a
+			-- fixed point of the clock, whichever door happens to be running).
+			-- A door that really keeps state grows on the second pass too.
+			if delta > 48 then delta = math.min(delta, grows(name) - baseline) end
 			if delta > 48 then growing[#growing + 1] = ('%s +%.0f KB'):format(name, delta) end
 		end
 		check('no door keeps more state the more distinct payloads it is sent', #growing == 0,
@@ -45117,6 +45122,641 @@ do
 		check('and the category still draws, with its sprite',
 			categories.garages ~= nil and categories.garages.icon == nil and categories.garages.color == nil)
 	end
+end
+
+-- ── corpo: Arasaka and Militech assignments, standing, security, espionage ──
+
+-- Surveys the Arasaka and Militech places the corpo sections stand at.
+local function corpoSurvey(env, file)
+	if file ~= 'config/corpo.lua' then return end
+	local corps = env.OPX.Config.MODULES.corpo.CORPS
+	local function at(place, x, radius)
+		place.X, place.Y, place.Z = x, 0.0, 0.0
+		if radius then place.RADIUS = radius end
+	end
+	local a = corps.arasaka
+	at(a.OFFICES.tower_lobby, 100.0)
+	at(a.OFFICES.waterfront, 200.0)
+	at(a.DROPS.japantown_alley, 300.0)
+	at(a.TERMINALS.waterfront_logistics, 400.0)
+	at(a.FLOORS.tower_analytics, 500.0)
+	at(a.PICKUPS.konpeki_vip, 600.0)
+	at(a.DESTINATIONS.tower_plaza, 700.0)
+	at(a.ENCLAVES.tower_plaza, 1000.0)
+	a.ENCLAVES.tower_plaza.EJECT = { X = 1100.0, Y = 0.0, Z = 0.0 }
+	local m = corps.militech
+	at(m.OFFICES.plaza_offices, 2000.0)
+	at(m.DROPS.pacifica_mall, 2100.0)
+end
+
+-- A bag per player, by slot, in place of the inventory contract.
+local function corpoBag()
+	local bags = {}
+	local function of(player)
+		bags[player] = bags[player] or {}
+		return bags[player]
+	end
+	local api = {
+		GetInventory = function(player)
+			local items = {}
+			for slot, stack in pairs(of(player)) do
+				items[#items + 1] = { slot = slot, name = stack.name, count = 1, metadata = stack.metadata }
+			end
+			return { ok = true, value = { items = items } }
+		end,
+		AddItem = function(player, name, _, metadata)
+			local slots = of(player)
+			local slot = 1
+			while slots[slot] ~= nil do slot = slot + 1 end
+			slots[slot] = { name = name, metadata = metadata }
+			return { ok = true }
+		end,
+		RemoveFromSlot = function(player, slot)
+			local slots = of(player)
+			if slots[slot] == nil then return { ok = false, error = 'empty' } end
+			slots[slot] = nil
+			return { ok = true }
+		end,
+		CanCarry = function() return { ok = true, value = true } end,
+	}
+	local function count(player, name, test)
+		local n = 0
+		for _, stack in pairs(of(player)) do
+			if stack.name == name and (test == nil or test(stack.metadata)) then n = n + 1 end
+		end
+		return n
+	end
+	return api, of, count
+end
+
+-- A character in the roster with a job, a grade and a metadata table.
+local function corpoStand(env, control, player, citizen, job, grade, onDuty)
+	local loaded = standCharacter(env, control, player, citizen, { EDDIES = 0, BANK = 0 })
+	loaded.PlayerData.job = { name = job, onDuty = onDuty ~= false, grade = { level = grade } }
+	loaded.PlayerData.jobs = { [job] = grade }
+	local meta = {}
+	loaded.Functions.GetMetaData = function(key) if key == nil then return meta end return meta[key] end
+	loaded.Functions.SetMetaData = function(key, value) meta[key] = value end
+	return loaded, meta
+end
+
+section('corpo: the config, the validator and the numbers an assignment is paid on')
+do
+	local env, control, why = boot('server', fuelBridge({}, {}))
+	check('the server boots with the corpo module', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local Access = OPX.Modules.Get('corpo').Access
+		local shipped = Access.Build(OPX.Config.MODULES.corpo)
+		check('the shipped config has no problem', #shipped.problems == 0, table.concat(shipped.problems, ' | '))
+		check('Arasaka and Militech are open, Kang Tao, Biotechnica and Petrochem disabled',
+			shipped.corps.arasaka ~= nil and shipped.corps.militech ~= nil and #shipped.disabled == 3
+			and shipped.corps.kang_tao == nil, table.concat(shipped.disabled, ','))
+		check('every shipped place waits to be surveyed, so no board can be drawn',
+			#shipped.placeholders >= 20 and #shipped.corps.arasaka.lists.offices == 0
+			and #Access.Generate(shipped.corps.arasaka, shipped, 6, function() return 0 end, 0) == 0,
+			#shipped.placeholders)
+		check('six templates are read', shipped.templates.vip_escort ~= nil and shipped.templates.floor_sweep ~= nil
+			and shipped.templates.data_retrieval.item == 'datashard')
+		local items = OPX.Api.Get('inventory')
+		check('the briefcase and the datashard are in the bag\'s catalogue',
+			items.GetItem('corpo_briefcase') ~= nil and items.GetItem('corpo_datashard') ~= nil)
+
+		-- One corp surveyed, one bad place, one bad template: refused alone.
+		local config = OPX.Table.DeepCopy(OPX.Config.MODULES.corpo)
+		corpoSurvey({ OPX = { Config = { MODULES = { corpo = config } } } }, 'config/corpo.lua')
+		config.CORPS.arasaka.OFFICES.konpeki.X, config.CORPS.arasaka.OFFICES.konpeki.RADIUS = 5.0, 999
+		config.ASSIGNMENTS.broken = { KIND = 'teleport', PAY = { 1, 2 } }
+		config.CORPS.arasaka.ENCLAVES.waterfront_yard = { LABEL = 'x', X = 1.0, Y = 1.0, Z = 1.0, RADIUS = 10,
+			JOBS = { arasaka = 'boss' } }
+		local built = Access.Build(config)
+		local said = table.concat(built.problems, '\n')
+		check('a place with a bad RADIUS is refused with a line naming it', said:find('OFFICES.konpeki', 1, true) ~= nil
+			and #built.corps.arasaka.lists.offices == 2, said)
+		check('a template with an unknown KIND is refused alone', said:find('ASSIGNMENTS.broken', 1, true) ~= nil
+			and built.templates.broken == nil and built.templates.courier_briefcase ~= nil)
+		check('an enclave whose JOBS grade is not a number is refused', said:find('waterfront_yard', 1, true) ~= nil
+			and #built.corps.arasaka.lists.enclaves == 1)
+		local arasaka = built.corps.arasaka
+		check('the surveyed corp can run every template', Access.Runnable(built.templates.vip_escort, arasaka, built)
+			and Access.Runnable(built.templates.rival_handshake, arasaka, built)
+			and Access.Runnable(built.templates.floor_sweep, arasaka, built))
+		check('Militech, with one office, cannot send a courier to "another office"',
+			not Access.Runnable(built.templates.courier_briefcase, built.corps.militech, built)
+			and Access.Runnable(built.templates.shard_dead_drop, built.corps.militech, built))
+
+		-- The generator, on loaded dice.
+		local offers = Access.Generate(arasaka, built, 3, function() return 0 end, 10)
+		check('a roll of 0 draws the first template at its floor pay', #offers == 3 and offers[1].template == 'courier_briefcase'
+			and offers[1].pay == 250 and offers[1].id == 'arasaka-11' and offers[3].id == 'arasaka-13')
+		local sweep = Access.Generate(arasaka, built, 1, function() return 0.5 end, 0)[1]
+		check('a roll in the sweep\'s band draws a sweep on a surveyed floor', sweep.template == 'floor_sweep'
+			and sweep.from.key == 'tower_analytics' and sweep.holdMs == 60000)
+		local courier = offers[1]
+		local to = Access.Destination(courier, arasaka, built, 'tower_lobby', 0)
+		check('a courier run never ends at the office it was taken at', to ~= nil and to.key == 'waterfront', to and to.key)
+		local rival = Access.Generate(arasaka, built, 1, function() return 0.7 end, 0)[1]
+		local handshake = Access.Destination(rival, arasaka, built, 'tower_lobby', 0)
+		check('a handshake ends at a rival corp\'s drop', rival.template == 'rival_handshake' and handshake ~= nil
+			and handshake.corp == 'militech' and handshake.key == 'pacifica_mall')
+
+		-- Who may take it, and what it pays.
+		check('a grade below MIN_GRADE is refused', select(2, Access.Eligible(rival, 0, 100)) == 'grade_too_low')
+		check('a standing below MIN_STANDING is refused', select(2, Access.Eligible(rival, 1, 39)) == 'standing_too_low')
+		check('both clear: eligible', Access.Eligible(rival, 1, 40) == true)
+		check('pay is multiplied by the grade', Access.Pay(1000, 0, built) == 1000 and Access.Pay(1000, 3, built) == 1500
+			and Access.Pay(1000, 9, built) == 1000)
+
+		-- Standing and the quarter.
+		local q = Access.Quarter(91 * 86400 * 5 + 10, 91)
+		check('the quarter is counted from the epoch', q == 5)
+		local record = Access.Record({ arasaka = { s = 30, done = 4, q = 4, qDone = 9, qPaid = true } }, 'arasaka', 5)
+		check('a new quarter starts its count again', record.s == 30 and record.done == 4 and record.qDone == 0
+			and record.qPaid == false)
+		record.qDone = 11
+		local _, owed = Access.Succeed(record, 5, built)
+		check('the twelfth assignment of a quarter owes the bonus once', owed == true and record.s == 35 and record.qDone == 12)
+		record.qPaid = true
+		check('and not again once paid', select(2, Access.Succeed(record, 5, built)) == false)
+		check('standing never leaves MIN..MAX', Access.Fail(Access.Record(nil, 'arasaka', 0), 500, built).s == -100
+			and Access.Move(Access.Record(nil, 'arasaka', 0), 5000, built).s == 1000)
+
+		-- The mint's hour.
+		local ok, window = Access.Mint(nil, 7, 1000, 600)
+		check('the mint pays inside its hourly cap', ok and window.spent == 600)
+		check('and refuses past it', not Access.Mint(window, 7, 1000, 500))
+		check('a new hour starts empty', (Access.Mint(window, 8, 1000, 900)))
+		check('a refund gives the room back', select(2, Access.Mint(window, 7, 1000, -600)).spent == 0)
+
+		-- Espionage and the enclave.
+		check('Militech may rob Arasaka, Arasaka not itself', Access.MayRob(built.corps.militech, arasaka, built)
+			and not Access.MayRob(arasaka, arasaka, built))
+		local enclave = arasaka.lists.enclaves[1]
+		check('a point in the plaza is inside its enclave, one beyond the radius is not',
+			Access.Inside({ x = 1030, y = 0, z = 0, bucket = 0 }, enclave)
+			and not Access.Inside({ x = 1050, y = 0, z = 0, bucket = 0 }, enclave)
+			and not Access.Inside({ x = 1000, y = 0, z = 0, bucket = 3 }, enclave))
+		check('the enclave keeps its own JOBS and its EJECT point',
+			Access.EnclaveRequirement(enclave, arasaka).jobs.ncpd == 0 and enclave.eject.x == 1100.0)
+	end
+end
+
+section('corpo: assignments on the server -- courier, retrieval, sweep, escort, outsourcing, espionage')
+do
+	local env, control, why = boot('server', fuelBridge({}, {}), nil, corpoSurvey)
+	check('the server boots with two surveyed corps', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local corpo = OPX.Modules.Get('corpo')
+		local progress = OPX.Modules.Get('progress')
+		local P, SPY, OTHER = 81, 82, 83
+		local employee, meta = corpoStand(env, control, P, 'CORP0001', 'arasaka', 0)
+		local spy, spyMeta = corpoStand(env, control, SPY, 'CORP0002', 'militech', 0)
+		corpoStand(env, control, OTHER, 'CORP0003', 'unemployed', 0)
+		local bag, slotsOf, count = corpoBag()
+		local contracts = nil
+		local npc = { next = 500, list = {}, removed = {}, follows = {} }
+		env.Open77.npcs = {
+			damage = { mortal = 0, immortal = 1 }, ai = { tasks = 0 }, tasks = {
+				follow = function(id, target) npc.follows[#npc.follows + 1] = { id = id, target = target } return 1 end,
+			},
+			create = function(def)
+				npc.next = npc.next + 1
+				npc.list[npc.next] = { position = { x = def.position.x, y = def.position.y, z = def.position.z },
+					bucket = def.bucket, health = 100, record = def.record }
+				return npc.next
+			end,
+			get = function(id) return npc.list[id] end,
+			remove = function(id) npc.removed[#npc.removed + 1] = id; npc.list[id] = nil return true end,
+		}
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if name == 'inventory' then return bag end
+			if name == 'contracts' then return contracts end
+			return realGet(name, minimum)
+		end
+		local api = OPX.Api.Get('corpo')
+		local function bar(player) return fuelAnswer(control, progress.Event.START, player or P) end
+		local function finish(player, ms, ending)
+			local current = bar(player)
+			for _ = 1, math.floor(ms / 500) do
+				control.Advance(500)
+				control.Pump(1)
+			end
+			env.source = player
+			control.netEvents[progress.Event.REPORT](current.id, ending or 'finished')
+			env.source = nil
+			control.Pump(2)
+		end
+		local function step() control.Advance(1000) end
+		local function board(roll)
+			corpo.Roll = function() return roll end
+			control.Advance(901000)
+			control.Pump(1)
+			return corpo.Board(P, { corp = 'arasaka', office = 'tower_lobby' })
+		end
+		local function lastBoard()
+			return fuelAnswer(control, corpo.Event.SHOW_BOARD, P)
+		end
+		local function active(player) return fuelAnswer(control, corpo.Event.ACTIVE, player or P) end
+
+		-- The board.
+		control.Stand(P, 150.0, 0.0, 0.0)
+		local ok, code = board(0)
+		check('away from the office: refused too_far', not ok and code == 'too_far', code)
+		control.Stand(P, 100.5, 0.0, 0.0)
+		step()
+		ok, code = corpo.Board(SPY, { corp = 'arasaka', office = 'tower_lobby' })
+		check('a Militech employee does not read the Arasaka board', not ok and code == 'job_required', code)
+		ok, code = board(0)
+		local shown = lastBoard()
+		check('an employee at the office is sent the board', ok and shown ~= nil and #shown.rows == 6
+			and shown.rows[1].label == 'Courier run' and shown.rows[1].pay == 250 and shown.standing == 0, code)
+		check('and the board never says where an assignment ends', shown.rows[1].target == nil and shown.rows[1].to == nil)
+
+		-- A courier run: the briefcase out, to the other office, paid.
+		step()
+		ok, code = corpo.Accept(P, { corp = 'arasaka', office = 'tower_lobby', offer = shown.rows[1].id })
+		local briefcase = nil
+		for _, stack in pairs(slotsOf(P)) do briefcase = stack end
+		check('taking a courier run hands over a tagged briefcase', ok and code == 'accepted' and briefcase ~= nil
+			and briefcase.name == 'corpo_briefcase' and briefcase.metadata.assignment == 1
+			and type(briefcase.metadata.serial) == 'string', code)
+		local now = active()
+		check('and points the employee at the other office', now ~= false and now.stage == 'carry'
+			and now.target.key == 'waterfront' and now.target.x == 200.0)
+		step()
+		ok, code = corpo.Accept(P, { corp = 'arasaka', office = 'tower_lobby', offer = shown.rows[2].id })
+		check('a second assignment while one is held is refused', not ok and code == 'already_working', code)
+		step()
+		ok, code = corpo.Deliver(P, { corp = 'arasaka', list = 'offices', place = 'waterfront' })
+		check('delivering away from the office is refused', not ok and code == 'too_far', code)
+		control.Stand(P, 200.5, 0.0, 0.0)
+		local real = briefcase.metadata
+		local forged = OPX.Table.DeepCopy(real)
+		forged.serial = 'forged'
+		for slot, stack in pairs(slotsOf(P)) do if stack.name == 'corpo_briefcase' then slotsOf(P)[slot].metadata = forged end end
+		step()
+		ok, code = corpo.Deliver(P, { corp = 'arasaka', list = 'offices', place = 'waterfront' })
+		check('a briefcase with another serial is not the one', not ok and code == 'no_item', code)
+		for slot, stack in pairs(slotsOf(P)) do if stack.name == 'corpo_briefcase' then slotsOf(P)[slot].metadata = real end end
+		step()
+		ok, code = corpo.Deliver(P, { corp = 'arasaka', list = 'offices', place = 'waterfront' })
+		check('the real briefcase at the right office completes the run', ok and code == 'completed'
+			and count(P, 'corpo_briefcase') == 0, code)
+		check('the corp pays it, minted (no accounts module)', employee.PlayerData.money.EDDIES == 250,
+			employee.PlayerData.money.EDDIES)
+		check('and standing moves', type(meta.corpo) == 'table' and meta.corpo.arasaka.s == 4 and meta.corpo.arasaka.done == 1)
+		check('the employee is told the assignment is over', active() == false)
+
+		-- A retrieval: the terminal bar, then a shard to an office.
+		control.Stand(P, 100.5, 0.0, 0.0)
+		board(0.3)
+		local row = lastBoard().rows[1]
+		check('a retrieval shows where it starts', row.label == 'Data retrieval' and row.start ~= nil)
+		step()
+		ok = corpo.Accept(P, { corp = 'arasaka', office = 'tower_lobby', offer = row.id })
+		check('taking a retrieval sends the employee to the terminal', ok and active().stage == 'goto'
+			and active().target.key == 'waterfront_logistics')
+		step()
+		ok, code = corpo.Retrieve(P)
+		check('extracting away from the terminal is refused', not ok and code == 'too_far', code)
+		control.Stand(P, 400.5, 0.0, 0.0)
+		step()
+		ok, code = corpo.Retrieve(P)
+		check('at the terminal: a server bar', ok and code == 'retrieving' and bar().durationMs == 10000, code)
+		finish(P, 2000, 'finished')
+		check('a bar "finished" early gives nothing', count(P, 'corpo_datashard') == 0 and active().stage == 'goto')
+		step()
+		corpo.Retrieve(P)
+		finish(P, 10000)
+		check('the bar run to the end gives the tagged shard', count(P, 'corpo_datashard') == 1
+			and active().stage == 'carry')
+
+		-- Espionage: Militech lifts it.
+		control.Stand(SPY, 401.0, 0.0, 0.0)
+		step()
+		ok, code = corpo.Steal(OTHER, { target = P })
+		check('somebody with no corp cannot lift it', not ok and code == 'not_corpo', code)
+		step()
+		ok, code = corpo.Steal(SPY, { target = P })
+		check('a Militech employee next to the Arasaka courier starts lifting', ok and code == 'stealing'
+			and bar(SPY).durationMs == 6000, code)
+		finish(SPY, 6000)
+		check('the shard leaves the courier\'s bag for the thief\'s', count(P, 'corpo_datashard') == 0
+			and count(SPY, 'corpo_datashard', function(m) return m.stolen == true and m.forCorp == 'militech' end) == 1)
+		check('the courier\'s assignment fails and their standing pays', active() == false and meta.corpo.arasaka.s == -3
+			and meta.corpo.arasaka.failed == 1, meta.corpo.arasaka.s)
+		step()
+		ok, code = corpo.Steal(SPY, { target = P })
+		check('a thief cools down between two attempts', not ok and code == 'spy_cooldown', code)
+		control.Stand(SPY, 2000.5, 0.0, 0.0)
+		step()
+		ok, code = corpo.Deliver(SPY, { corp = 'militech', list = 'offices', place = 'plaza_offices' })
+		check('the thief sells the intel to their own corp', ok and code == 'intel_sold'
+			and count(SPY, 'corpo_datashard') == 0 and spy.PlayerData.money.EDDIES >= 500
+			and spyMeta.corpo.militech.s == 12, code)
+
+		-- A sweep: held on the server's clock, broken by leaving.
+		control.Stand(P, 100.5, 0.0, 0.0)
+		meta.corpo.arasaka.s = 50
+		employee.PlayerData.job.grade.level = 1
+		board(0.5)
+		row = lastBoard().rows[1]
+		step()
+		ok = corpo.Accept(P, { corp = 'arasaka', office = 'tower_lobby', offer = row.id })
+		check('a Field Agent takes a floor sweep', ok and active().stage == 'sweep')
+		control.Stand(P, 505.0, 0.0, 0.0)
+		for _ = 1, 30 do step() control.Pump(1) end
+		control.Stand(P, 560.0, 0.0, 0.0)
+		for _ = 1, 3 do step() control.Pump(1) end
+		control.Stand(P, 505.0, 0.0, 0.0)
+		for _ = 1, 40 do step() control.Pump(1) end
+		check('leaving the floor starts the sweep over', api.Active(P)[1] ~= nil)
+		local before = employee.PlayerData.money.EDDIES
+		for _ = 1, 25 do step() control.Pump(1) end
+		check('a full HOLD_MS on the floor completes it, paid at the Field Agent rate',
+			api.Active(P)[1] == nil and employee.PlayerData.money.EDDIES - before == row.pay and row.pay == math.floor(400 * 1.15 + 0.5),
+			employee.PlayerData.money.EDDIES - before)
+
+		-- An escort: a server NPC that must reach the destination alive.
+		control.Stand(P, 100.5, 0.0, 0.0)
+		meta.corpo.arasaka.s = 100
+		employee.PlayerData.job.grade.level = 2
+		board(0.95)
+		row = lastBoard().rows[1]
+		step()
+		ok = corpo.Accept(P, { corp = 'arasaka', office = 'tower_lobby', offer = row.id })
+		check('a Counterintel agent takes a VIP escort', ok and row.label == 'VIP escort' and active().target.key == 'konpeki_vip')
+		control.Stand(P, 600.5, 0.0, 0.0)
+		step()
+		ok, code = corpo.Meet(P)
+		local vip = npc.list[npc.next]
+		check('meeting at the pickup spawns the VIP and has it follow', ok and vip ~= nil
+			and npc.follows[#npc.follows].target == P and active().stage == 'escort', code)
+		control.Stand(P, 700.5, 0.0, 0.0)
+		vip.position = { x = 650.0, y = 0.0, z = 0.0 }
+		for _ = 1, 3 do step() control.Pump(1) end
+		check('the employee alone at the destination is not an escort', api.Active(P)[1] ~= nil)
+		vip.position = { x = 701.0, y = 0.0, z = 0.0 }
+		before = employee.PlayerData.money.EDDIES
+		step() control.Pump(1)
+		check('the VIP at the destination completes it and leaves', api.Active(P)[1] == nil
+			and employee.PlayerData.money.EDDIES > before and npc.removed[#npc.removed] == npc.next)
+		control.Stand(P, 100.5, 0.0, 0.0)
+		board(0.95)
+		step()
+		corpo.Accept(P, { corp = 'arasaka', office = 'tower_lobby', offer = lastBoard().rows[1].id })
+		control.Stand(P, 600.5, 0.0, 0.0)
+		step()
+		corpo.Meet(P)
+		npc.list[npc.next].health = 0
+		local standing = meta.corpo.arasaka.s
+		step() control.Pump(1)
+		check('a dead VIP fails the escort with its LOSS', api.Active(P)[1] == nil
+			and meta.corpo.arasaka.s == standing - 25, meta.corpo.arasaka.s)
+
+		-- Abandon and the deadline.
+		control.Stand(P, 100.5, 0.0, 0.0)
+		board(0)
+		step()
+		corpo.Accept(P, { corp = 'arasaka', office = 'tower_lobby', offer = lastBoard().rows[1].id })
+		step()
+		ok = corpo.Act(P, { verb = 'abandon' })
+		check('abandoning takes the briefcase back and costs ABANDON_LOSS', ok and count(P, 'corpo_briefcase') == 0
+			and api.Active(P)[1] == nil)
+		board(0)
+		step()
+		corpo.Accept(P, { corp = 'arasaka', office = 'tower_lobby', offer = lastBoard().rows[1].id })
+		for _ = 1, 25 do control.Advance(60000) control.Pump(1) end
+		check('a missed deadline fails the assignment and takes the item back', api.Active(P)[1] == nil
+			and count(P, 'corpo_briefcase') == 0)
+
+		-- The mint's cap.
+		local cap = OPX.Config.MODULES.corpo.MINT.PER_HOUR
+		board(0.95)
+		local corpoBuilt = corpo.Built
+		corpoBuilt.mintPerHour = 0
+		local tuned = OPX.Tune.Number
+		OPX.Tune.Number = function(name, default) if name == 'CORPO_MINT_PER_HOUR' then return 0 end return tuned(name, default) end
+		step()
+		ok, code = corpo.Accept(P, { corp = 'arasaka', office = 'tower_lobby', offer = lastBoard().rows[1].id })
+		check('past the hourly mint cap nothing is taken', not ok and code == 'mint_capped', code)
+		OPX.Tune.Number = tuned
+		corpoBuilt.mintPerHour = cap
+
+		-- The accounts contract, when it runs, pays instead.
+		local withdrawn, deposited = {}, {}
+		local accounts = {
+			Balance = function() return { ok = true, value = { balance = 100000 } } end,
+			Withdraw = function(kind, key, amount, reason, opId)
+				withdrawn[#withdrawn + 1] = { kind = kind, key = key, amount = amount, opId = opId }
+				return { ok = true, value = { balance = 1 } }
+			end,
+			Deposit = function(kind, key, amount) deposited[#deposited + 1] = { key = key, amount = amount } return { ok = true } end,
+		}
+		OPX.Api.Get = function(name, minimum)
+			if name == 'inventory' then return bag end
+			if name == 'contracts' then return contracts end
+			if name == 'accounts' then return accounts end
+			return realGet(name, minimum)
+		end
+		board(0)
+		step()
+		corpo.Accept(P, { corp = 'arasaka', office = 'tower_lobby', offer = lastBoard().rows[1].id })
+		control.Stand(P, 200.5, 0.0, 0.0)
+		step()
+		before = employee.PlayerData.money.EDDIES
+		ok = corpo.Deliver(P, { corp = 'arasaka', list = 'offices', place = 'waterfront' })
+		check('with an accounts module the corp\'s treasury pays, with an op id', ok and #withdrawn == 1
+			and withdrawn[1].kind == 'job' and withdrawn[1].key == 'arasaka'
+			and withdrawn[1].opId:find('^corpo:') ~= nil and employee.PlayerData.money.EDDIES - before == withdrawn[1].amount)
+		accounts.Balance = function() return { ok = true, value = { balance = 10 } } end
+		control.Stand(P, 100.5, 0.0, 0.0)
+		board(0)
+		step()
+		ok, code = corpo.Accept(P, { corp = 'arasaka', office = 'tower_lobby', offer = lastBoard().rows[1].id })
+		check('a treasury that cannot cover it refuses the assignment', not ok and code == 'corp_budget', code)
+		accounts.Balance = function() return { ok = true, value = { balance = 100000 } } end
+
+		-- Outsourcing to the fixer board.
+		employee.PlayerData.job.grade.level = 3
+		local posted = nil
+		contracts = { Post = function(spec) posted = spec return { ok = true, value = 55 } end }
+		board(0)
+		shown = lastBoard()
+		check('an Executive is offered the fixer board', shown.canPublish == true)
+		step()
+		ok, code = corpo.Act(P, { verb = 'outsource', corp = 'arasaka', office = 'tower_lobby', offer = shown.rows[2].id })
+		check('outsourcing posts an externally funded gig, paid by the treasury up front', ok and code == 'outsourced'
+			and posted ~= nil and posted.funded == 'external' and posted.type == 'deliver_item'
+			and posted.objective.dropoff == 'watson_kabuki_market' and posted.reward == math.floor(250 * 1.25 + 0.5)
+			and withdrawn[#withdrawn].amount == posted.reward, code)
+		OPX.Publish(OPX.Event(OPX.Channel.LOCAL, 'contracts', 'expired'), nil, { id = 55 })
+		check('a gig that expires gives the corp its money back', #deposited == 1 and deposited[1].amount == posted.reward)
+		employee.PlayerData.job.grade.level = 0
+		step()
+		ok, code = corpo.Act(P, { verb = 'outsource', corp = 'arasaka', office = 'tower_lobby', offer = shown.rows[3].id })
+		check('a Junior Analyst may not outsource', not ok and code == 'grade_too_low', code)
+
+		-- Hostile input.
+		for _, payload in ipairs({ 'x', 5, { corp = {} }, { corp = 'arasaka', office = string.rep('x', 5000) },
+			{ corp = 'kang_tao', office = 'heywood_plaza' } }) do
+			step()
+			ok, code = corpo.Accept(P, payload)
+			check('a bad accept is refused: ' .. tostring(code), not ok)
+		end
+		env.source = P
+		local survived = pcall(function()
+			control.netEvents[corpo.Event.DELIVER]({ list = {}, place = 0 / 0 })
+			control.netEvents[corpo.Event.STEAL]({ target = P })
+			control.netEvents[corpo.Event.DETAIN]({ target = 'x' })
+			control.netEvents[corpo.Event.ACT]({ verb = string.rep('y', 9000) })
+			control.netEvents[corpo.Event.HELLO](nil)
+			control.Pump(3)
+		end)
+		env.source = nil
+		check('and the net doors survive garbage', survived)
+	end
+end
+
+section('corpo: enclave security -- a trespasser warned, reported, detained and handed over')
+do
+	local env, control, why = boot('server', fuelBridge({}, {}), nil, corpoSurvey)
+	check('the server boots with a surveyed enclave', why == nil, why)
+	if why == nil then
+		local OPX = env.OPX
+		local corpo = OPX.Modules.Get('corpo')
+		local progress = OPX.Modules.Get('progress')
+		local GUARD, INTRUDER, COP, STAFF = 91, 92, 93, 94
+		corpoStand(env, control, GUARD, 'SECU0001', 'arasaka', 1)
+		corpoStand(env, control, INTRUDER, 'SECU0002', 'unemployed', 0)
+		local cop = corpoStand(env, control, COP, 'SECU0003', 'ncpd', 1)
+		corpoStand(env, control, STAFF, 'SECU0004', 'arasaka', 0)
+		local api = OPX.Api.Get('corpo')
+		for _, player in ipairs({ GUARD, INTRUDER, COP, STAFF }) do
+			env.source = player
+			control.netEvents[corpo.Event.HELLO]({})
+			env.source = nil
+		end
+		local role = fuelAnswer(control, corpo.Event.ROLE, GUARD)
+		check('a Field Agent is told they are security', type(role) == 'table' and role.corp == 'arasaka'
+			and role.security == true)
+		check('a Junior Analyst is not', fuelAnswer(control, corpo.Event.ROLE, STAFF).security == nil)
+		check('and somebody with no corp has no role', fuelAnswer(control, corpo.Event.ROLE, INTRUDER) == false)
+
+		control.Stand(GUARD, 1010.0, 0.0, 0.0)
+		control.Stand(STAFF, 1005.0, 0.0, 0.0)
+		control.Stand(COP, 1020.0, 0.0, 0.0)
+		control.Stand(INTRUDER, 1011.0, 0.0, 0.0)
+		local mark = #control.notices
+		control.Advance(2100)
+		control.Pump(3)
+		local alert = fuelAnswer(control, corpo.Event.ALERT, GUARD)
+		check('a trespasser in the plaza is seen and security on shift is told where', alert ~= nil
+			and alert.kind == 'trespass' and alert.x == 1011.0)
+		check('the Junior Analyst is not alerted', fuelAnswer(control, corpo.Event.ALERT, STAFF) == nil)
+		local warned = false
+		for index = mark + 1, #control.notices do
+			local notice = control.notices[index]
+			if notice.playerId == INTRUDER and tostring(notice.message):find('trespassing', 1, true) then warned = true end
+		end
+		check('the trespasser is warned', warned)
+		check('an NCPD officer in the plaza is allowed by its JOBS', api.CanEnter(COP, 'arasaka', 'tower_plaza') == true
+			and api.Trespassing(COP) == nil)
+		check('the contract names the trespass', api.Trespassing(INTRUDER) ~= nil
+			and api.Trespassing(INTRUDER).enclave == 'tower_plaza')
+
+		control.Advance(1000)
+		local ok, code = corpo.Security.Detain(STAFF, { target = INTRUDER })
+		check('a Junior Analyst cannot detain', not ok and code == 'not_security', code)
+		control.Advance(1000)
+		ok, code = corpo.Security.Detain(GUARD, { target = COP })
+		check('an officer is not a trespasser', not ok and code == 'not_trespassing', code)
+		control.Advance(1000)
+		ok, code = corpo.Security.Detain(GUARD, { target = INTRUDER })
+		check('security next to a trespasser starts the detention', ok and code == 'detaining', code)
+		local current = fuelAnswer(control, progress.Event.START, GUARD)
+		for _ = 1, 8 do control.Advance(500) control.Pump(1) end
+		env.source = GUARD
+		control.netEvents[progress.Event.REPORT](current.id, 'finished')
+		env.source = nil
+		control.Pump(2)
+		local told = fuelAnswer(control, corpo.Event.ALERT, COP)
+		check('without a police module, the NCPD officer on duty is told', told ~= nil and told.kind == 'detained')
+		local trip = control.trips.calls[#control.trips.calls]
+		check('and the trespasser is walked out to EJECT', trip ~= nil and trip.playerId == INTRUDER
+			and trip.position.x == 1100.0)
+		check('the guard\'s standing moves', api.Standing(GUARD, 'arasaka').s == 3)
+
+		-- With a police module, it takes the suspect.
+		local handed, reported = {}, {}
+		local realGet = OPX.Api.Get
+		OPX.Api.Get = function(name, minimum)
+			if name == 'police' then
+				return { Handoff = function(spec) handed[#handed + 1] = spec return true end,
+					Report = function(spec) reported[#reported + 1] = spec end }
+			end
+			return realGet(name, minimum)
+		end
+		local trips = #control.trips.calls
+		control.Stand(INTRUDER, 1011.0, 0.0, 0.0)
+		control.Advance(1000)
+		ok = corpo.Security.Detain(GUARD, { target = INTRUDER })
+		current = fuelAnswer(control, progress.Event.START, GUARD)
+		for _ = 1, 8 do control.Advance(500) control.Pump(1) end
+		env.source = GUARD
+		control.netEvents[progress.Event.REPORT](current.id, 'finished')
+		env.source = nil
+		control.Pump(2)
+		check('a police module is handed the suspect and a report', ok and #handed == 1 and handed[1].suspect == INTRUDER
+			and handed[1].corp == 'arasaka' and #reported == 1 and reported[1].crime == 'trespass'
+			and reported[1].source == 'corpo')
+		check('and the suspect is left for NCPD, not walked out', #control.trips.calls == trips)
+		OPX.Api.Get = realGet
+
+		-- Walking away breaks it.
+		control.Advance(1000)
+		ok = corpo.Security.Detain(GUARD, { target = INTRUDER })
+		current = fuelAnswer(control, progress.Event.START, GUARD)
+		control.Stand(INTRUDER, 1500.0, 0.0, 0.0)
+		for _ = 1, 8 do control.Advance(500) control.Pump(1) end
+		env.source = GUARD
+		control.netEvents[progress.Event.REPORT](current.id, 'finished')
+		env.source = nil
+		control.Pump(2)
+		check('a suspect who ran off the property before the bar ends is not detained',
+			api.Standing(GUARD, 'arasaka').s == 6, api.Standing(GUARD, 'arasaka').s)
+		check('and is not a trespasser any more once seen outside', (function()
+			control.Advance(2100) control.Pump(3) return api.Trespassing(INTRUDER) == nil end)())
+		local _ = cop
+	end
+end
+
+section('corpo: the client builds its rows inside the budget')
+do
+	local env, control = Host.Environment('client')
+	for _, file in ipairs(Host.LoadOrder('open77.lua', 'client')) do
+		local chunk = loadfile(file, 't', env)
+		if chunk ~= nil and pcall(chunk) and file == 'config/corpo.lua' then
+			local n = 0
+			for _, corp in pairs(env.OPX.Config.MODULES.corpo.CORPS) do
+				corp.ENABLED = true
+				for _, list in ipairs({ 'OFFICES', 'DROPS', 'TERMINALS', 'FLOORS', 'PICKUPS', 'DESTINATIONS', 'ENCLAVES' }) do
+					for _, place in pairs(corp[list] or {}) do
+						n = n + 1
+						place.X, place.Y, place.Z = 100.0 + n, 0.0, 0.0
+					end
+				end
+			end
+		end
+	end
+	local worst = resumeCost(env, control, function()
+		control.Fire('onClientResourceStart', 'opx_infinity')
+	end, 240)
+	check('a client booting with every corp surveyed and enabled keeps every resume under 4,500', worst < 4500, worst)
+	local contract = env.OPX.Api.Get('corpo')
+	check('and publishes its half of the contract', contract ~= nil and contract.Active() == nil and contract.Role() == nil)
 end
 
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
