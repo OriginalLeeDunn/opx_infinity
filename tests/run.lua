@@ -41027,7 +41027,12 @@ local function hostileReset(control)
 		local list = control.log[kind]
 		for index = #list, 1, -1 do list[index] = nil end
 	end
-	for _, list in ipairs({ control.clientEvents, control.notices, control.database.calls }) do
+	-- `carried.writes` too: the reload blob is saved on a clock, every save is
+	-- recorded, and the battery moves that clock by hours per door -- so the list
+	-- grew for the whole run and its array doubled inside whichever door was
+	-- being measured at the time, which read as that door keeping state.
+	for _, list in ipairs({ control.clientEvents, control.notices, control.database.calls,
+		control.carried and control.carried.writes or {} }) do
 		for index = #list, 1, -1 do list[index] = nil end
 	end
 end
@@ -43804,6 +43809,10 @@ do
 					local event = control.clientEvents[index]
 					if event.name == E.ALERT and event.source == COP then return event[1].kind == 'robbery'
 						and math.abs(event[1].x - 100.0) < 0.01 end
+					-- With the police module running, the alarm is its call (police.Report).
+					if event.name == 'opx:net:police:alert' and event.source == COP then
+						return event[1].crime == 'robbery' and math.abs(event[1].x - 100.0) < 0.01
+					end
 				end
 				return false
 			end)())
@@ -44939,8 +44948,12 @@ do
 		end
 		check('left alone, the trace throws the runner out', api().Session(P) == nil)
 		local alert = fuelAnswer(control, netrunner.Event.ALERT, COP)
+		-- With the police module running, the trace is its call (police.Alert).
+		local policeAlert = fuelAnswer(control, 'opx:net:police:alert', COP)
 		check('and the on-duty NCPD officer is told where the access point is',
-			alert ~= nil and alert.level == 'traced' and alert.x == 200.0 and alert.runner == nil)
+			(alert ~= nil and alert.level == 'traced' and alert.x == 200.0 and alert.runner == nil)
+			or (policeAlert ~= nil and policeAlert.crime == 'netrunner' and policeAlert.x == 200.0
+				and tostring(policeAlert.description):sub(1, 6) == 'traced'))
 		check('the runner is told the run is over', fuelAnswer(control, netrunner.Event.STATE, P).phase == 'offline')
 		check('and NetWatch heat rose by HEAT_ON_TRACE', type(meta.netwatch_heat) == 'table'
 			and meta.netwatch_heat.value == 10)
