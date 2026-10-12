@@ -104,6 +104,22 @@ M.Data.ITEMS = {
 		USE = { CONSUME = 0, CLOSE = true },
 	},
 
+	-- `modules/netrunner`: the four cyberdecks of `config/netrunner.lua` DECKS
+	-- and the data shard a datamine pulls. Declared HERE and not registered at
+	-- runtime because a runtime item is resent to every client that says hello;
+	-- a deck an operator adds to DECKS that is not listed here still is, by the
+	-- module. Never stacked: a deck's RAM and a shard's value are its metadata.
+	-- A deck's use answers its buffer and consumes nothing.
+	cyberdeck_militech_paraline = { WEIGHT = 800, CATEGORY = 'tool', STACK = false,
+		LABEL = 'Militech Paraline', MODEL = 'electronics.monitor.device', USE = { CONSUME = 0, CLOSE = false } },
+	cyberdeck_tetratronic_rippler = { WEIGHT = 800, CATEGORY = 'tool', STACK = false,
+		LABEL = 'Tetratronic Rippler Mk.2', MODEL = 'electronics.monitor.device', USE = { CONSUME = 0, CLOSE = false } },
+	cyberdeck_netwatch_netdriver = { WEIGHT = 700, CATEGORY = 'tool', STACK = false,
+		LABEL = 'NetWatch Netdriver Mk.5', MODEL = 'electronics.monitor.device', USE = { CONSUME = 0, CLOSE = false } },
+	cyberdeck_raven_microcyber = { WEIGHT = 600, CATEGORY = 'tool', STACK = false,
+		LABEL = 'Raven Microcyber Mk.6', MODEL = 'electronics.monitor.device', USE = { CONSUME = 0, CLOSE = false } },
+	data_shard = { WEIGHT = 20, STACK = false, LABEL = 'Data shard', MODEL = 'crate.valuable' },
+
 	-- MONEY YOU CAN HAND OVER. One unit is one eddie, and the stack is a BEARER
 	-- NOTE drawn against the EDDIES balance: `/withdraw` debits the balance and
 	-- puts the units here, using the stack destroys it and credits the balance

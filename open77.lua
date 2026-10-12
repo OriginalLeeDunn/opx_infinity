@@ -131,6 +131,9 @@ shared_script "config/underworld.lua"
 -- Shared: the client draws each clinic's stash and terminal spheres and the
 -- terminal catalogue from it; the server re-reads every row it is asked to sell.
 shared_script "config/ripperdoc.lua"
+-- Shared: the client draws the access points and brokers it reads here, and the
+-- server re-derives every one. See modules/netrunner/module.lua.
+shared_script "config/netrunner.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -592,6 +595,16 @@ server_script "modules/ripperdoc/server/storage.lua"
 server_script "modules/ripperdoc/server/identity.lua"
 server_script "modules/ripperdoc/server/main.lua"
 client_script "modules/ripperdoc/client/main.lua"
+
+-- Netrunner: networks, breach, daemons, shards and brokers. After `character`,
+-- `inventory` (required), `progress`, `target`, `menu`, `downed` and
+-- `doorlock` (optional), every one ordered above. No new permission: the
+-- alert waypoint is `ui.vanilla.map`, declared below for the map pins.
+shared_script "modules/netrunner/module.lua"
+shared_script "modules/netrunner/locales.lua"
+shared_script "modules/netrunner/shared/access.lua"
+server_script "modules/netrunner/server/main.lua"
+client_script "modules/netrunner/client/main.lua"
 
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before
