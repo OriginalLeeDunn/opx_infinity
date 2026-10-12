@@ -45132,6 +45132,500 @@ do
 	end
 end
 
+-- ── police: NCPD, MaxTac, corpo security ─────────────────────────────────────
+-- Services are config, the board is table arithmetic, and every act on a
+-- suspect is judged by the server before and, when it takes time, after.
+section('police: the config, the validator and the arithmetic')
+do
+	local env, _, why = boot('server')
+	check('the server boots with the police module', why == nil, why)
+	if why == nil then
+		local police = env.OPX.Modules.Get('police')
+		local Access = police.Access
+		local raw = env.OPX.Config.MODULES.police
+		local settings = Access.Settings(raw)
+		check('the three shipped services are read: ncpd, maxtac, arasaka_sec',
+			settings.services.ncpd ~= nil and settings.services.maxtac ~= nil and settings.services.arasaka_sec ~= nil)
+		local ncpd, corpo = settings.services.ncpd, settings.services.arasaka_sec
+		check('a capability carries its grade: a detective books, a cadet cuffs',
+			ncpd.capabilities.jail == 2 and ncpd.capabilities.cuff == 0)
+		check('corpo security does not fine or jail: it hands over to the NCPD',
+			corpo.capabilities.fine == nil and corpo.capabilities.jail == nil and corpo.capabilities.cuff == 0)
+		check('a zoned service with no surveyed enclave has authority nowhere',
+			corpo.zoned and not Access.InJurisdiction(corpo, { x = 1, y = 1, z = 1 }))
+		check('an unzoned one has it everywhere', Access.InJurisdiction(ncpd, { x = 1, y = 1, z = 1 }))
+		check('the NCPD hears every crime, MaxTac only what is worth its AV',
+			Access.Receives(ncpd, 'traffic') and Access.Receives(settings.services.maxtac, 'cyberpsychosis')
+			and not Access.Receives(settings.services.maxtac, 'traffic'))
+		check('a robbery fine is capped by its FINE_MAX', Access.FineCeiling(settings, 'robbery') == 15000)
+		check('a 911 carries no fine', Access.FineCeiling(settings, 'emergency') == 0)
+		local paid, owed, cut = Access.SplitFine(500, 100, 10)
+		check('a fine against a short balance: paid what there is, owed the rest, 10% of the paid to the officer',
+			paid == 100 and owed == 400 and cut == 10)
+		check('a sentence on the wall clock counts down with it',
+			Access.Remaining({ untilS = 1000 }, 940) == 60 and Access.Remaining({ untilS = 1000 }, 1200) == 0)
+		check('a sentence on time served counts only what was served',
+			Access.Remaining({ totalS = 600, servedS = 150 }, 99999) == 450)
+		check('minutes are bounded by JAIL.MAX_MINUTES', Access.Minutes(settings, 9999) == 120
+			and Access.Minutes(settings, 0) == nil and Access.Minutes(settings, 'x') == nil)
+
+		local shipped = Access.Problems(raw)
+		local placeholders = 0
+		for _, line in ipairs(shipped) do
+			if line:find('PLACEHOLDER', 1, true) or line:find('ENCLAVES', 1, true) then placeholders = placeholders + 1 end
+		end
+		check('the shipped config names every unsurveyed station, cell and enclave, and nothing else',
+			placeholders == #shipped and #shipped > 0, table.concat(shipped, ' | '))
+		local bad = Access.Problems({ CUFFS = {}, CRIMES = { ok = { FINE = 'x' } },
+			SERVICES = { x = { JOBS = {}, CAPABILITIES = { teleport = 0 }, DISPATCH = { RECEIVES = { 'nope' } } } },
+			STATIONS = { s = { SERVICES = { 'ghost' }, X = 0, Y = 0, Z = 0 } } })
+		check('a broken config is named, line by line', #bad >= 6, table.concat(bad, ' | '))
+	end
+end
+
+section('police: the board -- one incident per dedupe word, a limit, a lapse')
+do
+	local env, _, why = boot('server')
+	if why == nil then
+		local Dispatch = env.OPX.Modules.Get('police').Dispatch
+		Dispatch.Reset()
+		local call, fresh = Dispatch.Open({ service = 'ncpd', crime = 'robbery', priority = 5, dedupe = 'store:a',
+			ttlMs = 1000, nowMs = 0 })
+		local again, second = Dispatch.Open({ service = 'ncpd', crime = 'robbery', priority = 8, dedupe = 'store:a',
+			position = { x = 1, y = 2, z = 3 }, ttlMs = 1000, nowMs = 10 })
+		check('the same store ringing twice is one call', fresh and not second and again == call)
+		check('which keeps the higher priority and learns the position', call.priority == 8 and call.position.x == 1)
+		local blind = Dispatch.Open({ service = 'ncpd', crime = 'deal', ttlMs = 1000, nowMs = 0 })
+		check('a call with no dedupe word is its own call', blind.id ~= call.id)
+		check('the board sorts the worst first', Dispatch.List({ ncpd = true })[1] == call)
+		check('an officer takes it', Dispatch.Take(call.id, 9, 1, 20) ~= nil)
+		local _, full = Dispatch.Take(call.id, 10, 1, 20)
+		check('a second one is refused call_full', full == 'call_full', full)
+		check('a call somebody is on does not lapse, an untaken one does',
+			#Dispatch.Expire(5000) == 1 and Dispatch.Get(call.id) ~= nil and Dispatch.Get(blind.id) == nil)
+		check('closing by dedupe word closes it', #Dispatch.CloseKey('store:a') == 1 and Dispatch.Get(call.id) == nil)
+	end
+end
+
+do
+	-- The police fixture: one surveyed precinct with two cells, a desk, a locker
+	-- and a release point, and a surveyed Arasaka enclave.
+	local function policeConfig(env, file)
+		if file ~= 'config/police.lua' then return end
+		local cfg = env.OPX.Config.MODULES.police
+		cfg.STATIONS = {
+			test_precinct = {
+				LABEL = 'Test precinct', SERVICES = { 'ncpd', 'maxtac' },
+				X = 500.0, Y = 0.0, Z = 0.0, RADIUS = 40.0,
+				DESK = { X = 505.0, Y = 0.0, Z = 0.0, RADIUS = 1.5 },
+				EVIDENCE = { X = 506.0, Y = 0.0, Z = 0.0, RADIUS = 1.5 },
+				CELLS = { { X = 520.0, Y = 0.0, Z = 0.0, YAW = 90.0 }, { X = 524.0, Y = 0.0, Z = 0.0 } },
+				RELEASE = { X = 545.0, Y = 0.0, Z = 0.0 },
+			},
+		}
+		cfg.SERVICES.arasaka_sec.ENCLAVES = { { LABEL = 'Test plaza', X = 900.0, Y = 0.0, Z = 0.0, RADIUS = 20.0 } }
+	end
+
+	-- A loaded character with a job, money and a metadata table the module writes.
+	local function policeCharacter(env, control, source, citizenId, job, grade, money)
+		return medicalCharacter(env, control, source, citizenId, job, grade, money)
+	end
+
+	local function last(control, name, player) return fuelAnswer(control, name, player) end
+
+	section('police: the contract underworld and netrunner call, 911 and 10-00')
+	do
+		local env, control, why = boot('server', nil, nil, policeConfig)
+		check('the server boots with a surveyed precinct', why == nil, why)
+		if why == nil then
+			local OPX = env.OPX
+			local police = OPX.Modules.Get('police')
+			local Event = police.Event
+			local COP, TAC, CORPO, CIVVIE = 61, 62, 63, 64
+			policeCharacter(env, control, COP, 'COPS0001', 'ncpd', 2, { EDDIES = 0, BANK = 0 })
+			policeCharacter(env, control, TAC, 'MAXT0001', 'maxtac', 0, { EDDIES = 0, BANK = 0 })
+			policeCharacter(env, control, CORPO, 'CORP0001', 'arasaka', 1, { EDDIES = 0, BANK = 0 })
+			policeCharacter(env, control, CIVVIE, 'CIVV0001', 'unemployed', 0, { EDDIES = 0, BANK = 0 })
+			for id, x in pairs({ [COP] = 10.0, [TAC] = 20.0, [CORPO] = 30.0, [CIVVIE] = 40.0 }) do
+				control.Stand(id, x, 0.0, 0.0)
+			end
+			local api = OPX.Api.Get('police')
+			check('the police contract is provided', api ~= nil and type(api.Report) == 'function'
+				and type(api.Alert) == 'function' and type(api.OnDutyCount) == 'function')
+
+			-- Exactly the call `modules/underworld/server/main.lua` Alert.Deliver makes.
+			local answer = api.Report({ crime = 'robbery', label = 'Test store', position = { x = 100.0, y = 5.0, z = 0.0 },
+				radius = 40, source = 'underworld' })
+			control.Pump(3)
+			local alert = last(control, Event.ALERT, COP)
+			check('an underworld alarm answers ok and lands on the on-duty NCPD officer\'s screen',
+				type(answer) == 'table' and answer.ok and alert ~= nil and alert.crime == 'robbery' and alert.x == 100.0,
+				alert and alert.crime)
+			check('MaxTac is not paged for a store robbery', last(control, Event.ALERT, TAC) == nil)
+			check('corpo security is not paged for it either', last(control, Event.ALERT, CORPO) == nil)
+			check('and nobody without a badge sees it', last(control, Event.ALERT, CIVVIE) == nil)
+			local before = #control.clientEvents
+			api.Report({ crime = 'robbery', label = 'Blind store', radius = 40, source = 'underworld' })
+			api.Report({ crime = 'robbery', label = 'Blind store', radius = 40, source = 'underworld' })
+			local alerts = 0
+			for index = before + 1, #control.clientEvents do
+				if control.clientEvents[index].name == Event.ALERT then alerts = alerts + 1 end
+			end
+			check('an unwitnessed alarm is still a call, and ringing twice pages once', alerts == 1, alerts)
+			check('a report that is not a table, or has no crime, is refused without raising',
+				not api.Report(nil).ok and not api.Report({ label = 'x' }).ok)
+			check('OnDutyCount is a plain number of officers able to answer anywhere', api.OnDutyCount() == 2,
+				api.OnDutyCount())
+
+			-- Exactly the call `modules/netrunner/server/main.lua` alarm makes.
+			local sent = api.Alert({ kind = 'netrunner', jobs = { 'ncpd' }, label = 'Arasaka Waterfront',
+				coords = { x = 200.0, y = 0.0, z = 0.0 }, level = 'warning' })
+			local trace = last(control, Event.ALERT, COP)
+			check('an ICE trace for ncpd is delivered and paged', sent == true and trace ~= nil
+				and trace.crime == 'netrunner' and trace.x == 200.0)
+			api.Alert({ kind = 'netrunner', jobs = { 'ncpd' }, label = 'Arasaka Waterfront',
+				coords = { x = 200.0, y = 0.0, z = 0.0 }, level = 'traced' })
+			trace = last(control, Event.ALERT, COP)
+			check('a warning that becomes a trace pages again, on the same call',
+				trace ~= nil and tostring(trace.description):sub(1, 6) == 'traced')
+			check('a trace for jobs no service holds answers false, so netrunner tells them itself',
+				api.Alert({ kind = 'netrunner', jobs = { 'militech' }, label = 'x', coords = { x = 0, y = 0, z = 0 } }) == false)
+
+			-- 911.
+			police.Server.Emergency(CIVVIE, { 'shots', 'fired', 'on', 'Jig-Jig', 'Street' })
+			control.Pump(3)
+			local call = last(control, Event.ALERT, COP)
+			check('a 911 pages the NCPD with the caller\'s words and position',
+				call ~= nil and call.crime == 'emergency' and call.description == 'shots fired on Jig-Jig Street'
+				and call.x == 40.0, call and call.description)
+			check('the caller never sees their own call', last(control, Event.ALERT, CIVVIE) == nil)
+			local told = #control.notices
+			police.Server.Emergency(CIVVIE, { 'again' })
+			check('a second 911 inside the cooldown is refused with a notice', #control.notices == told + 1)
+
+			police.Server.OnTake(COP, { callId = call.id })
+			check('taking the call routes the officer to the caller', last(control, Event.WAYPOINT, COP) ~= nil
+				and last(control, Event.WAYPOINT, COP).x == 40.0)
+
+			-- 10-00.
+			police.Server.OnDownedChanged(COP, { down = true, citizenId = 'COPS0001' })
+			control.Pump(4)
+			local down = last(control, Event.ALERT, TAC)
+			check('an officer down pages MaxTac at the top of the board', down ~= nil and down.crime == 'officer_down'
+				and down.priority >= 10)
+			check('a civilian going down pages nobody',
+				(function()
+					local count = #control.clientEvents
+					police.Server.OnDownedChanged(CIVVIE, { down = true })
+					control.Pump(4)
+					return #control.clientEvents == count
+				end)())
+			police.Server.OnDownedChanged(COP, { down = false })
+			check('the officer back up closes the 10-00', police.Dispatch.Of('maxtac', 'down:' .. COP) == nil)
+		end
+	end
+
+	section('police: cuffs, escort, frisk, a fine nobody could pay, a cell, a reconnect')
+	do
+		local env, control, why = boot('server', nil, nil, policeConfig)
+		check('the server boots', why == nil, why)
+		if why == nil then
+			local OPX = env.OPX
+			local police = OPX.Modules.Get('police')
+			local progress = OPX.Modules.Get('progress')
+			local Event = police.Event
+			local COP, SUSPECT, CORPO, CIVVIE = 71, 72, 73, 74
+			local cop = policeCharacter(env, control, COP, 'COPS0002', 'ncpd', 2, { EDDIES = 0, BANK = 0 })
+			local suspect = policeCharacter(env, control, SUSPECT, 'SUSP0002', 'unemployed', 0,
+				{ EDDIES = 0, BANK = 100 })
+			policeCharacter(env, control, CORPO, 'CORP0002', 'arasaka', 1, { EDDIES = 0, BANK = 0 })
+			policeCharacter(env, control, CIVVIE, 'CIVV0002', 'unemployed', 0, { EDDIES = 0, BANK = 0 })
+			local now = 1760000000
+			env.Open77.time.unix = function() return now end
+			control.Stand(COP, 10.0, 0.0, 0.0)
+			control.Stand(SUSPECT, 11.0, 0.0, 0.0)
+
+			-- The bag and the downed contract, faked.
+			local bag = { [COP] = {}, [SUSPECT] = { [3] = { name = 'black_lace', count = 2 } } }
+			local stash, wounded, carriedCalls = {}, {}, {}
+			local realGet = OPX.Api.Get
+			OPX.Api.Get = function(name, minimum)
+				if name == 'inventory' then
+					return {
+						GetItemCount = function(id, item) return { ok = true, value = (bag[id] or {})[item] or 0 } end,
+						GetInventory = function(id)
+							local items = {}
+							for slot, entry in pairs(bag[id] or {}) do
+								if type(slot) == 'number' then
+									items[#items + 1] = { slot = slot, name = entry.name, count = entry.count }
+								end
+							end
+							return { ok = true, value = { items = items } }
+						end,
+						GetSlot = function(id, slot)
+							local entry = (bag[id] or {})[slot]
+							return { ok = true, value = entry and { slot = slot, name = entry.name, count = entry.count } }
+						end,
+						RemoveFromSlot = function(id, slot) bag[id][slot] = nil; return { ok = true } end,
+						AddToStash = function(name, item, count)
+							stash[#stash + 1] = { name = name, item = item, count = count }
+							return { ok = true }
+						end,
+						AddItem = function() return { ok = true } end,
+						GetItem = function() return nil end,
+					}
+				end
+				if name == 'downed' then
+					return {
+						IsDown = function(id)
+							return { ok = true, value = { down = wounded[id] == true, stage = wounded[id] and 'wounded' or nil } }
+						end,
+						SetCarried = function(id, caller, on)
+							carriedCalls[#carriedCalls + 1] = { id = id, caller = caller, on = on }
+							return { ok = true }
+						end,
+					}
+				end
+				return realGet(name, minimum)
+			end
+
+			local function ask(handler, player, payload)
+				handler(player, payload)
+				control.Pump(3)
+				return last(control, Event.ANSWER, player)
+			end
+
+			-- The menu: what the officer may do.
+			police.Server.OnOptions(COP, { target = SUSPECT })
+			local view = last(control, Event.OPTIONS_VIEW, COP)
+			local offered = {}
+			for _, row in ipairs(view and view.rows or {}) do offered[row.action] = true end
+			check('on a free suspect a detective is offered cuff and fine, not uncuff, frisk or jail',
+				offered.cuff and offered.fine and not offered.uncuff and not offered.frisk and not offered.jail)
+			local refused = ask(police.Server.OnOptions, CIVVIE, { target = SUSPECT })
+			check('a civilian is offered nothing', refused and refused.code == 'too_far' or refused.code == 'nothing_to_do'
+				or refused.code == 'not_member', refused and refused.code)
+
+			-- Cuffs: no cuffs, no cuffing.
+			local noCuffs = ask(police.Server.OnAct, COP, { target = SUSPECT, action = 'cuff' })
+			check('an officer without handcuffs is refused no_cuffs', noCuffs and noCuffs.code == 'no_cuffs',
+				noCuffs and noCuffs.code)
+			bag[COP].handcuffs = 1
+
+			-- A suspect on their feet: a bar, and walking off is getting away.
+			control.Advance(1000)
+			police.Server.OnAct(COP, { target = SUSPECT, action = 'cuff' })
+			control.Pump(3)
+			local bar = last(control, progress.Event.START, COP)
+			check('cuffing a standing suspect puts up a server bar of CUFFS.DURATION_MS',
+				bar ~= nil and bar.durationMs == 3000, bar and bar.durationMs)
+			control.Stand(SUSPECT, 20.0, 0.0, 0.0)
+			for _ = 1, 7 do control.Advance(500); control.Pump(1) end
+			env.source = COP
+			control.netEvents[progress.Event.REPORT](bar.id, 'finished')
+			env.source = nil
+			control.Pump(4)
+			local away = last(control, Event.ANSWER, COP)
+			check('a suspect who walked out of reach got away', away and away.code == 'got_away', away and away.code)
+			check('and is not cuffed', not OPX.Api.Get('police').IsCuffed(SUSPECT))
+
+			control.Stand(SUSPECT, 11.0, 0.0, 0.0)
+			control.Advance(1000)
+			police.Server.OnAct(COP, { target = SUSPECT, action = 'cuff' })
+			control.Pump(3)
+			bar = last(control, progress.Event.START, COP)
+			for _ = 1, 7 do control.Advance(500); control.Pump(1) end
+			env.source = COP
+			control.netEvents[progress.Event.REPORT](bar.id, 'finished')
+			env.source = nil
+			control.Pump(4)
+			check('one who stayed is cuffed', OPX.Api.Get('police').IsCuffed(SUSPECT))
+			local record = suspect.PlayerData.metadata.police
+			check('and the cuffs are written to the character', type(record) == 'table' and type(record.cuffed) == 'table'
+				and record.cuffed.by == 'COPS0002')
+			local held = last(control, Event.RESTRAINED, SUSPECT)
+			check('the suspect\'s own client is told to hold their hands', held ~= nil and held.cuffed == true)
+			check('the cuffs stay in the officer\'s bag (CONSUME = false)', bag[COP].handcuffs == 1)
+			check('a cuffed player\'s hits are refused by the arbiter',
+				police.Server.Arbitrate({ attacker = SUSPECT, victim = COP, amount = 20 }) == false
+				and police.Server.Arbitrate({ attacker = COP, victim = SUSPECT, amount = 20 }) == nil)
+
+			-- Escort, a cuffed suspect who is also wounded.
+			local requests, cancels = {}, {}
+			env.Open77.playerInteractions = {
+				request = function(actor, target, kind, options)
+					local state = { id = ('esc%d'):format(#requests + 1), kind = kind }
+					requests[#requests + 1] = { actor = actor, target = target, kind = kind, options = options }
+					return state
+				end,
+				cancel = function(id, reason) cancels[#cancels + 1] = { id = id, reason = reason }; return {} end,
+			}
+			wounded[SUSPECT] = true
+			control.Advance(1000)
+			local walking = ask(police.Server.OnAct, COP, { target = SUSPECT, action = 'escort' })
+			check('the officer escorts the cuffed suspect through the platform\'s escort, without consent',
+				walking and walking.code == 'escorting' and requests[1] and requests[1].kind == 'escort'
+				and requests[1].options.consent == false, walking and walking.code)
+			check('the wounded hold is lifted for the walk', carriedCalls[1] and carriedCalls[1].on == true
+				and carriedCalls[1].caller == 'police')
+			police.Server.InteractionEnded({ id = 'medical-someone-else' })
+			check('another module\'s interaction ending is not ours', #carriedCalls == 1)
+			police.Server.InteractionEnded({ id = 'esc1' })
+			check('the escort ending puts the hold back', carriedCalls[2] and carriedCalls[2].on == false)
+			wounded[SUSPECT] = nil
+
+			-- Frisk and confiscate.
+			control.Advance(1000)
+			police.Server.OnAct(COP, { target = SUSPECT, action = 'frisk' })
+			control.Pump(3)
+			local frisk = last(control, Event.FRISK_VIEW, COP)
+			check('a frisk lists the suspect\'s bag to the officer', frisk ~= nil and frisk.items[1]
+				and frisk.items[1].name == 'black_lace' and frisk.items[1].slot == 3)
+			control.Advance(1000)
+			local seized = ask(police.Server.OnConfiscate, COP, { target = SUSPECT, slot = 3 })
+			check('a confiscation moves the stack from the bag into the precinct\'s evidence stash',
+				seized and seized.code == 'confiscated' and bag[SUSPECT][3] == nil and stash[1]
+				and stash[1].name == 'police_evidence_test_precinct' and stash[1].count == 2, seized and seized.code)
+
+			-- A fine the suspect cannot pay in full.
+			control.Advance(1000)
+			local over = ask(police.Server.OnFine, COP, { target = SUSPECT, code = 'robbery', amount = 99999 })
+			check('a fine over the crime\'s ceiling is refused', over and over.code == 'over_ceiling', over and over.code)
+			control.Advance(1000)
+			local unknown = ask(police.Server.OnFine, COP, { target = SUSPECT, code = 'emergency', amount = 10 })
+			check('a code that carries no fine is refused', unknown and unknown.code == 'bad_crime')
+			control.Advance(1000)
+			local fined = ask(police.Server.OnFine, COP, { target = SUSPECT, code = 'robbery', amount = 500,
+				reason = 'Held up a 24/7' })
+			record = suspect.PlayerData.metadata.police
+			check('a fine of 500 against 100 in the bank: 100 paid, 400 on the record',
+				fined and fined.code == 'fined' and suspect.PlayerData.money.BANK == 0 and record.debt == 400,
+				fined and fined.code)
+			check('the officer\'s cut is 10% of what was PAID', cop.PlayerData.money.BANK == 10, cop.PlayerData.money.BANK)
+
+			-- Jail: inside a precinct only.
+			control.Advance(1000)
+			local outside = ask(police.Server.OnAct, COP, { target = SUSPECT, action = 'jail' })
+			check('booking away from a precinct is refused', outside and outside.code == 'not_at_station',
+				outside and outside.code)
+			control.Stand(COP, 501.0, 0.0, 0.0)
+			control.Stand(SUSPECT, 502.0, 0.0, 0.0)
+			control.Advance(1000)
+			police.Server.OnAct(COP, { target = SUSPECT, action = 'jail' })
+			control.Pump(3)
+			local sheet = last(control, Event.JAIL_VIEW, COP)
+			check('inside the precinct the booking sheet opens', sheet ~= nil and sheet.station == 'Test precinct')
+			control.Advance(1000)
+			local trips = #control.trips.calls
+			local booked = ask(police.Server.OnJail, COP, { target = SUSPECT, code = 'robbery', minutes = 10 })
+			record = suspect.PlayerData.metadata.police
+			local trip = control.trips.calls[trips + 1]
+			check('the suspect is booked: uncuffed, sentence on the record, moved into a cell',
+				booked and booked.code == 'jailed' and record.cuffed == nil and type(record.jail) == 'table'
+				and record.jail.untilS == now + 600 and trip and trip.playerId == SUSPECT and trip.position.x == 520.0,
+				booked and booked.code)
+			check('and their hands are given back', last(control, Event.RESTRAINED, SUSPECT).cuffed == false)
+
+			-- A walk-out is put back by the leash.
+			control.Stand(SUSPECT, 560.0, 0.0, 0.0)
+			control.Advance(5000)
+			trips = #control.trips.calls
+			police.Server.Sweep()
+			check('walking out of the cell puts the prisoner back', control.trips.calls[trips + 1]
+				and control.trips.calls[trips + 1].position.x == 520.0)
+
+			-- The reconnect: the record is read again.
+			police.Server.Departed(SUSPECT)
+			check('a prisoner who leaves is forgotten in memory', not select(1, OPX.Api.Get('police').IsJailed(SUSPECT)))
+			police.Server.OnLoaded(SUSPECT)
+			check('and found again from the record on load', select(1, OPX.Api.Get('police').IsJailed(SUSPECT)))
+
+			-- Served: released at the front door.
+			now = now + 601
+			control.Advance(5000)
+			trips = #control.trips.calls
+			police.Server.Sweep()
+			record = suspect.PlayerData.metadata.police
+			check('a served sentence ends at RELEASE and leaves the record',
+				control.trips.calls[trips + 1] and control.trips.calls[trips + 1].position.x == 545.0
+				and record.jail == nil)
+
+			-- The desk settles the debt.
+			suspect.PlayerData.money.BANK = 1000
+			control.Stand(SUSPECT, 505.5, 0.0, 0.0)
+			control.Advance(1000)
+			police.Server.OnDesk(SUSPECT, { station = 'test_precinct' })
+			control.Pump(3)
+			local desk = last(control, Event.DESK_VIEW, SUSPECT)
+			check('the desk shows what is owed', desk ~= nil and desk.debt == 400)
+			control.Advance(1000)
+			local settled = ask(police.Server.OnDesk, SUSPECT, { station = 'test_precinct', pay = true })
+			check('and settles it', settled and settled.code == 'debt_paid' and suspect.PlayerData.money.BANK == 600
+				and suspect.PlayerData.metadata.police.debt == nil, settled and settled.code)
+
+			-- Reconnect cuffed.
+			suspect.PlayerData.metadata.police = { cuffed = { by = 'COPS0002', service = 'ncpd' } }
+			police.Server.Departed(SUSPECT)
+			police.Server.OnLoaded(SUSPECT)
+			check('a player who logs back in cuffed is cuffed again, hands held',
+				OPX.Api.Get('police').IsCuffed(SUSPECT) and last(control, Event.RESTRAINED, SUSPECT).cuffed == true)
+
+			-- Corpo security, inside and outside its enclave.
+			control.Stand(CORPO, 300.0, 0.0, 0.0)
+			control.Stand(CIVVIE, 301.0, 0.0, 0.0)
+			control.Advance(1000)
+			local away2 = ask(police.Server.OnAct, CORPO, { target = CIVVIE, action = 'cuff' })
+			check('Arasaka security outside its enclave has no authority', away2 and away2.code == 'out_of_jurisdiction',
+				away2 and away2.code)
+			control.Stand(CORPO, 900.0, 0.0, 0.0)
+			control.Stand(CIVVIE, 901.0, 0.0, 0.0)
+			control.Advance(1000)
+			police.Server.OnOptions(CORPO, { target = CIVVIE })
+			control.Pump(3)
+			local corpoView = last(control, Event.OPTIONS_VIEW, CORPO)
+			local corpoActs = {}
+			for _, row in ipairs(corpoView and corpoView.rows or {}) do corpoActs[row.action] = true end
+			check('inside it, it may cuff but never fine or jail', corpoActs.cuff and not corpoActs.fine
+				and not corpoActs.jail)
+		end
+	end
+
+	section('police: the cuffs on the suspect\'s own client')
+	do
+		local env, control, why = boot('client', nil, nil, policeConfig)
+		check('the client boots with the police module', why == nil, why)
+		if why == nil then
+			local calls = {}
+			for _, name in ipairs({ 'allowWeapons', 'allowShoot', 'allowAim', 'allowDodge', 'allowJump',
+				'allowInteraction' }) do
+				env.Open77.players[name] = function(value)
+					calls[#calls + 1] = { name = name, value = value }
+					return true
+				end
+			end
+			local handler = control.netEvents['opx:net:police:restrained']
+			check('the client listens for its own cuffs', type(handler) == 'function')
+			if type(handler) == 'function' then
+				handler({ cuffed = true })
+				local blocked = 0
+				for _, call in ipairs(calls) do if call.value == false then blocked = blocked + 1 end end
+				check('cuffed, every hand control is blocked', blocked == 6, blocked)
+				calls = {}
+				control.Advance(1100)
+				control.Pump(6)
+				local again = 0
+				for _, call in ipairs(calls) do if call.value == false then again = again + 1 end end
+				check('and held again on the next second, whatever reset it', again >= 6, again)
+				calls = {}
+				handler({ cuffed = false })
+				local freed = 0
+				for _, call in ipairs(calls) do if call.value == true then freed = freed + 1 end end
+				check('uncuffed, each block is released by its own inverse', freed == 6, freed)
+			end
+		end
+	end
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the
