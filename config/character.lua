@@ -329,6 +329,21 @@ OPX.Config.MODULES.character = {
 				[1] = { name = 'Chief Judge', payment = 900, isBoss = true, bankAuth = true },
 			},
 		},
+
+		-- Journalists: N54 News, WNS and the screamsheet (config/media.lua says
+		-- which newsroom; a Stringer is the freelancer who sells to any desk).
+		reporter = {
+			label = 'Reporter',
+			type = 'media',
+			defaultDuty = false,
+			offDutyPay = false,
+			grades = {
+				[0] = { name = 'Stringer', payment = 80 },
+				[1] = { name = 'Reporter', payment = 200 },
+				[2] = { name = 'Anchor', payment = 360 },
+				[3] = { name = 'Editor-in-chief', payment = 560, isBoss = true, bankAuth = true },
+			},
+		},
 	},
 
 	GANGS = {

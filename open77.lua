@@ -152,6 +152,9 @@ shared_script "config/justice.lua"
 -- Shared: the client draws each station's duty, wardrobe and garage spheres
 -- from it; the server re-derives every one. See modules/workplace/module.lua.
 shared_script "config/workplace.lua"
+-- Shared: the client draws the editor desks it reads here and the break's
+-- stingers; the server re-derives every desk and price. See modules/media/module.lua.
+shared_script "config/media.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -678,6 +681,17 @@ shared_script "modules/workplace/shared/access.lua"
 server_script "modules/workplace/server/main.lua"
 client_script "modules/workplace/client/main.lua"
 
+-- Media: N54 News / WNS / the screamsheet -- breaking news, field photos,
+-- stories, the editor desks, the tips line. After `character`, `inventory`
+-- (required), `progress`, `target`, `form` and `downed` (optional), every one
+-- ordered above. `players.screenshot` below is its own, used only when
+-- PHOTO.UPLOAD_URL names somewhere for a real picture to go.
+shared_script "modules/media/module.lua"
+shared_script "modules/media/locales.lua"
+shared_script "modules/media/shared/model.lua"
+server_script "modules/media/server/main.lua"
+client_script "modules/media/client/main.lua"
+
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before
 -- `admin`, which stays last.
@@ -906,6 +920,13 @@ permissions {
   -- `modules/underworld/server/drugs.lua` alone. `open77_permissions
   -- players.screenfx` prints this exact manifest line; server-enforced.
   "players.screenfx",
+
+  -- `Open77.players.requestScreenshot`, at the one call site in `screenshot`
+  -- in `modules/media/server/main.lua`, and only when `config/media.lua`
+  -- PHOTO.UPLOAD_URL is set: the reporter's client captures its own game view
+  -- and POSTs it to that URL. `open77_api server:Open77.players.requestScreenshot`
+  -- prints this exact manifest line; server-enforced.
+  "players.screenshot",
 
   -- `Open77.players.teleport`, the ONLY thing in this resource that moves a
   -- living body without killing it. `modules/teleports` is its only caller.
