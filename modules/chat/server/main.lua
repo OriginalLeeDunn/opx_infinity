@@ -130,7 +130,9 @@ local function onReady()
 	-- has two very different causes -- the server had nothing to offer, or the
 	-- page never received what it sent -- and they are indistinguishable from the
 	-- player's side. This line tells them apart from the journal.
-	Open77.log.debug(('[chat] %d completion(s) sent to player %d')
+	-- INFO, not debug: "the slash offers nothing" was reported and the journal
+	-- could not say which side lost the list.
+	Open77.log.info(('[chat] %d completion(s) sent to player %d')
 		:format(type(list) == 'table' and #list or -1, player))
 end
 

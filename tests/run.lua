@@ -50175,6 +50175,22 @@ do
 	end
 end
 
+-- ── a client has no getmetatable, and must still learn runtime items ────────
+-- The client sandbox removes `getmetatable`; the runtime-item check called it by
+-- name and raised on every item the job modules register at boot, so no client
+-- ever knew a pair of handcuffs or a cocktail.
+section('inventory: a client without getmetatable still learns runtime items')
+do
+	local env, _, why = boot('client', nil, function(env) env.getmetatable = nil end)
+	check('the client boots with no getmetatable, as the platform runs it', why == nil, why)
+	if why == nil then
+		local Catalog = env.OPX.Modules.Get('inventory').Catalog
+		local ok, code = Catalog.Register('meta_probe', { label = 'Probe', weight = 10 }, 'police')
+		check('a runtime item registers without raising', ok == true, code)
+		check('and the catalogue knows it', Catalog.Get('meta_probe') ~= nil)
+	end
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the

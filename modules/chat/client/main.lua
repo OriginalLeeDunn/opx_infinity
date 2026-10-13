@@ -377,6 +377,10 @@ local function sendChunks(list, mine, paced)
 			chunk[#chunk + 1] = list[index]
 		end
 		if not publish('interactive', 'suggestions', { suggestions = chunk, reset = first }) then
+			-- Said, because a list cut here leaves the box with what came before:
+			-- the reset already went out, so this is the "0 commands" case.
+			Open77.log.warn(('[chat] the completion list stopped at %d of %d: the input line ' ..
+				'refused a part'):format(at - 1, total))
 			return false
 		end
 		first = false
@@ -408,6 +412,7 @@ end
 local function onSuggestions(payload)
 	local list = type(payload) == 'table' and payload.suggestions or nil
 	suggestions = type(list) == 'table' and list or {}
+	Open77.log.info(('[chat] %d completion(s) received'):format(#suggestions))
 	sendSuggestions(suggestions)
 end
 

@@ -197,7 +197,10 @@ OPX.Config.MODULES.blips = {
 	-- the client refuses -- too complex, undeclared -- is logged once and the pin
 	-- falls back to the sprite; it is never lost. To add an icon: drop the .svg in
 	-- `ui/public/blips/` (the build copies it to `web/blips/`), keep every stroke
-	-- inside its viewBox, no text, gradients, masks or filters.
+	-- inside its viewBox, no text, gradients, masks or filters. Prefer butt caps
+	-- and bevel joins: round ones are cut into many small polygons, and with a
+	-- few dozen pins that ran the client out of its blip visual budget
+	-- (`blip_visual_budget_exceeded`, seen on the garages and the dealership).
 	--
 	-- RANGE is metres, 0..4000, and 0 MEANS NO GATE -- always visible. It is
 	-- Open77's own doing rather than an engine field: it measures the distance
