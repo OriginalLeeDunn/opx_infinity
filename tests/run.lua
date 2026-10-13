@@ -50191,6 +50191,58 @@ do
 	end
 end
 
+-- ── chat: the completion list travels in parts ───────────────────────────────
+-- A staff list of 150 rows in one event was dropped by the client as a
+-- "malformed network event payload" and the slash offered nothing.
+section('chat: the completion list goes in parts of 32 and comes back whole')
+do
+	local env, control, why = boot('server')
+	check('the server boots', why == nil, why)
+	if why == nil then
+		local chat = env.OPX.Modules.Get('chat')
+		env.Open77.acl = env.Open77.acl or {}
+		env.Open77.acl.isAllowed = function() return true end
+		control.Admit(41, 'user-chat')
+		env.source = 41
+		control.netEvents[chat.Event.READY]()
+		env.source = nil
+		local parts, rows, widest, numbered = 0, 0, 0, true
+		for _, event in ipairs(control.clientEvents) do
+			if event.name == chat.Event.SUGGESTIONS and event.source == 41 then
+				parts = parts + 1
+				rows = rows + #event[1].suggestions
+				widest = math.max(widest, #event[1].suggestions)
+				if event[1].part ~= parts then numbered = false end
+			end
+		end
+		check('a long list is sent in several numbered parts', parts > 1 and numbered, parts)
+		check('none over 32 rows', widest <= 32, widest)
+		check('and nothing is lost', rows == #env.OPX.Command.Suggestions(41), rows)
+	end
+end
+
+do
+	local env, control, why = boot('client')
+	if why == nil then
+		local chat = env.OPX.Modules.Get('chat')
+		local handler = control.netEvents[chat.Event.SUGGESTIONS]
+		local function row(i) return { name = 'cmd' .. i } end
+		local function part(from, to, n, of)
+			local list = {}
+			for i = from, to do list[#list + 1] = row(i) end
+			handler({ suggestions = list, part = n, parts = of })
+		end
+		part(1, 32, 1, 3)
+		part(33, 64, 2, 3)
+		part(65, 70, 3, 3)
+		local said = false
+		for _, line in ipairs(control.log.info) do
+			if tostring(line):find('70 completion(s) received', 1, true) then said = true end
+		end
+		check('the client puts three parts back together as one list of 70', said)
+	end
+end
+
 -- The budget meter's report, when `OPX_BUDGET_METER` asked for one: every
 -- client call site whose worst single resume cost more than the figure, the
 -- dearest first. Read it, do not gate on it -- a site here is a resume the

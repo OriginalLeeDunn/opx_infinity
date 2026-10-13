@@ -113,6 +113,9 @@ local function onSaid(text)
 	})
 end
 
+-- Completion rows per SUGGESTIONS event. See `onReady`.
+local SUGGESTIONS_PER_EVENT = 32
+
 --- Answers the box with every command this player may be shown.
 -- Anyone can raise this name and the answer is kilobytes, so it keeps its own
 -- cooldown rather than sharing one with anything else.
@@ -124,7 +127,21 @@ local function onReady()
 	-- Core owns the list, and with it the rule that a restricted command is only
 	-- offered to a player the ACL would let run it.
 	local list = OPX.Command.Suggestions(player)
-	TriggerClientEvent(M.Event.SUGGESTIONS, player, { suggestions = list })
+	-- IN PARTS, NOT ONE EVENT. A staff list of 150 rows was dropped whole by the
+	-- client as "malformed network event payload" -- well inside the documented
+	-- 48 KiB and 4096-node caps, so the client holds a tighter one of its own --
+	-- and the slash offered nothing. A player without the restricted rows (34)
+	-- got through, which is why it "sometimes worked". The client puts the parts
+	-- back together and draws the list once the last one is in.
+	local total = type(list) == 'table' and #list or 0
+	local parts = math.max(1, math.ceil(total / SUGGESTIONS_PER_EVENT))
+	for part = 1, parts do
+		local chunk = {}
+		for index = (part - 1) * SUGGESTIONS_PER_EVENT + 1, math.min(part * SUGGESTIONS_PER_EVENT, total) do
+			chunk[#chunk + 1] = list[index]
+		end
+		TriggerClientEvent(M.Event.SUGGESTIONS, player, { suggestions = chunk, part = part, parts = parts })
+	end
 
 	-- Said out loud because the alternative is guessing. An empty completion list
 	-- has two very different causes -- the server had nothing to offer, or the
