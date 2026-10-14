@@ -538,14 +538,16 @@
   .player{ display: flex; align-items: center; gap: var(--op-space-3); }
   /* These two ARE controls, so these two get a frame. `.op-frame` brings the cut,
      the ground and the hover; what is left here is the size and the icon. */
+  /* Sized for a mouse, not a glance: real volume controls a player can hit while
+     the city streams in. */
   .btn{
-    width: 32px; height: 32px; flex: 0 0 auto; cursor: pointer;
+    width: 40px; height: 40px; flex: 0 0 auto; cursor: pointer;
     display: grid; place-items: center;
     border: 0;
     transition: color var(--op-dur-fast) linear;
   }
   .btn:focus-visible{ outline: 1px solid var(--op-red-hi); outline-offset: 2px; }
-  .btn svg{ width: 14px; height: 14px; fill: currentcolor; }
+  .btn svg{ width: 16px; height: 16px; fill: currentcolor; }
   .btn .i-pause, .btn .i-mute{ display: none; }
   .btn.playing .i-play{ display: none; }
   .btn.playing .i-pause{ display: block; }
@@ -554,21 +556,26 @@
 
   /* A slider is a control whose frame would be its own track, so it draws the track
      and not a box: an outline around a 3px rule is a box with a line in it. */
-  .vol{ flex: 0 0 clamp(88px, 10vw, 150px); display: flex; align-items: center; gap: var(--op-space-2); }
+  /* The track is filled up to the level (`--vol`, written by `paint`), so the
+     slider reads as a volume at a glance and not only where its thumb is. */
+  .vol{ flex: 0 0 clamp(160px, 14vw, 240px); display: flex; align-items: center; gap: var(--op-space-2); }
   input[type=range]{
     -webkit-appearance: none; appearance: none;
-    width: 100%; height: 3px; cursor: pointer; outline: none;
-    background: rgba(var(--op-red-idle-rgb), 0.28);
+    width: 100%; height: 4px; cursor: pointer; outline: none;
+    background: linear-gradient(to right,
+      var(--op-red) 0 var(--vol, 100%),
+      rgba(var(--op-red-idle-rgb), 0.28) var(--vol, 100%) 100%);
   }
   input[type=range]::-webkit-slider-thumb{
     -webkit-appearance: none; appearance: none;
-    width: 10px; height: 10px; background: var(--op-red-hi);
+    width: 14px; height: 14px; background: var(--op-red-hi);
   }
   input[type=range]::-moz-range-thumb{
-    width: 10px; height: 10px; border: 0; background: var(--op-red-hi);
+    width: 14px; height: 14px; border: 0; background: var(--op-red-hi);
   }
   input[type=range]:focus-visible{ outline: 1px solid var(--op-red-hi); outline-offset: 4px; }
-  .vol-val{ color: var(--op-text-dim); min-width: 24px; }
+  .vol-val{ color: var(--op-text-dim); min-width: 36px; }
+  .vol-val::after{ content: "%"; }
   /* Shown only while the host is refusing unmuted playback and no gesture has landed
      yet -- so a silent screen says why instead of looking broken. */
   .sound-hint{ display: none; color: var(--op-red-hi); }
@@ -606,8 +613,8 @@
     <div class="bay op-bay op-arete" data-augmented-ui="tr-clip bl-clip border">
       <div class="bay-inner op-interlace">
         <div class="brand">
-          <div class="mark">OPEN<b>//</b>77</div>
-          <div class="mode op-eyebrow">Infinity</div>
+          <div class="mark" id="mark">OPEN<b>//</b>77</div>
+          <div class="mode op-eyebrow" id="mode">Infinity</div>
         </div>
 
         <div class="status">
@@ -734,9 +741,28 @@
     // the page retries muted and says so, and the first click unmutes. Set
     // false for a screen that should always start silent.
     sound: true,
+
+    // The name in the bay: the brand mark, and the line under it, for a server
+    // that wants its own name on the screen. Plain text, drawn in the display
+    // face at the head step, so keep the mark short; the page title follows the
+    // mark. Empty keeps the page's own OPEN//77 and Infinity.
+    name: "",
+    subtitle: "",
   };
 
   var $=function(id){return document.getElementById(id)};
+
+  /* The name, from the block above. Text only -- never markup -- and only when it
+     differs from what the page already says. */
+  (function(){
+    var markEl=$("mark"), modeEl=$("mode");
+    if(markEl && typeof LOADSCREEN.name==="string" && LOADSCREEN.name
+       && markEl.textContent!==LOADSCREEN.name) markEl.textContent=LOADSCREEN.name;
+    if(modeEl && typeof LOADSCREEN.subtitle==="string" && LOADSCREEN.subtitle
+       && modeEl.textContent!==LOADSCREEN.subtitle) modeEl.textContent=LOADSCREEN.subtitle;
+    if(typeof LOADSCREEN.name==="string" && LOADSCREEN.name)
+      document.title=LOADSCREEN.name+" \u2014 Loading";
+  })();
   var phaseEl=$("phase"),pctEl=$("pct"),barEl=$("bar"),fillEl=$("fill"),
       detailEl=$("detail"),videoEl=$("video"),
       playEl=$("play"),muteEl=$("mute"),volEl=$("vol"),volValEl=$("volVal");
@@ -804,6 +830,7 @@
       var shown = Math.round((videoEl.muted?0:videoEl.volume)*100);
       volValEl.textContent = shown;
       if(volEl.value !== String(shown)) volEl.value = String(shown);
+      volEl.style.setProperty("--vol", shown + "%");
     }
   }
 
