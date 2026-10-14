@@ -13,6 +13,9 @@
 
 local PHASES = { 'Init', 'Api', 'Start' }
 
+-- Modules `Resolve` walks per resume. See `Resolve`.
+local WALK_SLICE = 24
+
 local resolved
 local ran = false
 
@@ -98,8 +101,18 @@ function OPX.Modules.Resolve()
 	if resolved then return resolved end
 
 	local out, seen, trail = {}, {}, {}
-	for _, module in ipairs(OPX.Modules.All()) do
+	local all = OPX.Modules.All()
+	for index, module in ipairs(all) do
 		visit(module, seen, out, trail)
+		-- THE WALK ITSELF IN SLICES, when the stack may yield. Over the seventy-odd
+		-- modules a full server declares, the walk alone came to ~5,000 instructions in
+		-- one resume (`tests/run.lua`, the client boot). A walk parked here keeps
+		-- its own `seen` and `out`, and a caller that finished the order meanwhile
+		-- has already answered it.
+		if index % WALK_SLICE == 0 and index < #all and type(Wait) == 'function' then
+			pcall(Wait, 0)
+			if resolved then return resolved end
+		end
 	end
 
 	-- A FRESH RESUME FOR THE REST, when the stack may yield. The walk above and

@@ -855,7 +855,15 @@ function M.Start()
 			:format(#placeholders, table.concat(placeholders, ', ')))
 	end
 	if next(stations) == nil then
-		Open77.log.warn('[fuel] no station is open: every tank still burns, and only a can or staff fills one')
+		local s = settings()
+		if s.multiplier == 0 and s.leakPerMinute == 0 then
+			-- Said as what it is: with the burn off, an unsurveyed city is a
+			-- setting, not a fault (a server turns it off in config/fuel.lua).
+			Open77.log.info('[fuel] no station is open, and the burn is off (CONSUMPTION.MULTIPLIER = 0): '
+				.. 'every tank stays as it is until the stations are surveyed')
+		else
+			Open77.log.warn('[fuel] no station is open: every tank still burns, and only a can or staff fills one')
+		end
 	end
 
 	local api = inventory()

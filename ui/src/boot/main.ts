@@ -1,3 +1,4 @@
+import AlarmSplash from '@/modules/alarm/AlarmSplash.vue'
 import CallHolo from '@/modules/calls/HoloRoot.vue'
 import ChatInput from '@/modules/chat/ChatInput.vue'
 import ChatLog from '@/modules/chat/ChatLog.vue'
@@ -50,6 +51,9 @@ registerModule({ id: 'hud', surface: 'overlay', component: HudRoot, hideWhileLoa
 // Toasts on a layer of their own ABOVE the modal one: most of them answer something the
 // player just did on a modal view, and under it they were dimmed by that view's scrim.
 registerModule({ id: 'notify', surface: 'notice', component: NotifyRoot, hideWhileLoading: true })
+// The MaxTac alarm (`modules/ncpd`): on the notice layer with the toasts, so it takes
+// neither the keyboard nor the pointer from a player in a fight.
+registerModule({ id: 'alarm', surface: 'notice', component: AlarmSplash, hideWhileLoading: true })
 registerModule({ id: 'prompts', surface: 'overlay', component: PromptsRoot, hideWhileLoading: true })
 registerModule({ id: 'progress', surface: 'overlay', component: ProgressRoot, hideWhileLoading: true })
 

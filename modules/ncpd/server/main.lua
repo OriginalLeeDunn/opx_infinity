@@ -338,7 +338,14 @@ local function callOut(citizenId, playerId, stage, previous)
 	local now = OPX.Now()
 	local cooldown = tonumber(alerts.COOLDOWN_MS) or 20000
 	local last = called[citizenId]
-	if cooldown > 0 and last ~= nil and now - last < cooldown then
+	-- THE CROSSING INTO MAXTAC'S STAGE IS NEVER SWALLOWED BY THE COOLDOWN. The
+	-- floor is there so one firefight climbing the NCPD's stages is one message;
+	-- a cyberpsycho is the firefight that climbed out of them, and the squad's
+	-- alarm rides this call-out. Measured in the bot lab: a psycho at stage 2,
+	-- 3, 4 and 5 inside eight seconds was called out at 2 and never at 5.
+	local maxtacNow = Law.Division(stage) == M.DIVISION.MAXTAC
+		and Law.Division(previous) ~= M.DIVISION.MAXTAC
+	if cooldown > 0 and last ~= nil and now - last < cooldown and not maxtacNow then
 		Open77.log.info(('[ncpd] stage %d for %s: no call-out, one went out %d ms ago')
 			:format(stage, citizenId, now - last))
 		return 0
@@ -408,6 +415,33 @@ local function callOut(citizenId, playerId, stage, previous)
 			Open77.log.info(('[ncpd] dispatch board: %d screen(s) lit for stage %d')
 				:format(aired, stage))
 		end
+	end
+
+	-- AND WHEN IT IS MAXTAC'S STAGE, THE SQUAD'S WHOLE SCREEN (`ALERTS.ALARM`).
+	-- The same rise, the same suspect kept out of it.
+	local alarm = type(alerts.ALARM) == 'table' and alerts.ALARM or nil
+	if alarm ~= nil and alarm.enabled ~= false and Law.Division(stage) == M.DIVISION.MAXTAC
+		and Law.Division(previous) ~= M.DIVISION.MAXTAC then
+		local squad = 0
+		walkOnDuty(type(alarm.JOBS) == 'table' and alarm.JOBS or { M.DIVISION.MAXTAC }, function(recipient)
+			if playerId ~= nil and recipient == playerId then return end
+			squad = squad + 1
+			TriggerClientEvent(M.Event.ALARM, recipient, {
+				stage = stage, x = args.x, y = args.y, name = args.name, division = args.division,
+			})
+		end)
+		-- AND THE PSYCHO IS TOLD WHAT IS COMING. The squad's screen is not theirs
+		-- -- it would name them to themselves -- but a player who has just become
+		-- MaxTac's business hears the klaxon and reads it in words
+		-- (`ALARM.SUSPECT`). The bot lab, 2026-10-07: four bodies and "i didnt get
+		-- maxtac alert".
+		local warned = false
+		if playerId ~= nil and alarm.SUSPECT ~= false then
+			warned = pcall(TriggerClientEvent, M.Event.ALARM, playerId, { stage = stage, suspect = true })
+		end
+		Open77.log.info(('[ncpd] MAXTAC ALARM: %s went cyberpsycho (stage %d) -- %d squad screen(s) lit%s%s')
+			:format(citizenId, stage, squad, squad == 0 and ' (no MaxTac on duty)' or '',
+				warned and ', and the psycho is told MaxTac is coming' or ''))
 	end
 
 	Open77.log.info(('[ncpd] call-out: %s rose to stage %d/%d at %.0f, %.0f -- %d on-duty holder(s) told%s')
@@ -654,6 +688,24 @@ local function publish(citizenId, verdict, options)
 		for _, refusal in ipairs(applied.value.refused or {}) do
 			Open77.log.warn(('[ncpd] %s: refused spawn: %s'):format(citizenId, tostring(refusal)))
 		end
+		-- THE CEILING, said out loud (`LIMITS`): a psycho NCPD holds while every
+		-- MaxTac squad is out, and a response the street had no more room for.
+		local value = applied.value
+		local street = type(Response.Street) == 'function' and Response.Street() or nil
+		local ceiling = street ~= nil and street.limits or nil
+		if value.queued == true then
+			Open77.log.info(('[ncpd] MaxTac is committed (%d squad(s) out of %d): NCPD\'s stage %d holds %s ' ..
+				'until a squad is free'):format(street and street.squads or 0, ceiling and ceiling.squads or 0,
+				tonumber(value.stage) or 0, citizenId))
+			M.Radio.Push('maxtac', 'ncpd.radio.maxtac.committed', { citizen = citizenId })
+		end
+		local trimmed = value.trimmed
+		if type(trimmed) == 'table' and ceiling ~= nil and (trimmed.units > 0 or trimmed.vehicles > 0) then
+			Open77.log.info(('[ncpd] the street is full for %s: %d officer(s) and %d car(s) wait for room ' ..
+				'(%d/%d officers, %d/%d cars standing for every wanted character)')
+				:format(citizenId, trimmed.units, trimmed.vehicles, street.units, ceiling.units,
+					street.vehicles, ceiling.vehicles))
+		end
 	end
 
 	TriggerEvent(M.Event.ON_STAGE, {
@@ -667,6 +719,53 @@ local function publish(citizenId, verdict, options)
 	return applied.ok == true and applied.value or nil
 end
 
+-- THE CYBERPSYCHO RULE: when each character's recent killings were charged, by
+-- citizen id, oldest first. See `PSYCHO_KILLS` in config/ncpd.lua.
+local killings = {}
+
+--- The first stage MaxTac answers, or nil when the ladder names none.
+local function maxtacStage()
+	for stage = 1, Law.StageCount do
+		if Law.Division(stage) == M.DIVISION.MAXTAC then return stage end
+	end
+	return nil
+end
+
+--- Counts a charged killing, and sends a character who has killed more than
+--- `PSYCHO_KILLS` people inside `PSYCHO_WINDOW_SECONDS` straight to MaxTac.
+-- The owner, 2026-10-07: "when i kill more then 3 people thats when your labeled
+-- cyberphysco". The score ladder alone takes far more than four murders to
+-- climb to MaxTac's stage.
+-- @param citizenId string
+-- @param lawId string
+-- @param verdict table what the ledger decided for this charge
+-- @return table|nil the verdict that put them on MaxTac's stage
+local function psychoRule(citizenId, lawId, verdict)
+	local block = homicide()
+	if block == nil or type(block.CALL_OUT) ~= 'table' or block.CALL_OUT[lawId] == nil then return nil end
+	local limit = block.PSYCHO_KILLS
+	if limit == false or limit == nil then return nil end
+	limit = math.floor(tonumber(limit) or 3)
+	if limit < 1 then return nil end
+	local windowMs = math.floor(math.max(10, math.min(86400, tonumber(block.PSYCHO_WINDOW_SECONDS) or 600)) * 1000)
+	local now = OPX.Now()
+	local list = killings[citizenId] or {}
+	local kept = {}
+	for _, at in ipairs(list) do
+		if now - at < windowMs then kept[#kept + 1] = at end
+	end
+	kept[#kept + 1] = now
+	killings[citizenId] = kept
+	if #kept <= limit then return nil end
+	local stage = maxtacStage()
+	if stage == nil or (tonumber(verdict.stage) or 0) >= stage then return nil end
+	local set = Ledger.Set(citizenId, stage, now)
+	if set.ok ~= true then return nil end
+	Open77.log.info(('[ncpd] %s killed %d people in %ds: CYBERPSYCHO -- straight to MaxTac\'s stage %d')
+		:format(citizenId, #kept, math.floor((now - kept[1]) / 1000), stage))
+	return set.value
+end
+
 --- Charges one character and publishes whatever the charge did.
 -- @param citizenId string
 -- @param lawId string
@@ -677,7 +776,11 @@ local function charge(citizenId, lawId, options)
 	if charged.ok ~= true then return charged end
 
 	local verdict = charged.value
-	if verdict.crossed == true or verdict.stage ~= verdict.previous then
+	local psycho = psychoRule(citizenId, tostring(lawId), verdict)
+	if psycho ~= nil then
+		psycho.law = lawId
+		publish(citizenId, psycho, { reason = 'cyberpsycho' })
+	elseif verdict.crossed == true or verdict.stage ~= verdict.previous then
 		publish(citizenId, verdict, { reason = 'crime' })
 	end
 
@@ -768,6 +871,35 @@ local function killerOf(value)
 	return id
 end
 
+--- Whether an on-duty officer's kill of a player is use of force.
+--
+-- USE OF FORCE IS AGAINST A SUSPECT. The bot lab, 2026-10-07: "i killed more
+-- then 3 bot players and i didnt get maxtac alert". The tester was on duty as
+-- MaxTac, and every one of the four bodies was booked "use of force, not
+-- charged" -- four bystanders, none of them wanted, none of them armed. A
+-- badge is not a licence: the kill is the officer's job when the victim was
+-- WANTED, or had just hurt the officer (inside `ATTRIBUTION_MS`); any other
+-- body is a murder like anybody's, and counts toward the cyberpsycho rule.
+-- `EXEMPT_ON_DUTY = 'all'` is the old blanket exemption.
+-- @param block table the HOMICIDE block
+-- @param officerId number
+-- @param victimId number|nil
+-- @return boolean
+-- @return string why, for the journal
+local function useOfForce(block, officerId, victimId)
+	if block.EXEMPT_ON_DUTY == 'all' then return true, 'EXEMPT_ON_DUTY is all' end
+	local dead = victimId ~= nil and characterOf(victimId) or nil
+	if dead ~= nil and Ledger.Stage(dead.citizenId) > 0 then
+		return true, ('the victim was wanted at stage %d'):format(Ledger.Stage(dead.citizenId))
+	end
+	local hurt = lastHurt[officerId]
+	local window = math.max(tonumber(block.ATTRIBUTION_MS) or 8000, 1000)
+	if hurt ~= nil and victimId ~= nil and hurt.by == victimId and OPX.Now() - hurt.at < window then
+		return true, 'the victim had just hurt them'
+	end
+	return false, 'the victim was not wanted and had not hurt them'
+end
+
 --- A player killed by a player: the platform's own attributed death.
 --
 -- `open77:playerKilled(victimId, killerId, contextJson)` is raised into every
@@ -806,9 +938,14 @@ local function onPlayerKilled(victimId, killerId, context, via)
 		return
 	end
 	if block.EXEMPT_ON_DUTY ~= false and onCall(suspect) then
-		Open77.log.info(('[ncpd] %s killed player %s on duty: use of force, not charged')
-			:format(suspect.citizenId, tostring(victimId)))
-		return
+		local force, because = useOfForce(block, killer, victim)
+		if force then
+			Open77.log.info(('[ncpd] %s killed player %s on duty: use of force (%s), not charged')
+				:format(suspect.citizenId, tostring(victimId), because))
+			return
+		end
+		Open77.log.info(('[ncpd] %s killed player %s on duty, but %s: that is not use of force, it is charged')
+			:format(suspect.citizenId, tostring(victimId), because))
 	end
 
 	local dead = victim ~= nil and characterOf(victim) or nil
@@ -985,6 +1122,134 @@ local function decayPass(nowMs)
 	return dropped
 end
 
+-- ── neutralized: a wanted character who is down ──────────────────────────────
+--
+-- THE JOB IS DONE WHEN THE SUSPECT IS DOWN. A MaxTac squad leaves once the
+-- psycho is down, and a stage held over a body for as long as the ledger's quiet
+-- window is the other half of the lab's pile-up: its responses never came down,
+-- because nobody left alive was going to be quiet for ninety seconds. A wanted
+-- character down for `LIMITS.NEUTRALIZED_SECONDS` is cleared, the response goes
+-- home and the room it held is somebody else's (`Response.Refill`).
+
+-- When each wanted character was first seen down, by citizen id.
+local downSince = {}
+-- When each character was neutralized: their own engine's report of a stage is
+-- not heard for `ENGINE_GRACE_MS` after it, because an engine that has not yet
+-- heard the clear would otherwise put them straight back on the ladder.
+local stoodDown = {}
+local ENGINE_GRACE_MS = 30000
+
+--- How long a wanted character is down before they are neutralized, or nil when
+--- that is off (`LIMITS = false`, or `NEUTRALIZED_SECONDS = false`).
+-- @return integer|nil milliseconds
+local function neutralizedMs()
+	-- Read in two steps: `a and false or nil` is nil, and `false` is the switch.
+	local declared = nil
+	if type(M.Settings) == 'table' then declared = M.Settings.LIMITS end
+	if declared == false then return nil end
+	local block = type(declared) == 'table' and declared or {}
+	if block.NEUTRALIZED_SECONDS == false then return nil end
+	local seconds = tonumber(block.NEUTRALIZED_SECONDS)
+	if seconds == nil or seconds ~= seconds or seconds < 0 or seconds > 3600 then seconds = 10 end
+	return math.floor(seconds * 1000)
+end
+
+--- Whether a connection's body is down: the platform's own life phase.
+-- @param playerId number
+-- @return boolean
+local function isDown(playerId)
+	local players = Open77.players
+	if type(players) ~= 'table' then return false end
+	if type(players.getLifeState) == 'function' then
+		local read, life = pcall(players.getLifeState, playerId)
+		if read and type(life) == 'table' then
+			local phase = tostring(life.phase or '')
+			return phase == 'dead' or phase == 'revivepending'
+		end
+		if read then return false end
+	end
+	if type(players.isDead) == 'function' then
+		local read, dead = pcall(players.isDead, playerId)
+		return read and dead == true
+	end
+	return false
+end
+
+--- One neutralize pass: every wanted character down for the window is cleared,
+--- told so, and their response stands down.
+-- @param nowMs integer|nil
+-- @return integer how many were neutralized
+local function neutralizePass(nowMs)
+	local window = neutralizedMs()
+	if window == nil then
+		downSince = {}
+		return 0
+	end
+	local now = tonumber(nowMs) or OPX.Now()
+	local seen, dropped = {}, 0
+	for _, item in ipairs(Ledger.All()) do
+		local citizenId, entry = item.citizenId, item.entry
+		local previous = tonumber(entry.stage) or 0
+		local playerId = previous > 0 and sourceOf(citizenId) or nil
+		if playerId ~= nil and isDown(playerId) then
+			seen[citizenId] = true
+			local since = downSince[citizenId]
+			if since == nil then
+				downSince[citizenId] = now
+			elseif now - since >= window then
+				Ledger.Clear(citizenId)
+				killings[citizenId] = nil
+				downSince[citizenId] = nil
+				seen[citizenId] = nil
+				stoodDown[citizenId] = now
+				dropped = dropped + 1
+				local psychoStage = maxtacStage()
+				local maxtac = psychoStage ~= nil and previous >= psychoStage
+				Open77.log.info(('[ncpd] %s was down for %.0fs at stage %d: NEUTRALIZED -- the stage is ' ..
+					'cleared and the %s response stands down'):format(citizenId, (now - since) / 1000,
+					previous, maxtac and 'MaxTac' or 'NCPD'))
+				publish(citizenId, {
+					citizenId = citizenId, stage = 0, previous = previous, law = 'neutralized', delta = 0.0,
+				}, { reason = 'neutralized' })
+				M.Radio.Push(maxtac and 'maxtac' or 'ncpd', 'ncpd.radio.neutralized',
+					{ citizen = citizenId }, playerId)
+			end
+		end
+	end
+	for citizenId in pairs(downSince) do
+		if not seen[citizenId] then downSince[citizenId] = nil end
+	end
+	for citizenId, at in pairs(stoodDown) do
+		if now - at >= ENGINE_GRACE_MS then stoodDown[citizenId] = nil end
+	end
+	return dropped
+end
+
+--- One refill pass: what the ceiling held back stands up as room comes free --
+--- a held cyberpsycho gets the MaxTac squad, a trimmed response its officers.
+-- @return integer how many responses were stood again
+local function refillPass()
+	if type(Response.Refill) ~= 'function' then return 0 end
+	local done = Response.Refill()
+	for _, item in ipairs(done) do
+		local applied = item.applied
+		local value = type(applied) == 'table' and applied.ok == true and applied.value or nil
+		if value == nil then
+			Open77.log.warn(('[ncpd] the held response for %s could not be stood again: %s')
+				:format(item.citizenId, tostring(type(applied) == 'table' and applied.error or 'no answer')))
+		elseif item.queued and value.queued ~= true then
+			Open77.log.info(('[ncpd] a MaxTac squad is free: it answers %s now (stage %d), %d unit(s), ' ..
+				'%d vehicle(s)%s'):format(item.citizenId, item.stage, value.npcs, value.vehicles,
+				value.av and ', the AV is called' or ''))
+			M.Radio.Push('maxtac', 'ncpd.radio.maxtac.free', { citizen = item.citizenId })
+		else
+			Open77.log.info(('[ncpd] room on the street: %s now has %d unit(s) and %d vehicle(s) at stage %d')
+				:format(item.citizenId, value.npcs, value.vehicles, tonumber(value.stage) or 0))
+		end
+	end
+	return #done
+end
+
 -- ── the surfaces ─────────────────────────────────────────────────────────────
 
 --- Whether the ACL lets this player run one of this module's commands.
@@ -1062,6 +1327,18 @@ local function registerCommands()
 				relay.lethal, #why > 0 and (', refused: ' .. table.concat(why, ', ')) or '')
 		end
 
+		-- THE WHOLE STREET beside this one response: the ceiling every wanted
+		-- character shares (`LIMITS`), so "why only two officers" has its answer.
+		local street = type(Response.Street) == 'function' and Response.Street() or nil
+		local ceiling = street ~= nil and street.limits or nil
+		local shared = 'no ceiling (LIMITS = false)'
+		if street ~= nil and ceiling ~= nil then
+			shared = ('%d/%d NCPD officer(s), %d/%d car(s), %d/%d MaxTac squad(s), %d response(s)%s')
+				:format(street.units, ceiling.units, street.vehicles, ceiling.vehicles, street.squads,
+					ceiling.squads, street.responses,
+					street.queued > 0 and (', %d psycho(s) held for a squad'):format(street.queued) or '')
+		end
+
 		OPX.CommandResult(source, true, table.concat({
 			('citizen   : %s'):format(data.citizenId),
 			('stage     : %d/%d (%s)%s'):format(status.stage, Law.StageCount,
@@ -1069,8 +1346,10 @@ local function registerCommands()
 				status.wanted and '' or ' -- not wanted'),
 			('score     : %.1f'):format(status.score),
 			('quiet for : %.0fs'):format(status.sinceSeconds),
-			('on street : %d unit(s), %d vehicle(s) [stage %d]'):format(
-				response.npcs, response.vehicles, response.stage),
+			('on street : %d unit(s), %d vehicle(s) [stage %d]%s'):format(
+				response.npcs, response.vehicles, response.stage,
+				response.queued and ' -- NCPD holds them until a MaxTac squad is free' or ''),
+			('the street: %s'):format(shared),
 			('on the air: %d on duty in %s (a call-out reaches only them)'):format(onAir, jobs),
 			('hit relay : %s'):format(relayed),
 		}, '\n'))
@@ -1298,6 +1577,12 @@ local function onEngineStage(stage)
 			:format(data.citizenId, tostring(stage), Law.StageCount))
 		return
 	end
+
+	-- JUST NEUTRALIZED: the stage was cleared over their body, and the report of
+	-- an engine that has not heard the clear yet is not a new crime. A crime the
+	-- server charges itself still counts; only this mirror waits out the grace.
+	local stood = stoodDown[data.citizenId]
+	if wanted > 0 and stood ~= nil and OPX.Now() - stood < ENGINE_GRACE_MS then return end
 
 	-- `Mirror`, not `Set`: the report may raise a stage, never take one the
 	-- server charged below its floor (see `Ledger.Mirror`).
@@ -1547,6 +1832,12 @@ function M.Start()
 		while M.running do
 			Wait(1000)
 			decayPass()
+			-- A suspect who is down first, so the room their response held is
+			-- free before the ceiling is asked who gets it.
+			local ran, failure = pcall(neutralizePass)
+			if not ran then Open77.log.error('[ncpd] the neutralize pass raised: ' .. tostring(failure)) end
+			ran, failure = pcall(refillPass)
+			if not ran then Open77.log.error('[ncpd] the refill pass raised: ' .. tostring(failure)) end
 		end
 	end)
 end
@@ -1555,7 +1846,8 @@ end
 function M.Stop()
 	M.running = false
 	sceneCalled = {}
-	deathBooked, npcBooked, lastHurt = {}, {}, {}
+	deathBooked, npcBooked, lastHurt, killings = {}, {}, {}, {}
+	downSince, stoodDown = {}, {}
 	if M.Hits ~= nil and type(M.Hits.Stop) == 'function' then M.Hits.Stop() end
 	if M.Bots ~= nil and type(M.Bots.Stop) == 'function' then M.Bots.Stop() end
 	-- The aircraft first: `Response.ReleaseAll` walks the responses it still

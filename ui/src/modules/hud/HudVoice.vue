@@ -86,10 +86,12 @@ useBridge('opx:hud:voice', (payload: Payload) => {
   }
 })
 
-/** 0..1, for the meter's `clip-path`: the level is the fastest-moving number in the row,
-    so it moves the way that costs neither a layout nor a paint. A clip, not a scale --
-    a scale would take the slat mask with it and draw a second set of bars over the
-    first (the owner's "bars over the bars"). */
+/** 0..1, for the fill's `translateX`: the level is the fastest-moving number in the
+    row, so it moves the one way that costs neither a layout nor a paint -- a transform
+    on a solid fill, under a slat mask that does not move (#114). A scale would take
+    the mask with it and draw a second set of bars over the first ("bars over the
+    bars"); a clip-path on the masked fill was right to look at and a repaint per
+    frame. */
 function share(value: number): number {
   return Math.max(0, Math.min(100, value)) / 100
 }
@@ -132,7 +134,13 @@ function share(value: number): number {
       :aria-valuemax="100"
     >
       <span class="slats">
-        <span class="fill" :style="{ clipPath: `inset(0 ${(1 - share(voice.level)) * 100}% 0 0)` }" />
+        <!-- THE MASK STANDS STILL AND THE FILL SLIDES UNDER IT: `.meter` carries the
+             slats' rhythm as a mask and never changes; the fill inside is one solid
+             colour moved by `translateX`, so the lit part is exactly what the old
+             `inset()` revealed and the compositor alone moves it (#114). -->
+        <span class="meter">
+          <span class="fill" :style="{ transform: `translateX(${(share(voice.level) - 1) * 100}%)` }" />
+        </span>
       </span>
     </span>
 
@@ -295,18 +303,38 @@ function share(value: number): number {
   );
 }
 
-.fill {
+/* The window the level shows through. Static: the slat divisions are cut OUT of
+   whatever slides under it, and since nothing about it changes the mask is drawn
+   once. `overflow: hidden` is the cut the old `inset()` made. */
+.meter {
   position: absolute;
   inset: 0;
-  background-image: repeating-linear-gradient(
+  overflow: hidden;
+  -webkit-mask-image: repeating-linear-gradient(
     to right,
-    var(--voice-tone) 0 calc(100% / var(--segs, 8) - 2px),
+    #000 0 calc(100% / var(--segs, 8) - 2px),
     transparent calc(100% / var(--segs, 8) - 2px) calc(100% / var(--segs, 8))
   );
-  /* Lit from the left by revealing an unscaled element: `inset(0 100% 0 0)` is the
-     rest state, nothing lit. */
-  clip-path: inset(0 100% 0 0);
-  transition: clip-path var(--op-dur-fast) linear;
+  mask-image: repeating-linear-gradient(
+    to right,
+    #000 0 calc(100% / var(--segs, 8) - 2px),
+    transparent calc(100% / var(--segs, 8) - 2px) calc(100% / var(--segs, 8))
+  );
+}
+
+/* The one filled shape in the row, and it is data: a solid colour, lit from the
+   left by sliding a full-width element into the meter. `translateX(-100%)` is
+   entirely outside the window, which is the rest state. Only the transform moves
+   per frame. */
+.fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--voice-tone);
+  transform: translateX(-100%);
+  transition:
+    transform var(--op-dur-fast) linear,
+    background var(--op-dur-fast) linear;
 }
 
 /* =============================================================================

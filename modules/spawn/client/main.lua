@@ -14,6 +14,18 @@
 -- `WAIT_FOR_ENTRY` the menu stands aside while entry is asking something and opens
 -- when entry reports itself idle. The deferral cannot strand anyone: the server is
 -- counting the same choice down, and its deadline places the body either way.
+--
+-- AND WHY IT WAITS FOR THE SCREEN. The page takes an open as soon as its surface
+-- is up, but nobody can see it yet. At join, the server's loading screen covers
+-- every surface until the platform has reset the body. During play, a native
+-- load covers it for as long as the load runs. The bot lab, 2026-10-07: the offer
+-- came at 11:18:17, but the platform finished its reset at 11:18:27.5 and the
+-- loading screen came down at 11:18:27.8. The menu reported itself open, and the
+-- server started the window, ten seconds before the player could see it. So with
+-- `WAIT_FOR_SCREEN` the menu also waits while a native load is up
+-- (`modules/loading`). At join it waits until the platform has finished its first
+-- reset of the body. Both waits are bounded by `SCREEN_WAIT_SECONDS`, so a screen
+-- that never reports itself clear costs the player that wait, never the choice.
 
 local M = OPX.Modules.Get('spawn')
 
@@ -36,6 +48,28 @@ local FOCUS = { keyboard = true, cursor = true }
 -- The entry module's public local bus, built the same way the module that raises
 -- it builds it: a bare name would be a typo waiting to happen.
 local EVENT_ENTRY = OPX.Event(LOCAL, 'entry', 'state')
+
+-- The loading module's public local bus: a native load starting or ending.
+local EVENT_LOADING = OPX.Event(LOCAL, 'loading', 'state')
+
+-- The platform says it has finished resetting the body it put in the world, or
+-- has given up. At join, this event hands the screen over. The server's loading
+-- screen stays up, and no resource surface is shown, until it lands. The client
+-- log then reads "server WebUI presentation opened:
+-- reason=player_bootstrap_complete". These are host-owned names, the same two
+-- `modules/appearance` listens to.
+local HOST_RESET_COMPLETE = 'open77:playerReset:complete'
+local HOST_RESET_FAILED = 'open77:playerReset:failed'
+
+-- The reset phases that mean the reset is over. Any other phase the projection
+-- names is a reset still under way. No phase at all means a client that does not
+-- project one.
+local RESET_OVER = { complete = true, failed = true }
+
+-- How long one offer waits for the screen, in seconds, when the config does not
+-- say, and the most the config may set.
+local SCREEN_WAIT_DEFAULT_SECONDS = 60
+local SCREEN_WAIT_MAX_SECONDS = 120
 
 -- How often the open is re-sent while the page has not taken it yet. The surface
 -- is built at boot and this menu arrives much later, so this is a floor rather
@@ -75,6 +109,16 @@ local lastClickAt
 
 -- Whether the entry module is asking the player something right now.
 local entryWaiting
+
+-- Whether the platform has said, in this resource generation, that its reset of
+-- the body is over. After that the reset projection is no longer read. Waiting
+-- for the reset is the join's job. A later reset, such as a body reload, runs
+-- under a native load, and that load is waited for on its own.
+local resetHeard
+
+-- This offer's wait for the screen: when the wait began, whether the last
+-- attempt to open stopped on it, and whether it ran out.
+local screenSinceMs, screenHeld, screenLapsed
 
 --- Every string this module draws, resolved on the client.
 -- Sent with the open rather than looked up per label: the page has no way to ask
@@ -127,6 +171,74 @@ local function entryHoldsTheFloor()
 	return entryWaiting == true
 end
 
+--- Whether a native load is up, as `modules/loading` last read it. A world without
+--- that module never waits here, and neither does a client too old to read loads,
+--- because there the module reports no load.
+local function loadUp()
+	if not OPX.Modules.IsRunning('loading') then return false end
+	local contract = OPX.Api.Get('loading')
+	if type(contract) ~= 'table' or type(contract.State) ~= 'function' then return false end
+	local ok, answer = pcall(contract.State)
+	if not ok or type(answer) ~= 'table' or answer.ok ~= true or type(answer.value) ~= 'table' then
+		return false
+	end
+	return answer.value.active == true
+end
+
+--- Whether the platform's first reset of the body is still under way.
+local function resetUnderway()
+	if resetHeard then return false end
+	local session = type(Open77) == 'table' and Open77.session or nil
+	local read = type(session) == 'table' and session.characterBootstrap or nil
+	if type(read) ~= 'function' then return false end
+	local ok, bootstrap = pcall(read)
+	if not ok or type(bootstrap) ~= 'table' then return false end
+	local phase = bootstrap.playerReset
+	if type(phase) ~= 'string' or phase == '' then return false end
+	return not RESET_OVER[phase]
+end
+
+--- What is covering the screen, or nil when the player can see it.
+local function screenCovered()
+	if loadUp() then return 'a native load is up' end
+	if resetUnderway() then return 'the platform is still resetting the body' end
+	return nil
+end
+
+--- How long one offer may wait for the screen, in milliseconds.
+local function screenWaitMs()
+	local raw = M.Settings.SCREEN_WAIT_SECONDS
+	local seconds = raw == nil and SCREEN_WAIT_DEFAULT_SECONDS or M.Number(raw, 5)
+	return math.floor(math.min(seconds, SCREEN_WAIT_MAX_SECONDS) * 1000)
+end
+
+--- Whether the menu stands aside for the screen right now.
+-- Logs once per offer when the wait starts and once when the screen clears, with
+-- how long it took. Gives up, with a warning, after `SCREEN_WAIT_SECONDS`.
+local function screenHolds()
+	if M.Settings.WAIT_FOR_SCREEN == false or screenLapsed then return false end
+	local now = OPX.Now()
+	local why = screenCovered()
+	if why == nil then
+		if screenSinceMs ~= nil then
+			Open77.log.info(('[spawn] the screen is clear after %.1fs: the menu opens')
+				:format((now - screenSinceMs) / 1000))
+			screenSinceMs = nil
+		end
+		return false
+	end
+	if screenSinceMs == nil then
+		screenSinceMs = now
+		Open77.log.info(('[spawn] the menu waits for the screen: %s'):format(why))
+	elseif now - screenSinceMs >= screenWaitMs() then
+		screenLapsed = true
+		Open77.log.warn(('[spawn] the screen is still covered after %ds (%s): the menu ' ..
+			'opens anyway'):format(math.floor((now - screenSinceMs) / 1000), why))
+		return false
+	end
+	return true
+end
+
 --- Puts the open payload on the wire, or answers false while the page is not up.
 -- THE WINDOW IS NOT ON IT, and that is deliberate rather than an omission. The
 -- page used to be handed the duration so it could draw a countdown beside the
@@ -164,6 +276,11 @@ end
 local function tryOpen()
 	if open or offer == nil then return end
 	if entryHoldsTheFloor() then return end
+	-- After entry: a question entry is asking is the next screen anyway. The
+	-- upkeep tick asks again while this holds, and that is what notices the
+	-- screen clear when no event says so, or the wait run out.
+	screenHeld = screenHolds()
+	if screenHeld then return end
 
 	if OPX.UI.Interactive() == nil then
 		-- No surface: the choice cannot be put to the player at all. The server's
@@ -187,6 +304,7 @@ end
 local function takeDown()
 	local was = open
 	offer, open, pendingOpen, announcedOpen = nil, false, false, false
+	screenSinceMs, screenHeld, screenLapsed = nil, false, false
 	OPX.UI.Send(SURFACE, 'spawn:close', {})
 	-- Only when there was one. `takeDown` is reached from a close for an offer
 	-- that was never drawn and from `Stop`, and an idle said twice is a listener
@@ -239,6 +357,7 @@ local function onOffered(payload)
 	-- window is the SERVER's to count -- see `sendOpen`. What this side needs to
 	-- know is only that a choice is outstanding, which is this table existing.
 	offer = { resume = payload.resume == true }
+	screenSinceMs, screenHeld, screenLapsed = nil, false, false
 	tryOpen()
 end
 
@@ -301,6 +420,8 @@ end
 function M.Init()
 	offer, open, pendingOpen, announcedOpen = nil, false, false, false
 	wired, lastClickAt, entryWaiting = false, nil, false
+	resetHeard = false
+	screenSinceMs, screenHeld, screenLapsed = nil, false, false
 end
 
 --- Registers the wire, the entry module's bus and the upkeep pass.
@@ -327,15 +448,34 @@ function M.Start()
 		if not entryWaiting then tryOpen() end
 	end)
 
+	-- A load that has just ended may be what the menu was waiting for.
+	AddEventHandler(EVENT_LOADING, function(payload)
+		if type(payload) ~= 'table' or payload.active == true then return end
+		if screenHeld then tryOpen() end
+	end)
+
+	-- The platform's reset of the body is over, whichever way it ended. At join
+	-- this is the moment the screen is handed over.
+	local function resetOver()
+		resetHeard = true
+		if screenHeld then tryOpen() end
+	end
+	AddEventHandler(HOST_RESET_COMPLETE, resetOver)
+	AddEventHandler(HOST_RESET_FAILED, resetOver)
+
 	-- WHILE THE JOIN IS BUSY AHEAD OF THE MENU, THE SERVER IS TOLD SO, so its
-	-- hold on the choice does not run out under the name form or the fitting
-	-- room (see `M.Waiting` on the server). Every half minute is far inside the
-	-- shortest hold the server allows. On the upkeep job rather than a job of
-	-- its own: one comparison does not earn a slot in the scheduler's rotation.
+	-- hold on the choice does not run out under the name form, the fitting room
+	-- or a loading screen (see `M.Waiting` on the server). Every half minute is
+	-- far inside the shortest hold the server allows. This runs on the upkeep job
+	-- rather than a job of its own: one comparison does not earn a slot in the
+	-- scheduler's rotation.
 	local waitedAtMs = nil
 	OPX.Scheduler.Every('spawn:upkeep', UPKEEP_MS, function()
 		if pendingOpen then draw() end
-		if offer ~= nil and not open and entryWaiting then
+		-- Asked again while the screen holds the menu: a projection that moves
+		-- without an event, and the wait running out, are both seen here.
+		if screenHeld and offer ~= nil and not open then tryOpen() end
+		if offer ~= nil and not open and (entryWaiting or screenHeld) then
 			local now = OPX.Now()
 			if waitedAtMs == nil or now - waitedAtMs >= WAITING_MS then
 				waitedAtMs = now

@@ -318,6 +318,8 @@ server_script "modules/downed/server/storage.lua"
 server_script "modules/downed/server/main.lua"
 -- The Trauma Team: the page a distress signal sends, the treatment, the pay.
 server_script "modules/downed/server/trauma.lua"
+-- The Trauma Team's own AV, for a distress signal no medic took.
+server_script "modules/downed/server/team.lua"
 client_script "modules/downed/client/main.lua"
 -- The seam's other end. `main.lua` owns the state machine and draws nothing;
 -- this is the only file that knows the down screen is a CEF page.
@@ -818,7 +820,17 @@ shared_script "modules/avdoor/module.lua"
 shared_script "modules/avdoor/locales.lua"
 server_script "modules/avdoor/server/main.lua"
 server_script "modules/avdoor/server/watch.lua"
+-- The landing call: the AV's loudspeaker while it comes down (`CALLOUTS`).
+server_script "modules/avdoor/server/callout.lua"
+-- Where an AV the server flies comes down: ground, level, flat, open (`LANDING`).
+server_script "modules/avdoor/server/landing.lua"
+-- The landing pad under an AV the server flies, for records the client does
+-- not pad itself (`PADS`): who is told to draw it, and the drawing.
+server_script "modules/avdoor/server/pad.lua"
 client_script "modules/avdoor/client/main.lua"
+client_script "modules/avdoor/client/pad.lua"
+-- The landing call, played by each game in its own language (`CALLOUTS`).
+client_script "modules/avdoor/client/callout.lua"
 
 server_script "core/server/boot.lua"
 client_script "core/client/boot.lua"
@@ -861,6 +873,16 @@ loadscreen "web/loading.html"
 web_ui_page "web/index.html"
 web_ui_auto_create false
 web_files { "web/**" }
+
+-- THE AV LANDING CALL'S VOICE (config/avdoor.lua `CALLOUTS`): "Warning. Clear
+-- the area. MaxTac landing." and its Trauma Team twin -- the English lines as
+-- PCM `.wav` (22.05 kHz mono, under 200 kB each) and the same lines in other
+-- languages as `.mp3` (64 kbit/s, under 60 kB each). Each game plays the line
+-- in its own language (`Open77.audio.play3D`, local), or the server plays the
+-- English one as network audio (`TRANSPORT = 'network'`). A package sound must
+-- be declared here or the host refuses it (`audio_asset_not_declared_or_unsafe`),
+-- and a declared file is downloaded with the resource.
+files { "audio/*.wav", "audio/*.mp3" }
 
 permissions {
   "network.events",
@@ -926,6 +948,18 @@ permissions {
   -- platform's one-cut AV exit. A CLIENT permission; refused, the exit is the
   -- same cut it always was and nothing else changes.
   "screen.effects",
+  -- THE AV LANDING CALL (`modules/avdoor/server/callout.lua`): the server plays
+  -- the loudspeaker voice as network package audio (`Open77.audio.play3D`,
+  -- `setPosition`, `destroy`). A SERVER permission; refused, an AV lands with
+  -- its own engine sounds and nothing else, and the journal says why once.
+  "audio.network",
+  -- THE LANDING CALL IN EACH PLAYER'S OWN LANGUAGE (`modules/avdoor/client/
+  -- callout.lua`): the game plays the line itself (`Open77.audio.play3D`, local
+  -- package audio) in the language its voice-over is set to
+  -- (`Open77.session.locale`). CLIENT permissions; refused, that game hears no
+  -- landing call, and its log says why once.
+  "audio.play",
+  "session.locale",
 
   -- The per-bucket ambient policy, which is what decides whether the engine's
   -- own police -- the units a heat stage spawns and the MaxTac AV -- may exist at

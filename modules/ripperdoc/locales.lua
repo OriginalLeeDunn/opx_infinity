@@ -453,6 +453,117 @@ local EN = {
 	['ripperdoc.cw.leeroy_ligaments.desc'] = 'Iconic ligaments: you move faster and recover quicker.',
 	['ripperdoc.cw.lynx_paws'] = 'Lynx Paws',
 	['ripperdoc.cw.lynx_paws.desc'] = 'Silent movement and a softer crouch.',
+
+	-- What reaches the body, and how to use it.
+	['ripperdoc.serviceDown'] =
+		'This chrome needs {name}, which this server is not running. Staff: add it to resources.load.',
+	['ripperdoc.why.grant_pending'] =
+		'the power never finished reaching your body -- stand up, stay alive and out of vehicles, and try again',
+	['ripperdoc.why.grant_failed'] = 'your client could not fit the power',
+	['ripperdoc.why.grant_removed'] = 'the platform took the power back',
+	['ripperdoc.why.grant_absent'] = 'the platform lost the power before it was ready',
+	['ripperdoc.howto.arms'] = '{name} installed: put your weapon away and punch -- hold to charge.',
+	['ripperdoc.howto.legs'] = '{name} installed: jump, then jump again in mid-air.',
+	['ripperdoc.howto.dash'] = '{name} is live: press {key} to dash.',
+	['ripperdoc.howto.reflex'] =
+		'{name} is live: press {key} to engage it. Rebind it in Pause > Settings > Key bindings, or with /opx.sandy.key.',
+	['ripperdoc.key.current'] = 'Your Sandevistan engages on {key}. /opx.sandy.key <key> changes it.',
+	['ripperdoc.key.set'] = 'Your Sandevistan now engages on {key}.',
+	['ripperdoc.key.invalid'] =
+		'{key} cannot be a Sandevistan key: use one letter or digit, F1 to F12, or space, shift, ctrl, alt, tab.',
+	['ripperdoc.key.refused'] = 'Your game refused that key ({why}).',
+	['ripperdoc.key.unavailable'] = 'Your client cannot rebind keys; use Pause > Settings > Key bindings.',
+	['ripperdoc.help.key'] = 'Show or change the key that engages your Sandevistan.',
+	['ripperdoc.help.keyArg'] = 'A key (X, V, F5, space...), or reset.',
+	['ripperdoc.help.test'] =
+		'Run a whole Sandevistan on yourself without the overdrive: the slowed world, the screen and the look.',
+	['ripperdoc.help.testArg'] = 'Seconds, 1 to 44 (9 by default).',
+	['ripperdoc.help.chrome'] = 'Set the condition of every piece of chrome fitted on you.',
+	['ripperdoc.help.chromeArg'] =
+		'full (a fresh life on everything), or a condition from 0 to 100 (0 breaks everything).',
+
+	-- How long a fitted piece has left, and its hard-use allowance.
+	['ripperdoc.lifeLeft'] = '{days}D {hours}H LEFT',
+	['ripperdoc.lifeLeftHours'] = '{hours}H {minutes}M LEFT',
+	['ripperdoc.hardUse'] = 'HARD USE {used}H / {cap}H',
+	['ripperdoc.howto.ability'] = '{name} is live: with a blunt weapon out, press {key} to slam.',
+	['ripperdoc.howto.hacking'] = '{name} installed: your quickhacks are ready.',
+	['ripperdoc.howto.ice'] = '{name} installed: it answers the next hack against you.',
+	['ripperdoc.howto.implant'] = '{name} installed.',
+	['ripperdoc.howto.stat'] = '{name} fitted: its effects are on your body now.',
+	['ripperdoc.howto.rp'] = '{name} fitted. It has no combat effect on this server.',
+
+	-- Off the shelf: chrome nothing on this server can put on the body.
+	['ripperdoc.notSold'] = '{name} is not sold here: nothing on this server can fit it yet.',
+	['ripperdoc.offShelf'] =
+		'Off the shelf: no adapter on this server can put this on the body yet. If you wear one, it can still be pulled or mended.',
+	['ripperdoc.retrying'] = '{name} did not take on the first try -- trying again, stay put.',
+
+	-- Why a fitting failed, in the words of the patient's own client.
+	['ripperdoc.native.native_leg_slot_owned'] =
+		'{name} could not be fitted: your legs already carry chrome this server did not install. Have it pulled first.',
+	['ripperdoc.native.native_leg_capability_owned'] =
+		'{name} could not be fitted: your body already has a double jump from somewhere else.',
+	['ripperdoc.native.native_equip_failed'] =
+		'{name} could not be fitted: the game refused to equip it on your body.',
+	['ripperdoc.native.native_equipment_timeout'] =
+		'{name} could not be fitted: your game did not finish equipping it in time. Stand up, close menus and try again.',
+	['ripperdoc.native.native_leg_grant_lost'] =
+		'{name} came off right after it was fitted: the game took the jump back.',
+	['ripperdoc.native.body_not_ready'] =
+		'{name} could not be fitted: your body was busy (a menu, a vehicle or an animation). Try again on foot.',
+	['ripperdoc.native.player_unavailable'] = '{name} could not be fitted: your game had no body to fit it to.',
+	['ripperdoc.native.body_changed'] =
+		'{name} could not be fitted: your body was replaced while it was being fitted.',
+	['ripperdoc.native.cyberware_equipment_owned'] =
+		'{name} could not be fitted: another resource on your game holds the cyberware slot.',
+	['ripperdoc.native.queue_full'] =
+		'{name} could not be fitted: your game was too busy. Try again in a moment.',
+	['ripperdoc.native.unsupported_profile'] =
+		'{name} could not be fitted: your client does not know this kind of implant.',
+	['ripperdoc.native.gorilla_arms_not_drawn'] =
+		'{name} could not be fitted: the arms could not be drawn on your body.',
+	['ripperdoc.native.api_unavailable'] =
+		'{name} could not be fitted: your client has no cyberware support. Update it.',
+	['ripperdoc.native.stale_projection'] =
+		'{name} could not be fitted: a newer fitting replaced it. Try again.',
+	['ripperdoc.native.other'] = '{name} could not be fitted on your body ({reason}).',
+
+	['ripperdoc.help.records'] = 'Read every base-game cyberware record through a client.',
+	['ripperdoc.help.recordsMode'] = 'read or status.',
+
+	-- The clinic's screen: the base game's own ripperdoc, the words its
+	-- widget writes.
+	['ripperdoc.back'] = 'BACK',
+	['ripperdoc.capacityTitle'] = 'CYBERWARE CAPACITY',
+	['ripperdoc.capacityText'] =
+		'Every piece of chrome takes capacity. A piece that would go past the limit cannot be fitted.',
+	['ripperdoc.armorTitle'] = 'ARMOR',
+	['ripperdoc.armorText'] =
+		'The plating this chrome adds to the body, up to {max}. It recharges once the body stops taking damage.',
+	['ripperdoc.capacityCost'] = 'CAPACITY',
+	['ripperdoc.emptySlot'] = 'EMPTY SLOT',
+	['ripperdoc.pickSystem'] = 'Select it to see the chrome this system takes.',
+	['ripperdoc.installed'] = 'INSTALLED',
+	['ripperdoc.act.install'] = 'PURCHASE',
+	['ripperdoc.act.upgrade'] = 'UPGRADE',
+	['ripperdoc.act.repair'] = 'REPAIR',
+	['ripperdoc.act.refit'] = 'REFIT',
+	['ripperdoc.act.remove'] = 'REMOVE',
+	['ripperdoc.act.propose'] = 'PROPOSE',
+	['ripperdoc.confirm'] = 'CONFIRM',
+	['ripperdoc.cancel'] = 'CANCEL',
+	['ripperdoc.offerBy'] = 'OFFERED BY {name}',
+	['ripperdoc.waitPatient'] = 'Waiting for the patient to answer.',
+	['ripperdoc.lockedAttended'] = 'The ripperdoc at the desk works the chair: their offers come to you here.',
+	['ripperdoc.gridEmpty'] = 'This clinic carries nothing for this system.',
+	['ripperdoc.tierPick'] = 'TIER',
+	-- The confirmation's question, as the game's purchase popup asks it.
+	['ripperdoc.ask.install'] = 'PURCHASE AND INSTALL THIS CYBERWARE?',
+	['ripperdoc.ask.upgrade'] = 'UPGRADE THIS CYBERWARE?',
+	['ripperdoc.ask.remove'] = 'REMOVE THIS CYBERWARE?',
+	['ripperdoc.ask.repair'] = 'REPAIR THIS CYBERWARE?',
+	['ripperdoc.ask.refit'] = 'REFIT THIS CYBERWARE?',
 }
 
 local FR = {
@@ -896,192 +1007,120 @@ local FR = {
 	['ripperdoc.cw.leeroy_ligaments.desc'] = 'Ligaments iconiques : vous bougez plus vite et récupérez plus tôt.',
 	['ripperdoc.cw.lynx_paws'] = 'Pattes de lynx',
 	['ripperdoc.cw.lynx_paws.desc'] = 'Des déplacements silencieux et un accroupi plus souple.',
-}
 
--- What reaches the body, and how to use it.
-for key, pair in pairs({
-	['ripperdoc.serviceDown'] = {
-		'This chrome needs {name}, which this server is not running. Staff: add it to resources.load.',
-		'Ce chrome a besoin de {name}, que ce serveur ne lance pas. Staff : ajoutez-le à resources.load.' },
-	['ripperdoc.why.grant_pending'] = {
-		'the power never finished reaching your body -- stand up, stay alive and out of vehicles, and try again',
-		'le pouvoir n\'a jamais fini d\'arriver sur votre corps -- levez-vous, restez en vie et hors des véhicules, puis réessayez' },
-	['ripperdoc.why.grant_failed'] = {
-		'your client could not fit the power', 'votre client n\'a pas pu installer le pouvoir' },
-	['ripperdoc.why.grant_removed'] = {
-		'the platform took the power back', 'la plateforme a retiré le pouvoir' },
-	['ripperdoc.why.grant_absent'] = {
-		'the platform lost the power before it was ready', 'la plateforme a perdu le pouvoir avant qu\'il soit prêt' },
-	['ripperdoc.howto.arms'] = {
-		'{name} installed: put your weapon away and punch -- hold to charge.',
-		'{name} installé : rangez votre arme et frappez -- maintenez pour charger.' },
-	['ripperdoc.howto.legs'] = {
-		'{name} installed: jump, then jump again in mid-air.',
-		'{name} installé : sautez, puis sautez encore en l\'air.' },
-	['ripperdoc.howto.dash'] = {
-		'{name} is live: press {key} to dash.', '{name} est actif : appuyez sur {key} pour foncer.' },
-	['ripperdoc.howto.reflex'] = {
-		'{name} is live: press {key} to engage it. Rebind it in Pause > Settings > Key bindings, or with /opx.sandy.key.',
-		'{name} est actif : appuyez sur {key} pour l\'enclencher. Changez la touche dans Pause > Paramètres > Raccourcis, ou avec /opx.sandy.key.' },
-	['ripperdoc.key.current'] = {
-		'Your Sandevistan engages on {key}. /opx.sandy.key <key> changes it.',
-		'Votre Sandevistan s\'enclenche sur {key}. /opx.sandy.key <touche> la change.' },
-	['ripperdoc.key.set'] = {
-		'Your Sandevistan now engages on {key}.', 'Votre Sandevistan s\'enclenche maintenant sur {key}.' },
-	['ripperdoc.key.invalid'] = {
-		'{key} cannot be a Sandevistan key: use one letter or digit, F1 to F12, or space, shift, ctrl, alt, tab.',
-		'{key} ne peut pas être une touche de Sandevistan : une lettre ou un chiffre, F1 à F12, ou espace, shift, ctrl, alt, tab.' },
-	['ripperdoc.key.refused'] = {
-		'Your game refused that key ({why}).', 'Votre jeu a refusé cette touche ({why}).' },
-	['ripperdoc.key.unavailable'] = {
-		'Your client cannot rebind keys; use Pause > Settings > Key bindings.',
-		'Votre client ne peut pas changer les touches ; passez par Pause > Paramètres > Raccourcis.' },
-	['ripperdoc.help.key'] = {
-		'Show or change the key that engages your Sandevistan.',
-		'Affiche ou change la touche qui enclenche votre Sandevistan.' },
-	['ripperdoc.help.keyArg'] = {
-		'A key (X, V, F5, space...), or reset.', 'Une touche (X, V, F5, espace...), ou reset.' },
-	['ripperdoc.help.test'] = {
-		'Run a whole Sandevistan on yourself without the overdrive: the slowed world, the screen and the look.',
-		'Lance un Sandevistan complet sur vous sans la surcharge : le monde ralenti, l\'écran et l\'apparence.' },
-	['ripperdoc.help.testArg'] = {
-		'Seconds, 1 to 44 (9 by default).', 'Secondes, de 1 à 44 (9 par défaut).' },
-	['ripperdoc.help.chrome'] = {
-		'Set the condition of every piece of chrome fitted on you.',
-		'Règle l\'état de chaque pièce de chrome posée sur vous.' },
-	['ripperdoc.help.chromeArg'] = {
-		'full (a fresh life on everything), or a condition from 0 to 100 (0 breaks everything).',
-		'full (une vie neuve pour tout), ou un état de 0 à 100 (0 casse tout).' },
+	-- What reaches the body, and how to use it.
+	['ripperdoc.serviceDown'] =
+		'Ce chrome a besoin de {name}, que ce serveur ne lance pas. Staff : ajoutez-le à resources.load.',
+	['ripperdoc.why.grant_pending'] =
+		'le pouvoir n\'a jamais fini d\'arriver sur votre corps -- levez-vous, restez en vie et hors des véhicules, puis réessayez',
+	['ripperdoc.why.grant_failed'] = 'votre client n\'a pas pu installer le pouvoir',
+	['ripperdoc.why.grant_removed'] = 'la plateforme a retiré le pouvoir',
+	['ripperdoc.why.grant_absent'] = 'la plateforme a perdu le pouvoir avant qu\'il soit prêt',
+	['ripperdoc.howto.arms'] = '{name} installé : rangez votre arme et frappez -- maintenez pour charger.',
+	['ripperdoc.howto.legs'] = '{name} installé : sautez, puis sautez encore en l\'air.',
+	['ripperdoc.howto.dash'] = '{name} est actif : appuyez sur {key} pour foncer.',
+	['ripperdoc.howto.reflex'] =
+		'{name} est actif : appuyez sur {key} pour l\'enclencher. Changez la touche dans Pause > Paramètres > Raccourcis, ou avec /opx.sandy.key.',
+	['ripperdoc.key.current'] = 'Votre Sandevistan s\'enclenche sur {key}. /opx.sandy.key <touche> la change.',
+	['ripperdoc.key.set'] = 'Votre Sandevistan s\'enclenche maintenant sur {key}.',
+	['ripperdoc.key.invalid'] =
+		'{key} ne peut pas être une touche de Sandevistan : une lettre ou un chiffre, F1 à F12, ou espace, shift, ctrl, alt, tab.',
+	['ripperdoc.key.refused'] = 'Votre jeu a refusé cette touche ({why}).',
+	['ripperdoc.key.unavailable'] =
+		'Votre client ne peut pas changer les touches ; passez par Pause > Paramètres > Raccourcis.',
+	['ripperdoc.help.key'] = 'Affiche ou change la touche qui enclenche votre Sandevistan.',
+	['ripperdoc.help.keyArg'] = 'Une touche (X, V, F5, espace...), ou reset.',
+	['ripperdoc.help.test'] =
+		'Lance un Sandevistan complet sur vous sans la surcharge : le monde ralenti, l\'écran et l\'apparence.',
+	['ripperdoc.help.testArg'] = 'Secondes, de 1 à 44 (9 par défaut).',
+	['ripperdoc.help.chrome'] = 'Règle l\'état de chaque pièce de chrome posée sur vous.',
+	['ripperdoc.help.chromeArg'] = 'full (une vie neuve pour tout), ou un état de 0 à 100 (0 casse tout).',
 
 	-- How long a fitted piece has left, and its hard-use allowance.
-	['ripperdoc.lifeLeft'] = {
-		'{days}D {hours}H LEFT', '{days} J {hours} H RESTANTS' },
-	['ripperdoc.lifeLeftHours'] = {
-		'{hours}H {minutes}M LEFT', '{hours} H {minutes} MIN RESTANTES' },
-	['ripperdoc.hardUse'] = {
-		'HARD USE {used}H / {cap}H', 'USURE INTENSIVE {used} H / {cap} H' },
-	['ripperdoc.howto.ability'] = {
-		'{name} is live: with a blunt weapon out, press {key} to slam.',
-		'{name} est actif : arme contondante en main, appuyez sur {key} pour frapper le sol.' },
-	['ripperdoc.howto.hacking'] = {
-		'{name} installed: your quickhacks are ready.', '{name} installé : vos quickhacks sont prêts.' },
-	['ripperdoc.howto.ice'] = {
-		'{name} installed: it answers the next hack against you.',
-		'{name} installé : il répond au prochain piratage contre vous.' },
-	['ripperdoc.howto.implant'] = {
-		'{name} installed.', '{name} installé.' },
-	['ripperdoc.howto.stat'] = {
-		'{name} fitted: its effects are on your body now.',
-		'{name} posé : ses effets sont sur votre corps.' },
-	['ripperdoc.howto.rp'] = {
-		'{name} fitted. It has no combat effect on this server.',
-		'{name} posé. Il n\'a pas d\'effet de combat sur ce serveur.' },
+	['ripperdoc.lifeLeft'] = '{days} J {hours} H RESTANTS',
+	['ripperdoc.lifeLeftHours'] = '{hours} H {minutes} MIN RESTANTES',
+	['ripperdoc.hardUse'] = 'USURE INTENSIVE {used} H / {cap} H',
+	['ripperdoc.howto.ability'] =
+		'{name} est actif : arme contondante en main, appuyez sur {key} pour frapper le sol.',
+	['ripperdoc.howto.hacking'] = '{name} installé : vos quickhacks sont prêts.',
+	['ripperdoc.howto.ice'] = '{name} installé : il répond au prochain piratage contre vous.',
+	['ripperdoc.howto.implant'] = '{name} installé.',
+	['ripperdoc.howto.stat'] = '{name} posé : ses effets sont sur votre corps.',
+	['ripperdoc.howto.rp'] = '{name} posé. Il n\'a pas d\'effet de combat sur ce serveur.',
 
 	-- Off the shelf: chrome nothing on this server can put on the body.
-	['ripperdoc.notSold'] = {
-		'{name} is not sold here: nothing on this server can fit it yet.',
-		'{name} n\'est pas vendu ici : rien sur ce serveur ne peut encore le poser.' },
-	['ripperdoc.offShelf'] = {
-		'Off the shelf: no adapter on this server can put this on the body yet. If you wear one, it can still be pulled or mended.',
-		'Hors rayon : aucun adaptateur de ce serveur ne peut encore le poser. Si vous en portez un, il peut toujours être retiré ou réparé.' },
-	['ripperdoc.retrying'] = {
-		'{name} did not take on the first try -- trying again, stay put.',
-		'{name} n\'a pas pris du premier coup -- nouvel essai, ne bougez pas.' },
+	['ripperdoc.notSold'] = '{name} n\'est pas vendu ici : rien sur ce serveur ne peut encore le poser.',
+	['ripperdoc.offShelf'] =
+		'Hors rayon : aucun adaptateur de ce serveur ne peut encore le poser. Si vous en portez un, il peut toujours être retiré ou réparé.',
+	['ripperdoc.retrying'] = '{name} n\'a pas pris du premier coup -- nouvel essai, ne bougez pas.',
 
 	-- Why a fitting failed, in the words of the patient's own client.
-	['ripperdoc.native.native_leg_slot_owned'] = {
-		'{name} could not be fitted: your legs already carry chrome this server did not install. Have it pulled first.',
-		'{name} n\'a pas pu être posé : vos jambes portent déjà un chrome que ce serveur n\'a pas installé. Faites-le retirer d\'abord.' },
-	['ripperdoc.native.native_leg_capability_owned'] = {
-		'{name} could not be fitted: your body already has a double jump from somewhere else.',
-		'{name} n\'a pas pu être posé : votre corps a déjà un double saut venu d\'ailleurs.' },
-	['ripperdoc.native.native_equip_failed'] = {
-		'{name} could not be fitted: the game refused to equip it on your body.',
-		'{name} n\'a pas pu être posé : le jeu a refusé de l\'équiper sur votre corps.' },
-	['ripperdoc.native.native_equipment_timeout'] = {
-		'{name} could not be fitted: your game did not finish equipping it in time. Stand up, close menus and try again.',
-		'{name} n\'a pas pu être posé : votre jeu n\'a pas fini de l\'équiper à temps. Levez-vous, fermez les menus et réessayez.' },
-	['ripperdoc.native.native_leg_grant_lost'] = {
-		'{name} came off right after it was fitted: the game took the jump back.',
-		'{name} s\'est retiré juste après la pose : le jeu a repris le saut.' },
-	['ripperdoc.native.body_not_ready'] = {
-		'{name} could not be fitted: your body was busy (a menu, a vehicle or an animation). Try again on foot.',
-		'{name} n\'a pas pu être posé : votre corps était occupé (un menu, un véhicule ou une animation). Réessayez à pied.' },
-	['ripperdoc.native.player_unavailable'] = {
-		'{name} could not be fitted: your game had no body to fit it to.',
-		'{name} n\'a pas pu être posé : votre jeu n\'avait pas de corps où le poser.' },
-	['ripperdoc.native.body_changed'] = {
-		'{name} could not be fitted: your body was replaced while it was being fitted.',
-		'{name} n\'a pas pu être posé : votre corps a été remplacé pendant la pose.' },
-	['ripperdoc.native.cyberware_equipment_owned'] = {
-		'{name} could not be fitted: another resource on your game holds the cyberware slot.',
-		'{name} n\'a pas pu être posé : une autre ressource de votre jeu tient l\'emplacement.' },
-	['ripperdoc.native.queue_full'] = {
-		'{name} could not be fitted: your game was too busy. Try again in a moment.',
-		'{name} n\'a pas pu être posé : votre jeu était trop occupé. Réessayez dans un instant.' },
-	['ripperdoc.native.unsupported_profile'] = {
-		'{name} could not be fitted: your client does not know this kind of implant.',
-		'{name} n\'a pas pu être posé : votre client ne connaît pas ce type d\'implant.' },
-	['ripperdoc.native.gorilla_arms_not_drawn'] = {
-		'{name} could not be fitted: the arms could not be drawn on your body.',
-		'{name} n\'a pas pu être posé : les bras n\'ont pas pu être dessinés sur votre corps.' },
-	['ripperdoc.native.api_unavailable'] = {
-		'{name} could not be fitted: your client has no cyberware support. Update it.',
-		'{name} n\'a pas pu être posé : votre client n\'a pas le support cyberware. Mettez-le à jour.' },
-	['ripperdoc.native.stale_projection'] = {
-		'{name} could not be fitted: a newer fitting replaced it. Try again.',
-		'{name} n\'a pas pu être posé : une pose plus récente l\'a remplacé. Réessayez.' },
-	['ripperdoc.native.other'] = {
-		'{name} could not be fitted on your body ({reason}).',
-		'{name} n\'a pas pu être posé sur votre corps ({reason}).' },
+	['ripperdoc.native.native_leg_slot_owned'] =
+		'{name} n\'a pas pu être posé : vos jambes portent déjà un chrome que ce serveur n\'a pas installé. Faites-le retirer d\'abord.',
+	['ripperdoc.native.native_leg_capability_owned'] =
+		'{name} n\'a pas pu être posé : votre corps a déjà un double saut venu d\'ailleurs.',
+	['ripperdoc.native.native_equip_failed'] =
+		'{name} n\'a pas pu être posé : le jeu a refusé de l\'équiper sur votre corps.',
+	['ripperdoc.native.native_equipment_timeout'] =
+		'{name} n\'a pas pu être posé : votre jeu n\'a pas fini de l\'équiper à temps. Levez-vous, fermez les menus et réessayez.',
+	['ripperdoc.native.native_leg_grant_lost'] =
+		'{name} s\'est retiré juste après la pose : le jeu a repris le saut.',
+	['ripperdoc.native.body_not_ready'] =
+		'{name} n\'a pas pu être posé : votre corps était occupé (un menu, un véhicule ou une animation). Réessayez à pied.',
+	['ripperdoc.native.player_unavailable'] =
+		'{name} n\'a pas pu être posé : votre jeu n\'avait pas de corps où le poser.',
+	['ripperdoc.native.body_changed'] =
+		'{name} n\'a pas pu être posé : votre corps a été remplacé pendant la pose.',
+	['ripperdoc.native.cyberware_equipment_owned'] =
+		'{name} n\'a pas pu être posé : une autre ressource de votre jeu tient l\'emplacement.',
+	['ripperdoc.native.queue_full'] =
+		'{name} n\'a pas pu être posé : votre jeu était trop occupé. Réessayez dans un instant.',
+	['ripperdoc.native.unsupported_profile'] =
+		'{name} n\'a pas pu être posé : votre client ne connaît pas ce type d\'implant.',
+	['ripperdoc.native.gorilla_arms_not_drawn'] =
+		'{name} n\'a pas pu être posé : les bras n\'ont pas pu être dessinés sur votre corps.',
+	['ripperdoc.native.api_unavailable'] =
+		'{name} n\'a pas pu être posé : votre client n\'a pas le support cyberware. Mettez-le à jour.',
+	['ripperdoc.native.stale_projection'] =
+		'{name} n\'a pas pu être posé : une pose plus récente l\'a remplacé. Réessayez.',
+	['ripperdoc.native.other'] = '{name} n\'a pas pu être posé sur votre corps ({reason}).',
 
-	['ripperdoc.help.records'] = {
-		'Read every base-game cyberware record through a client.',
-		'Lit chaque record cyberware du jeu de base à travers un client.' },
-	['ripperdoc.help.recordsMode'] = { 'read or status.', 'read ou status.' },
+	['ripperdoc.help.records'] = 'Lit chaque record cyberware du jeu de base à travers un client.',
+	['ripperdoc.help.recordsMode'] = 'read ou status.',
 
 	-- The clinic's screen: the base game's own ripperdoc, the words its
 	-- widget writes.
-	['ripperdoc.back'] = { 'BACK', 'RETOUR' },
-	['ripperdoc.capacityTitle'] = { 'CYBERWARE CAPACITY', 'CAPACITÉ CYBERNÉTIQUE' },
-	['ripperdoc.capacityText'] = {
-		'Every piece of chrome takes capacity. A piece that would go past the limit cannot be fitted.',
-		'Chaque pièce de chrome prend de la capacité. Une pièce qui dépasserait la limite ne peut pas être posée.' },
-	['ripperdoc.armorTitle'] = { 'ARMOR', 'ARMURE' },
-	['ripperdoc.armorText'] = {
-		'The plating this chrome adds to the body, up to {max}. It recharges once the body stops taking damage.',
-		'Le blindage que ce chrome ajoute au corps, jusqu\'à {max}. Il se recharge quand le corps cesse d\'encaisser.' },
-	['ripperdoc.capacityCost'] = { 'CAPACITY', 'CAPACITÉ' },
-	['ripperdoc.emptySlot'] = { 'EMPTY SLOT', 'EMPLACEMENT LIBRE' },
-	['ripperdoc.pickSystem'] = {
-		'Select it to see the chrome this system takes.',
-		'Sélectionnez-le pour voir le chrome que ce système accepte.' },
-	['ripperdoc.installed'] = { 'INSTALLED', 'INSTALLÉ' },
-	['ripperdoc.act.install'] = { 'PURCHASE', 'ACHETER' },
-	['ripperdoc.act.upgrade'] = { 'UPGRADE', 'AMÉLIORER' },
-	['ripperdoc.act.repair'] = { 'REPAIR', 'RÉPARER' },
-	['ripperdoc.act.refit'] = { 'REFIT', 'REPOSER' },
-	['ripperdoc.act.remove'] = { 'REMOVE', 'RETIRER' },
-	['ripperdoc.act.propose'] = { 'PROPOSE', 'PROPOSER' },
-	['ripperdoc.confirm'] = { 'CONFIRM', 'CONFIRMER' },
-	['ripperdoc.cancel'] = { 'CANCEL', 'ANNULER' },
-	['ripperdoc.offerBy'] = { 'OFFERED BY {name}', 'PROPOSÉ PAR {name}' },
-	['ripperdoc.waitPatient'] = { 'Waiting for the patient to answer.', 'En attente de la réponse du patient.' },
-	['ripperdoc.lockedAttended'] = {
-		'The ripperdoc at the desk works the chair: their offers come to you here.',
-		'Le ripperdoc au bureau tient le fauteuil : ses offres vous arrivent ici.' },
-	['ripperdoc.gridEmpty'] = {
-		'This clinic carries nothing for this system.', 'Cette clinique n\'a rien pour ce système.' },
-	['ripperdoc.tierPick'] = { 'TIER', 'NIVEAU' },
+	['ripperdoc.back'] = 'RETOUR',
+	['ripperdoc.capacityTitle'] = 'CAPACITÉ CYBERNÉTIQUE',
+	['ripperdoc.capacityText'] =
+		'Chaque pièce de chrome prend de la capacité. Une pièce qui dépasserait la limite ne peut pas être posée.',
+	['ripperdoc.armorTitle'] = 'ARMURE',
+	['ripperdoc.armorText'] =
+		'Le blindage que ce chrome ajoute au corps, jusqu\'à {max}. Il se recharge quand le corps cesse d\'encaisser.',
+	['ripperdoc.capacityCost'] = 'CAPACITÉ',
+	['ripperdoc.emptySlot'] = 'EMPLACEMENT LIBRE',
+	['ripperdoc.pickSystem'] = 'Sélectionnez-le pour voir le chrome que ce système accepte.',
+	['ripperdoc.installed'] = 'INSTALLÉ',
+	['ripperdoc.act.install'] = 'ACHETER',
+	['ripperdoc.act.upgrade'] = 'AMÉLIORER',
+	['ripperdoc.act.repair'] = 'RÉPARER',
+	['ripperdoc.act.refit'] = 'REPOSER',
+	['ripperdoc.act.remove'] = 'RETIRER',
+	['ripperdoc.act.propose'] = 'PROPOSER',
+	['ripperdoc.confirm'] = 'CONFIRMER',
+	['ripperdoc.cancel'] = 'ANNULER',
+	['ripperdoc.offerBy'] = 'PROPOSÉ PAR {name}',
+	['ripperdoc.waitPatient'] = 'En attente de la réponse du patient.',
+	['ripperdoc.lockedAttended'] = 'Le ripperdoc au bureau tient le fauteuil : ses offres vous arrivent ici.',
+	['ripperdoc.gridEmpty'] = 'Cette clinique n\'a rien pour ce système.',
+	['ripperdoc.tierPick'] = 'NIVEAU',
 	-- The confirmation's question, as the game's purchase popup asks it.
-	['ripperdoc.ask.install'] = { 'PURCHASE AND INSTALL THIS CYBERWARE?', 'ACHETER ET POSER CE CYBERWARE ?' },
-	['ripperdoc.ask.upgrade'] = { 'UPGRADE THIS CYBERWARE?', 'AMÉLIORER CE CYBERWARE ?' },
-	['ripperdoc.ask.remove'] = { 'REMOVE THIS CYBERWARE?', 'RETIRER CE CYBERWARE ?' },
-	['ripperdoc.ask.repair'] = { 'REPAIR THIS CYBERWARE?', 'RÉPARER CE CYBERWARE ?' },
-	['ripperdoc.ask.refit'] = { 'REFIT THIS CYBERWARE?', 'REPOSER CE CYBERWARE ?' },
-}) do
-	EN[key], FR[key] = pair[1], pair[2]
-end
+	['ripperdoc.ask.install'] = 'ACHETER ET POSER CE CYBERWARE ?',
+	['ripperdoc.ask.upgrade'] = 'AMÉLIORER CE CYBERWARE ?',
+	['ripperdoc.ask.remove'] = 'RETIRER CE CYBERWARE ?',
+	['ripperdoc.ask.repair'] = 'RÉPARER CE CYBERWARE ?',
+	['ripperdoc.ask.refit'] = 'REPOSER CE CYBERWARE ?',
+}
 
 OPX.Locale.Register('en', EN)
 OPX.Locale.Register('fr', FR)

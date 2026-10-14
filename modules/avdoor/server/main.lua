@@ -42,6 +42,10 @@
 -- THE SOUNDS are sent to the listeners near the hull, who say what they did
 -- with them; a listener the host refused is rescued through the platform's own
 -- fan-out. Both halves of that talk go to the journal.
+--
+-- THE LANDING CALL (`server/callout.lua`) is the same pilot's report read a
+-- second way: a MaxTac or Trauma Team AV coming down says so on its
+-- loudspeaker until it is down. `M.Called` checks the asker is in that hull.
 
 local M = OPX.Modules.Get('avdoor')
 
@@ -94,6 +98,10 @@ local warned = {}
 -- The scan's scheduler handle, and the tending job's.
 local scanJob = nil
 local tendJob = nil
+-- The landing calls' follow job (`server/callout.lua`), when CALLOUTS is on.
+local calloutJob = nil
+-- The landing pads' telling job (`server/pad.lua`), when PADS is on.
+local padJob = nil
 
 local function settings()
 	return type(M.Settings) == 'table' and M.Settings or {}
@@ -934,6 +942,32 @@ function M.Heard(playerId, payload)
 	return true
 end
 
+--- The landing call's half of a pilot's report (`CALLOUTS`): a descent starts
+--- the hull's call, and a touchdown, a take-off or a landing called off ends it.
+--
+-- THE SAME CHECK AS THE SOUND: only a body seated in that hull speaks for its
+-- flight, and only a hull whose record makes a call has one.
+-- @param playerId number the asker
+-- @param payload table `{ id, which }`
+-- @return boolean|nil what `Start` or `Stop` answered, nil when nothing applied
+-- @return string|nil why not
+function M.Called(playerId, payload)
+	if M.Callout == nil or type(payload) ~= 'table' then return nil end
+	if type(settings().CALLOUTS) ~= 'table' then return nil, 'callouts_off' end
+	local which = tostring(payload.which)
+	if M.MOMENTS[which] ~= true then return nil, 'unknown_moment' end
+	local seat = seatOf(playerId)
+	if seat == nil or not sameHull(seat.vehicleId, payload.id) then return nil, 'not_aboard' end
+	local snapshot, id = hullOf(seat.vehicleId)
+	if snapshot == nil then return nil, 'no_hull' end
+	local kind = M.CalloutKind(snapshot.record)
+	if kind == nil then return nil, 'no_call_for_this_hull' end
+	if which == 'descent' then
+		return M.Callout.Start(id, kind, ('the descent player %d reported'):format(playerId))
+	end
+	return M.Callout.Stop(id, which)
+end
+
 -- ── the phases ───────────────────────────────────────────────────────────────
 
 --- Forgets everything the phases below keep: the tables, the serial and the
@@ -943,8 +977,10 @@ local function reset()
 	doorLedger, occupancy, pending, boarding, heardBy, warned = {}, {}, {}, {}, {}, {}
 	fresh = {}
 	soundSerial = 0
-	scanJob, tendJob = nil, nil
+	scanJob, tendJob, calloutJob, padJob = nil, nil, nil, nil
 	if M.Watch ~= nil then M.Watch.Reset() end
+	if M.Callout ~= nil then M.Callout.Reset() end
+	if M.Pads ~= nil then M.Pads.Reset() end
 end
 
 function M.Init()
@@ -981,6 +1017,58 @@ function M.Api()
 		Fresh = function(id) return M.Fresh(id) end,
 		--- Milliseconds before a body may board the hull, 0 when it may now.
 		SettleLeft = function(id) return M.SettleLeft(id) end,
+		--- Starts the landing call on a hull (`CALLOUTS`): `kind` is a
+		--- `CALLOUTS.KINDS` name, or nil for the one its record makes. The
+		--- MaxTac insertion calls this from its approach.
+		-- @return boolean|nil, string|nil
+		-- `from` is `{ x, y, z, bucket }` for a hull the caller flies itself:
+		-- the caller then moves the call with `Follow`, pose by pose.
+		Callout = function(id, kind, why, from)
+			if M.Callout == nil then return nil, 'unavailable' end
+			return M.Callout.Start(id, kind, why, from)
+		end,
+		--- Moves a call started with `from` to where its caller put the hull.
+		Follow = function(id, at)
+			if M.Callout == nil then return false end
+			return M.Callout.Follow(id, at)
+		end,
+		--- Ends a hull's landing call once the sentence being said is finished.
+		Hush = function(id, why)
+			if M.Callout == nil then return false end
+			return M.Callout.Stop(id, why)
+		end,
+		--- Where an AV the caller flies may come down near a point: ground, at
+		--- the point's level, flat under the hull, open to the sky (`LANDING`).
+		--- BLOCKING: it asks the games, so the caller is a thread.
+		-- @return table|nil `{ x, y, z, bearing, distance, probes }`, string|nil
+		LandingSite = function(target, options)
+			if M.Landing == nil then return nil, 'unavailable' end
+			return M.Landing.Find(target, options)
+		end,
+		--- Whether `LandingSite` can be asked at all on this host.
+		CanSurvey = function()
+			return M.Landing ~= nil and M.Landing.Available()
+		end,
+		--- How long `LandingSite` may take, in milliseconds: `BUDGET_SECONDS`, and
+		--- the one probe that may still be out when it runs out (`PROBE_MS`).
+		SurveyBudgetMs = function()
+			local cfg = M.Landing ~= nil and M.Landing.Settings() or nil
+			return cfg ~= nil and (cfg.budgetMs + cfg.probeMs) or 0
+		end,
+		--- Puts the landing pad under a hull the caller flies (`PADS`): the red
+		--- ring the client draws under an AV it flies itself. Answers `nil,
+		--- 'platform'` for a record the client pads on its own.
+		-- @param id any
+		-- @param options table|nil `{ record, bucket, why }`
+		Pad = function(id, options)
+			if M.Pads == nil then return nil, 'unavailable' end
+			return M.Pads.Start(id, options)
+		end,
+		--- Takes a hull's landing pad away.
+		Unpad = function(id, why)
+			if M.Pads == nil then return false end
+			return M.Pads.Stop(id, why)
+		end,
 	})
 end
 
@@ -1075,6 +1163,10 @@ function M.Start()
 		for key in pairs(occupancy) do
 			if sameHull(key, id) then occupancy[key] = nil end
 		end
+		-- A hull taken out of the world takes its landing call with it.
+		if M.Callout ~= nil and M.Callout.IsLive(id) then M.Callout.Kill(id, 'the hull was removed') end
+		-- And its landing pad.
+		if M.Pads ~= nil and M.Pads.Has(id) then M.Pads.Stop(id, 'the hull was removed') end
 	end)
 
 	RegisterNetEvent(M.Event.SOUND, function(payload)
@@ -1082,6 +1174,7 @@ function M.Start()
 		if player == nil or player <= 0 then return end
 		if OPX.Cooling(player, 'avdoor.sound', 500) then return end
 		M.Speak(player, payload)
+		M.Called(player, payload)
 	end)
 
 	AddEventHandler(OPX.Host.PLAYER_DISCONNECTED, function(playerId)
@@ -1090,6 +1183,9 @@ function M.Start()
 			told[id] = nil
 			boarding[id] = nil
 			if M.Watch ~= nil then M.Watch.Forget(id) end
+			if M.Pads ~= nil then M.Pads.Forget(id) end
+			if M.Callout ~= nil and type(M.Callout.Forget) == 'function' then M.Callout.Forget(id) end
+			if M.Landing ~= nil and type(M.Landing.Forget) == 'function' then M.Landing.Forget(id) end
 		end
 	end)
 
@@ -1121,6 +1217,26 @@ function M.Start()
 		M.Tend()
 	end)
 
+	-- THE LANDING CALLS follow their hulls: the platform has no vehicle
+	-- attachment for package audio, so the sound is moved with the hull.
+	local calls = type(settings().CALLOUTS) == 'table' and settings().CALLOUTS or nil
+	if calls ~= nil and M.Callout ~= nil then
+		calloutJob = OPX.Scheduler.Every('avdoor:callout',
+			math.floor(M.Number(calls.FOLLOW_MS, 50, 2000, 150)), function()
+				M.Callout.Tend()
+			end)
+	end
+
+	-- THE LANDING PADS: whoever comes near a hull the server flies is told to
+	-- draw the pad under it (`server/pad.lua`).
+	local pads = M.Pads ~= nil and M.Pads.Settings() or nil
+	if pads ~= nil then
+		padJob = OPX.Scheduler.Every('avdoor:pads', pads.tellMs, function()
+			local ran, failure = pcall(M.Pads.Tend)
+			if not ran then Open77.log.error('[avdoor] the landing pads pass failed: ' .. tostring(failure)) end
+		end)
+	end
+
 	Open77.log.info(('[avdoor] ready: aircraft doors within %.1f m, measured every %d ms, %s')
 		:format(M.Number(settings().REACH_METRES, 1.0, 50.0, 9.0),
 			math.floor(M.Number(settings().SCAN_MS, 100, 5000, 500)),
@@ -1130,6 +1246,12 @@ end
 function M.Stop()
 	if scanJob ~= nil then OPX.Scheduler.Cancel(scanJob) end
 	if tendJob ~= nil then OPX.Scheduler.Cancel(tendJob) end
+	if calloutJob ~= nil then OPX.Scheduler.Cancel(calloutJob) end
+	if padJob ~= nil then OPX.Scheduler.Cancel(padJob) end
+	-- Every landing call is released with it: a stopped module moves nothing.
+	if M.Callout ~= nil then M.Callout.KillAll('the module stopped') end
+	-- Every pad comes off every game that was drawing one.
+	if M.Pads ~= nil then M.Pads.StopAll('the module stopped') end
 	-- Every row this half drew comes down with it.
 	for playerId, key in pairs(told) do
 		if key ~= false then

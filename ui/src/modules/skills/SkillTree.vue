@@ -785,7 +785,7 @@ onUnmounted(() => {
       <div class="sizer" :style="plane.sizer">
         <div
           class="unit op-bay op-arete op-interlace"
-          data-augmented-ui="tr-clip bl-clip border"
+          data-augmented-ui="border"
           :style="plane.unit"
         >
           <!-- THE TOP BAR: what the character is, what it holds to spend. -->
@@ -1267,6 +1267,40 @@ onUnmounted(() => {
   --tile-h: 70px;
   --rank-min: 76px;
   --roots-h: 86px;
+}
+
+/* THE PANEL'S TWO CUTS, top-left and bottom-right. shapes.css draws only `tr-clip`,
+   `bl-clip` and `border` since augmented-ui went (#112), and this is the one surface
+   cut on the other diagonal, so it draws its own polygons -- the ones the library
+   resolved `tl-clip br-clip` to -- on the `--aug-tl` / `--aug-br` above, and keeps
+   `border` for the frame. The first is the panel, the second the frame's ring. */
+.unit[data-augmented-ui] {
+  clip-path: polygon(
+    -1px var(--aug-tl), 0px var(--aug-tl), var(--aug-tl) 0px, var(--aug-tl) -1px,
+    calc(100% + 1px) -1px, calc(100% + 1px) calc(100% - var(--aug-br)),
+    100% calc(100% - var(--aug-br)), calc(100% - var(--aug-br)) 100%,
+    calc(100% - var(--aug-br)) calc(100% + 1px), -1px calc(100% + 1px)
+  );
+}
+
+.unit[data-augmented-ui]::after {
+  clip-path: polygon(
+    var(--aug-border-all) calc(var(--aug-tl) + var(--aug-border-all)),
+    var(--aug-border-all) calc(var(--aug-tl) + var(--aug-border-all) / 2),
+    calc(var(--aug-tl) + var(--aug-border-all) / 2) var(--aug-border-all),
+    calc(var(--aug-tl) + var(--aug-border-all)) var(--aug-border-all),
+    calc(100% - var(--aug-border-all)) var(--aug-border-all),
+    calc(100% - var(--aug-border-all)) calc(100% - var(--aug-br) - var(--aug-border-all)),
+    calc(100% - var(--aug-border-all)) calc(100% - var(--aug-br) - var(--aug-border-all) / 2),
+    calc(100% - var(--aug-br) - var(--aug-border-all) / 2) calc(100% - var(--aug-border-all)),
+    calc(100% - var(--aug-br) - var(--aug-border-all)) calc(100% - var(--aug-border-all)),
+    var(--aug-border-all) calc(100% - var(--aug-border-all)),
+    var(--aug-border-all) calc(var(--aug-tl) + var(--aug-border-all)),
+    -1px calc(var(--aug-tl) + var(--aug-border-all)),
+    -1px calc(100% + 1px), calc(100% + 1px) calc(100% + 1px), calc(100% + 1px) -1px,
+    -1px -1px, -1px calc(var(--aug-tl) + var(--aug-border-all)),
+    var(--aug-border-all) calc(var(--aug-tl) + var(--aug-border-all))
+  );
 }
 
 /* ROOM FOR AN ACCENT. A label cut to its box is clipped AT that box, and at

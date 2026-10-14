@@ -79,15 +79,25 @@ local function lerp(a, b, t) return a + (b - a) * t end
 --- airframe through every phase boundary, which reads as a stutter per phase.
 local function smooth(t) return t * t * (3.0 - 2.0 * t) end
 
---- The constant heading of a run: the bearing from where it started to where
---- it is going. The airframe turns toward its destination as it climbs and
---- holds that heading for the whole flight, which is what a pilot would do
---- with one pin to fly to.
-local function bearingTo(from, to)
+--- The constant heading of a run: from where it started to where it is going,
+--- in the game's degrees -- 0 faces +Y and it grows counter-clockwise, so +X is
+--- 270 (`docs/camera.md`). The airframe turns toward its destination as it
+--- climbs and holds that heading for the whole flight, which is what a pilot
+--- would do with one pin to fly to. This used to be the math angle
+--- (`atan(dy, dx)`, 0 = +X), 90 degrees off: the aircraft flew to the pin
+--- side-on.
+local function headingTo(from, to)
 	local dx = to.x - from.x
 	local dy = to.y - from.y
 	if dx == 0.0 and dy == 0.0 then return 0.0 end
-	return math.deg(math.atan(dy, dx))
+	return math.deg(math.atan(-dx, dy)) % 360.0
+end
+
+--- A heading `t` of the way from one to another, the short way round.
+local function turn(from, to, t)
+	if t >= 1.0 then return to % 360.0 end
+	local delta = ((to - from + 540.0) % 360.0) - 180.0
+	return (from + delta * t) % 360.0
 end
 
 --- The flight the config names, read fresh for every run. Invalid numbers read
@@ -226,8 +236,11 @@ local function step(playerId)
 	local to = pose(run, leg.phase, u)
 	-- `yaw` is passed every tick on purpose: the platform's `setTransform`
 	-- reads an absent heading as 0, not as "keep the current one".
+	-- The turn toward the pin is made on the climb, from the heading the hull
+	-- stood at, so it never snaps round on the first pose.
+	local yaw = leg.phase == PHASE.CLIMB and turn(run.fromYaw, run.heading, smooth(u)) or run.heading
 	local moved, reason = contract.setTransform(run.hullId,
-		{ x = to.x, y = to.y, z = to.z, yaw = run.bearing })
+		{ x = to.x, y = to.y, z = to.z, yaw = yaw })
 	if moved ~= true then
 		run.refused = run.refused + 1
 		if run.refused == 1 then
@@ -333,7 +346,10 @@ local function engage(src, payload)
 		to = to,
 		cruiseZ = cruiseZ,
 		releaseZ = releaseZ,
-		bearing = bearingTo(from, to),
+		heading = headingTo(from, to),
+		-- The heading the hull stands at now, which the climb turns from; the
+		-- run's own when the snapshot carries none.
+		fromYaw = nil,
 		leg = 1,
 		legClock = 0.0,
 		legPhase = nil,
@@ -349,6 +365,13 @@ local function engage(src, payload)
 				seconds = math.max(0.0, cruiseZ - releaseZ) / settings.descendSpeed },
 		},
 	}
+
+	local standing = tonumber(hull.yaw or hull.heading)
+	if standing ~= nil and standing == standing and math.abs(standing) ~= math.huge then
+		run.fromYaw = standing % 360.0
+	else
+		run.fromYaw = run.heading
+	end
 
 	-- FROZEN BEFORE THE FIRST POSE, and the order is the whole of the
 	-- hand-over: the pilot's client claims the hull the moment it sees the

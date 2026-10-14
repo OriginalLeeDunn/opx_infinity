@@ -301,4 +301,152 @@ OPX.Config.MODULES.avdoor = {
 		RANGE = 220.0,
 		DURATION_S = 8.0,
 	},
+
+	-- THE LANDING CALL. A woman's voice on the aircraft's loudspeaker --
+	-- "Warning. Clear the area. MaxTac landing." or "... Trauma Team landing."
+	-- -- said over and over while one of those AVs comes down, on top of the
+	-- airframe's own sounds, and stopped when it is down:
+	--   * a player-flown AV: from the moment its pilot's client reports the
+	--     descent (SOUNDS.DESCENT_METRES and DESCENT_SPEED above) until it
+	--     reports the touchdown, or climbs back out of the descent band;
+	--   * the MaxTac insertion and the Trauma Team's (`modules/ncpd`,
+	--     `modules/downed`): from the approach until the AV is down at the drop.
+	-- When the AV is down, the voice fades out over FADE_MS (0 cuts it at once),
+	-- wherever the sentence is. It used to finish the sentence, up to a whole
+	-- clip after the touchdown. The bot lab, 2026-10-07: "it doesnt stop when av
+	-- lands". MAX_SECONDS ends a call that never heard its touchdown.
+	--
+	-- IN EACH PLAYER'S OWN LANGUAGE (TRANSPORT = 'local', the default). The
+	-- server says which hull is calling to every player in its bucket within
+	-- MAX_METRES -- and to anybody who comes near, every TELL_MS, at the point
+	-- the loop has reached -- and each game plays the line itself, in the
+	-- language its voice-over is set to (`Open77.session.locale`, permissions
+	-- `session.locale` and `audio.play`), from where it draws the hull: at full
+	-- volume within MIN_METRES, fading out to MAX_METRES. The bot lab,
+	-- 2026-10-07: "give the voice locales with french german spanish etc".
+	-- TRANSPORT = 'network' is the old way: one server-owned network sound
+	-- (`Open77.audio`, permission `audio.network`) in ASSET's language for the
+	-- whole bucket, moved with the hull every FOLLOW_MS.
+	--
+	-- KINDS: which hulls say which line. RECORDS are patterns over the vehicle
+	-- record, like RECORDS above. ASSET is the English line, a file in `audio/`
+	-- (declared in open77.lua's `files`), and SECONDS its exact length: a loop
+	-- needs it, and the suite checks it against the file. VOICES are the same
+	-- line in other languages, by the game's two-letter language code, each its
+	-- own file and length; a language with no line hears ASSET. The English
+	-- Trauma line says "Trauma" as "TRAW-muh", not "Traumer" (the bot lab,
+	-- 2026-10-07: "she says it with a r at the end prounouned traumer").
+	-- `CALLOUTS = false` switches the call off.
+	CALLOUTS = {
+		TRANSPORT = 'local',
+		KINDS = {
+			maxtac = { RECORDS = { 'max_tac', 'maxtac' },
+				ASSET = 'audio/av-callout-maxtac.wav', SECONDS = 4.4517,
+				VOICES = {
+					fr = { ASSET = 'audio/av-callout-maxtac-fr.mp3', SECONDS = 4.9371 },
+					de = { ASSET = 'audio/av-callout-maxtac-de.mp3', SECONDS = 5.2767 },
+					es = { ASSET = 'audio/av-callout-maxtac-es.mp3', SECONDS = 4.3886 },
+					it = { ASSET = 'audio/av-callout-maxtac-it.mp3', SECONDS = 4.9371 },
+					pl = { ASSET = 'audio/av-callout-maxtac-pl.mp3', SECONDS = 4.8849 },
+					pt = { ASSET = 'audio/av-callout-maxtac-pt.mp3', SECONDS = 6.2433 },
+					ru = { ASSET = 'audio/av-callout-maxtac-ru.mp3', SECONDS = 6.5045 },
+					uk = { ASSET = 'audio/av-callout-maxtac-uk.mp3', SECONDS = 5.1461 },
+					cs = { ASSET = 'audio/av-callout-maxtac-cs.mp3', SECONDS = 4.4408 },
+					hu = { ASSET = 'audio/av-callout-maxtac-hu.mp3', SECONDS = 4.3102 },
+					zh = { ASSET = 'audio/av-callout-maxtac-zh.mp3', SECONDS = 5.6424 },
+					ko = { ASSET = 'audio/av-callout-maxtac-ko.mp3', SECONDS = 5.9559 },
+					ja = { ASSET = 'audio/av-callout-maxtac-ja.mp3', SECONDS = 6.9224 },
+				},
+			},
+			trauma = { RECORDS = { 'trauma' },
+				ASSET = 'audio/av-callout-trauma.wav', SECONDS = 4.1392,
+				VOICES = {
+					fr = { ASSET = 'audio/av-callout-trauma-fr.mp3', SECONDS = 5.3029 },
+					de = { ASSET = 'audio/av-callout-trauma-de.mp3', SECONDS = 4.9110 },
+					es = { ASSET = 'audio/av-callout-trauma-es.mp3', SECONDS = 4.5192 },
+					it = { ASSET = 'audio/av-callout-trauma-it.mp3', SECONDS = 4.8327 },
+					pl = { ASSET = 'audio/av-callout-trauma-pl.mp3', SECONDS = 5.1461 },
+					pt = { ASSET = 'audio/av-callout-trauma-pt.mp3', SECONDS = 6.3478 },
+					ru = { ASSET = 'audio/av-callout-trauma-ru.mp3', SECONDS = 6.5567 },
+					uk = { ASSET = 'audio/av-callout-trauma-uk.mp3', SECONDS = 6.1127 },
+					cs = { ASSET = 'audio/av-callout-trauma-cs.mp3', SECONDS = 4.8588 },
+					hu = { ASSET = 'audio/av-callout-trauma-hu.mp3', SECONDS = 4.4147 },
+					zh = { ASSET = 'audio/av-callout-trauma-zh.mp3', SECONDS = 5.3290 },
+					ko = { ASSET = 'audio/av-callout-trauma-ko.mp3', SECONDS = 6.2955 },
+					ja = { ASSET = 'audio/av-callout-trauma-ja.mp3', SECONDS = 7.1837 },
+				},
+			},
+		},
+		TELL_MS = 1000,
+		VOLUME = 1.0,
+		MIN_METRES = 30.0,
+		MAX_METRES = 300.0,
+		MAX_SECONDS = 90,
+		FADE_MS = 400,
+		FOLLOW_MS = 150,
+	},
+
+	-- WHERE AN AV THE SERVER FLIES COMES DOWN: the MaxTac insertion
+	-- (`modules/ncpd`) and the Trauma Team (`modules/downed`). The bot lab,
+	-- 2026-10-07: "all avs need to land on the road in game the trauma team av
+	-- is landing outside on the water while the trauma soldiers or visually
+	-- walking on air". Both came down a fixed distance from the body on a fixed
+	-- bearing, at the body's height, wherever that fell.
+	--
+	-- Before the AV comes in, the server asks the players' games for the ground
+	-- around the place (`Open77.world.groundZ`: a static ray from 400 m up, run
+	-- by the nearest game within OBSERVER_METRES) and takes the first point
+	-- that is ground (open water answers nothing), open to the sky (a roof or an
+	-- overpass answers its own height), within LEVEL_METRES of the person's
+	-- level, and flat under the hull: the ground FOOTPRINT_METRES either side,
+	-- both ways, within FLAT_METRES. Rings out to FAR_METRES, every 45 degrees
+	-- from the AV's own bearing. BUDGET_SECONDS bounds the asking; the AV waits
+	-- for it far out and high, and a survey that finds nothing keeps the old
+	-- place and says why. The team steps out on the ground that was measured.
+	-- Only a game can measure, and a load-test bot never answers: the first
+	-- point is asked of several players near it at once (PROBE_MS each), the
+	-- first that answers measures the rest, and one that did not is left out
+	-- of the next survey for ten minutes.
+	-- `LANDING = false` is the old fixed place.
+	LANDING = {
+		LEVEL_METRES = 2.5,
+		FOOTPRINT_METRES = 4.5,
+		FLAT_METRES = 0.8,
+		FAR_METRES = 40.0,
+		BUDGET_SECONDS = 4.0,
+		OBSERVER_METRES = 250.0,
+		PROBE_MS = 1500,
+	},
+
+	-- THE LANDING PAD UNDER AN AV THE SERVER FLIES. The bot lab, 2026-10-07:
+	-- "make sure the trauma team av has the red warning laser underneath like
+	-- maxtac av does". That red laser is the Open77 client's own landing pad: a
+	-- ring of red beams on the ground under the hull, a beam running round
+	-- inside it and the OPEN77 sign in dots, shown while the hull is within
+	-- SHOW_METRES of the ground and coming down (faster than DESCEND_SPEED) or
+	-- sitting there (within REST_METRES), with the dust under the hull and the
+	-- engine's hover voice. The client draws them only under a record it flies
+	-- as an AV -- PLATFORM, Lua patterns on the lower-cased record -- and the
+	-- Trauma Team's airframes are not, so this module draws the same pad for
+	-- them: every player within METRES of the hull is told (and anybody who
+	-- comes near, every TELL_MS). The pad is centred on the hull's own mesh and
+	-- drawn on the ground under it; RADIUS_METRES and BEAMS are the client's
+	-- own pad's, SIGN the OPEN77 dots. DUST is the effect under the hull within
+	-- DUST_METRES of the ground (the prologue's Trauma AV dust), VOICE the
+	-- engine's while it runs (`false` for none). `PADS = false`: no pad from
+	-- this module at all.
+	PADS = {
+		METRES = 300.0,
+		TELL_MS = 1000,
+		PLATFORM = { '^vehicle%.av_', '^vehicle%.max_tac_av$' },
+		RADIUS_METRES = 3.5,
+		BEAMS = 12,
+		SIGN = true,
+		SHOW_METRES = 6.0,
+		REST_METRES = 2.2,
+		DESCEND_SPEED = 0.4,
+		DUST = 'base\\fx\\quest\\q001\\00c_rescuing_girl\\q001_av_dust_loop.effect',
+		DUST_METRES = 11.0,
+		VOICE = { START = 'v_av_trauma_big_engine_start', STOP = 'v_av_trauma_big_engine_stop' },
+	},
 }

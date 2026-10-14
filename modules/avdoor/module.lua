@@ -73,6 +73,17 @@ M.Event = {
 	-- no authority: the server journals it beside its own reads, and at most
 	-- re-publishes an EMPTY hull where the server already has it.
 	SIGHT = OPX.Event(NET, 'avdoor', 'sight'),
+	-- Server to client, to every player near a hull the server flies:
+	-- `{ id, on, record, platform }` -- draw the landing pad under this hull
+	-- (`on = true`), or stop (`on = false`). `platform` is a hull the client
+	-- pads itself, which is only measured (`server/pad.lua`).
+	PAD = OPX.Event(NET, 'avdoor', 'pad'),
+	-- Server to client, to every player in a calling hull's bucket within
+	-- `CALLOUTS.MAX_METRES` (`CALLOUTS.TRANSPORT = 'local'`):
+	-- `{ id, kind, on = true, at, elapsedMs, volume, near, far }` -- play this
+	-- kind's landing call on the hull, in this game's own language, from where
+	-- the loop has reached -- or `{ id, on = false, fadeMs }`, end it.
+	CALL = OPX.Event(NET, 'avdoor', 'call'),
 	-- The client's own bus: every verdict, local refusals included.
 	ON_DECISION = OPX.Event(LOCAL, 'avdoor', 'decision'),
 }
@@ -83,6 +94,34 @@ M.Command = { WHY = 'opx.avdoor.why' }
 --- The three moments of a flight the MaxTac AV has a voice for, and the config
 --- field each one is read from.
 M.SOUNDS = { takeoff = 'TAKEOFF', descent = 'DESCENT', touchdown = 'TOUCHDOWN' }
+
+--- Every moment a pilot's client may report. `abort` has no sound of its own:
+--- a hull that climbed back out of its descent ends its landing call
+--- (`CALLOUTS`), and that is all it does.
+M.MOMENTS = { takeoff = true, descent = true, touchdown = true, abort = true }
+
+--- The landing call a record makes (`CALLOUTS.KINDS`), or nil.
+-- Kinds are tried by name, in order, so a record two kinds match always makes
+-- the same call.
+-- @param record any
+-- @param block table|nil the CALLOUTS block; `M.Settings.CALLOUTS` when nil
+-- @return string|nil kind
+-- @return table|nil that kind's block
+function M.CalloutKind(record, block)
+	if block == nil then block = type(M.Settings) == 'table' and M.Settings.CALLOUTS or nil end
+	if type(block) ~= 'table' or type(block.KINDS) ~= 'table' then return nil end
+	if type(record) ~= 'string' or record == '' then return nil end
+	local names = {}
+	for name in pairs(block.KINDS) do
+		if type(name) == 'string' then names[#names + 1] = name end
+	end
+	table.sort(names)
+	for _, name in ipairs(names) do
+		local kind = block.KINDS[name]
+		if type(kind) == 'table' and M.IsAircraft(record, kind.RECORDS) then return name, kind end
+	end
+	return nil
+end
 
 --- Every refusal the door can name, as the sentence a player reads.
 M.Refusal = {

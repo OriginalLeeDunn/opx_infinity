@@ -42,6 +42,8 @@ local EN = {
 
 	['medic.notice.treating'] = '{name} of the Trauma Team is working on you.',
 	['medic.notice.stopped'] = 'The medic stopped. Hold on.',
+	['medic.notice.teamInbound'] = 'The Trauma Team is on its way: their AV is inbound.',
+	['medic.notice.teamTreating'] = 'A Trauma Team medic is working on you.',
 
 	['medic.key.treat'] = 'Trauma Team: treat a downed player',
 	['medic.help.treat'] = 'Treat the downed player nearest to you (Trauma Team, on duty)',
@@ -109,6 +111,8 @@ local FR = {
 
 	['medic.notice.treating'] = '{name}, du Trauma Team, s\'occupe de vous.',
 	['medic.notice.stopped'] = "Le médecin s'est arrêté. Tenez bon.",
+	['medic.notice.teamInbound'] = "Le Trauma Team arrive : leur AV est en approche.",
+	['medic.notice.teamTreating'] = "Un médecin du Trauma Team s'occupe de vous.",
 
 	['medic.key.treat'] = 'Trauma Team : soigner un joueur à terre',
 	['medic.help.treat'] = 'Soigner le joueur à terre le plus proche (Trauma Team, en service)',

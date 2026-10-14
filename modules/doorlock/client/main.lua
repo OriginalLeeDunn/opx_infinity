@@ -745,7 +745,12 @@ function Runtime.Start()
 		end,
 	})
 
-	registerRows()
+	-- THE ROWS ON A RESUME OF THEIR OWN. Checking and storing them through the
+	-- target contract is most of what this phase costs (~3,000 VM
+	-- instructions), and with a full server's seventy-odd modules on the boot
+	-- thread this phase was the client boot's dearest resume, at its margin
+	-- (`tests/run.lua`, the client boot). The eye has them a frame later.
+	CreateThread(registerRows)
 
 	local every = math.floor(OPX.Math.Finite(settings().SCAN_MS) or 500)
 	if every < 100 then every = 100 end

@@ -485,10 +485,14 @@ local function buildCatalog(yieldEvery)
 			taken[entry.id] = true
 		end
 	end
-	for _, entry in ipairs(vanillaEntries(taken, yieldEvery)) do
+	for index, entry in ipairs(vanillaEntries(taken, yieldEvery)) do
 		onSandyCooldown(entry, cooldown)
 		list[#list + 1] = entry
 		byId[entry.id] = entry
+		-- Sliced like the build above it: a hundred-odd pieces through
+		-- `onSandyCooldown` in the thread's last resume was the dearest resume of
+		-- the whole client boot (~5,600 instructions, `tests/run.lua`).
+		if yieldEvery ~= nil and index % (yieldEvery * 8) == 0 then Wait(0) end
 	end
 	cache.config, cache.policy, cache.cooldown, cache.list, cache.byId = config, policy, cooldown, list, byId
 	return list

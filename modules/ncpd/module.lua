@@ -81,6 +81,12 @@ M.Event = {
 	-- reads its own. One moment, one wording, three surfaces.
 	DISPATCH = OPX.Event(NET, 'ncpd', 'dispatch'),
 
+	-- Server to client, to the on-duty holders of `ALERTS.ALARM.JOBS`: somebody
+	-- went cyberpsycho -- a stage crossed into MaxTac's -- and the squad's
+	-- screens go red. `{ stage, x, y, name, division }`; the sound and the
+	-- lifetime are each client's own `ALERTS.ALARM`, as the board's are.
+	ALARM = OPX.Event(NET, 'ncpd', 'alarm'),
+
 	-- Client to server. The stage its own engine is holding -- the ONLY report of a
 	-- real crime, because the engine charges its own score and never publishes it.
 	-- The payload is one number and the server attributes it to the connection it

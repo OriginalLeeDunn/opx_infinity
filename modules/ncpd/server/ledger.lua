@@ -162,6 +162,15 @@ function Ledger.Status(citizenId, nowMs)
 	}
 end
 
+--- The stage a character stands at, without draining or creating anything:
+--- 0 for a character the ledger does not hold.
+-- @param citizenId any
+-- @return integer
+function Ledger.Stage(citizenId)
+	local entry = peek(citizenId)
+	return entry ~= nil and (tonumber(entry.stage) or 0) or 0
+end
+
 --- Puts a character straight onto a stage, without a crime.
 -- This is the job and test door: a bank job holds a crew at Heat_3 while it runs,
 -- and an operator proving the response wants a stage without shooting anybody.

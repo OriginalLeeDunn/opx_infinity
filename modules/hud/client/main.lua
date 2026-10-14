@@ -964,17 +964,22 @@ end
 -- their own, one a frame, and a newer redraw abandons an older one.
 local showGeneration = 0
 
-local function drawShow(force)
+local function drawShow(force, sample)
 	local shown = visible and not down and not covered
 	push(CHANNEL_SHOW, { visible = shown }, shown and '1' or '0', force)
 	local blocks = shown and { drawVitals, drawInfo, drawStatus, drawWidgets } or { drawWidgets }
 	showGeneration = showGeneration + 1
 	if type(CreateThread) ~= 'function' then
+		if sample then sampleVitals() end
 		for index = 1, #blocks do blocks[index](true) end
 		return
 	end
 	local mine = showGeneration
 	CreateThread(function()
+		-- `sample`: a fresh page's pools are read HERE, on the blocks' own resume
+		-- and just before the column is drawn from them, rather than in the
+		-- page's ready handler, which then costs only the switch.
+		if sample then sampleVitals() end
 		for index = 1, #blocks do
 			if index > 1 then Wait(0) end
 			if showGeneration ~= mine then return end
@@ -1111,8 +1116,7 @@ function M.Start()
 		ready = true
 		drawn = {}
 		drawConfig(true)
-		sampleVitals()
-		drawShow(true)
+		drawShow(true, true)
 	end)
 
 	AddEventHandler(EVENT_CHARACTER_LOADED, function()

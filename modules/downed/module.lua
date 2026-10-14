@@ -57,6 +57,11 @@ M.TraumaEvent = {
 	ANSWER = OPX.Event(NET, 'downed', 'treatanswer'),
 	-- Server to a downed player: one line for their screen, `{ key, args }`.
 	NOTICE = OPX.Event(NET, 'downed', 'notice'),
+	-- Server to a client near where the Trauma Team's AV comes down: say
+	-- whether this game draws it, `{ id, record, ms }` (`server/team.lua`).
+	TEAM_WATCH = OPX.Event(NET, 'downed', 'teamwatch'),
+	-- Client to server: what came of it, `{ id, state = 'streamed'|'stuck', ms }`.
+	TEAM_SEEN = OPX.Event(NET, 'downed', 'teamseen'),
 }
 
 -- Every refusal a medic can be told, by the code `server/trauma.lua` returns. A
@@ -121,5 +126,84 @@ function M.TraumaSettings()
 		amount = math.floor(number(reward.AMOUNT, 0, 1000000, 150)),
 		account = type(reward.ACCOUNT) == 'string' and reward.ACCOUNT ~= '' and reward.ACCOUNT or 'BANK',
 		perPatientMs = math.floor(number(reward.PER_PATIENT_MS, 0, 86400000, 600000)),
+	}
+end
+
+--- A `Character.*` or `Vehicle.*` record from config, or the fallback.
+local function record(value, prefix, fallback)
+	if type(value) == 'string' and value:sub(1, #prefix) == prefix and #value > #prefix
+		and not value:find('%s') then
+		return value
+	end
+	return fallback
+end
+
+--- The Trauma Team's own AV (`TRAUMA.TEAM` in `config/downed.lua`), each number
+--- inside a band. A missing or malformed block is the defaults. The team is off
+--- when the Trauma Team is, or when `TEAM = false` or `enabled = false`.
+-- @return table
+function M.TeamSettings()
+	local declared = nil
+	if type(M.Settings) == 'table' then declared = M.Settings.TRAUMA end
+	local trauma = type(declared) == 'table' and declared or {}
+	local raw = trauma.TEAM
+	local block = type(raw) == 'table' and raw or {}
+	local av = type(block.AV) == 'table' and block.AV or {}
+	local guards = {}
+	for _, name in ipairs(type(block.GUARDS) == 'table' and block.GUARDS or {}) do
+		local guard = record(name, 'Character.', nil)
+		if guard ~= nil and #guards < 3 then guards[#guards + 1] = guard end
+	end
+	if type(block.GUARDS) ~= 'table' then guards = { 'Character.q001_tt_soldier' } end
+	-- The airframe, in the order it is tried (`AV.RECORDS`). A lone `AV.RECORD`
+	-- (the first shape of this block) is a list of one.
+	local records = {}
+	if type(av.RECORDS) == 'table' then
+		for _, name in ipairs(av.RECORDS) do
+			local valid = record(name, 'Vehicle.', nil)
+			if valid ~= nil and #records < 8 then records[#records + 1] = valid end
+		end
+	end
+	if #records == 0 and av.RECORD ~= nil then
+		local valid = record(av.RECORD, 'Vehicle.', nil)
+		if valid ~= nil then records[1] = valid end
+	end
+	if #records == 0 then
+		records = { 'Vehicle.q001_trauma_av', 'Vehicle.sq021_av_trauma', 'Vehicle.mws_pac_06_trauma_av' }
+	end
+	local headStart = block.MEDIC_HEAD_START_SECONDS
+	return {
+		off = declared == false or trauma.enabled == false or raw == false or block.enabled == false,
+		delayMs = math.floor(number(block.DELAY_SECONDS, 0, 300, 8) * 1000),
+		-- `false`: a patient an on-duty medic was paged for is never flown to.
+		headStartMs = headStart == false and false
+			or math.floor(number(headStart, 0, 1800, 45) * 1000),
+		sceneMetres = number(block.SCENE_METRES, 5.0, 500.0, 60.0),
+		maxRuns = math.floor(number(block.MAX_RUNS, 1, 8, 2)),
+		-- The first of `records`, for the lines that name one.
+		record = records[1],
+		records = records,
+		-- How long a client near the landing spot that has the hull registered
+		-- waits for its game to draw it, and how near "near" is.
+		watchMs = math.floor(number(av.WATCH_SECONDS, 3, 60, 12) * 1000),
+		watchMetres = number(av.WATCH_METRES, 50.0, 2000.0, 400.0),
+		approachMetres = number(av.APPROACH_METRES, 50.0, 2000.0, 260.0),
+		approachAltitude = number(av.APPROACH_ALTITUDE, 10.0, 500.0, 80.0),
+		hoverAltitude = number(av.HOVER_ALTITUDE, 5.0, 200.0, 22.0),
+		landAltitude = number(av.LAND_ALTITUDE, 0.0, 20.0, 1.5),
+		landOffset = number(av.LAND_OFFSET_METRES, 3.0, 60.0, 10.0),
+		cruiseMs = math.floor(number(av.CRUISE_SECONDS, 1, 60, 6) * 1000),
+		descentMs = math.floor(number(av.DESCENT_SECONDS, 1, 60, 4) * 1000),
+		climbMs = math.floor(number(av.CLIMB_SECONDS, 1, 60, 4) * 1000),
+		exitMs = math.floor(number(av.EXIT_SECONDS, 1, 60, 6) * 1000),
+		exitMetres = number(av.EXIT_METRES, 50.0, 2000.0, 320.0),
+		tickMs = math.floor(number(av.TICK_MS, 50, 1000, 100)),
+		engineOnGround = av.ENGINE_ON_GROUND == true,
+		holdMs = math.floor(number(block.HOLD_SECONDS, 10, 600, 90) * 1000),
+		medic = record(block.MEDIC, 'Character.', 'Character.q001_tt_medic'),
+		guards = guards,
+		runSpeed = number(block.RUN_SPEED, 1.0, 10.0, 4.5),
+		treatMs = math.floor(number(block.TREAT_SECONDS, 1, 60, 6) * 1000),
+		boardMs = math.floor(number(block.BOARD_SECONDS, 0, 30, 3) * 1000),
 	}
 end

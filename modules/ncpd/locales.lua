@@ -13,6 +13,8 @@ local EN = {
 	-- so a server that renames MaxTac renames it here as well.
 	['ncpd.wanted'] = 'Wanted: {division} responding ({stage}/6)',
 	['ncpd.cleared'] = 'The city has lost interest.',
+	-- The stage cleared over a body (`LIMITS.NEUTRALIZED_SECONDS`).
+	['ncpd.neutralized'] = 'You went down. The city has stood down.',
 
 	-- The call-out an on-duty officer reads when a stage RISES. Two keys and not
 	-- one with an optional clause: a notification that ends in a dash with
@@ -23,6 +25,20 @@ local EN = {
 	-- The dispatch board's own title: the same two lines above, shouted. The
 	-- WORDS are the radio's own keys, so the board cannot drift from the air.
 	['ncpd.dispatch.title'] = 'DISPATCH',
+
+	-- THE MAXTAC ALARM (`ALERTS.ALARM`): the squad's whole screen when somebody
+	-- goes cyberpsycho. `.where` is the suspect's place and the reader's own
+	-- distance to it; `.named` puts the suspect's name before it.
+	['ncpd.alarm.title'] = 'MAXTAC ALERT',
+	['ncpd.alarm.subtitle'] = 'CYBERPSYCHO — STAGE {stage}',
+	['ncpd.alarm.where'] = '{metres} m from you — {x}, {y}',
+	['ncpd.alarm.named'] = 'Suspect: {name}',
+	['ncpd.alarm.respond'] = 'All MaxTac units respond',
+	-- The cyberpsycho's own screen (`ALARM.SUSPECT`).
+	['ncpd.alarm.you.title'] = 'CYBERPSYCHO',
+	['ncpd.alarm.you.subtitle'] = 'MaxTac has been dispatched to neutralize you',
+	['ncpd.alarm.you.hint'] = 'Lose them, or go down and it ends',
+	['ncpd.alarm.you.brief'] = 'MaxTac is coming for you',
 
 	-- A BODY ON THE STREET, called in the moment it is charged (config
 	-- `HOMICIDE`). The same two-key rule as the stage call-out: the named
@@ -102,6 +118,9 @@ local EN = {
 	['ncpd.radio.maxtac.crew'] = 'The MaxTac AV for {citizen} is the crew\u{2019}s \u{2014} {crew} aboard.',
 	['ncpd.radio.maxtac.down'] = 'MaxTac AV down for {citizen} \u{2014} {seconds}s in the air.',
 	['ncpd.radio.maxtac.parked'] = 'MaxTac AV parked for {citizen} \u{2014} the crew may climb back in for {seconds}s.',
+	['ncpd.radio.maxtac.committed'] = 'Every MaxTac squad is out. NCPD holds {citizen} until one is free.',
+	['ncpd.radio.maxtac.free'] = 'A MaxTac squad is free \u{2014} inbound for {citizen}.',
+	['ncpd.radio.neutralized'] = 'Suspect {citizen} is down. All units, stand down.',
 
 	['ncpd.help.status'] = 'where the city stands on you, or on a named player',
 	['ncpd.help.report'] = 'charge somebody with an offence from the law book',
@@ -124,9 +143,19 @@ local FR = {
 	['ncpd.refused'] = 'Action impossible.',
 	['ncpd.wanted'] = 'Recherché : {division} engagée ({stage}/6)',
 	['ncpd.cleared'] = 'La ville ne s\u{2019}intéresse plus à vous.',
+	['ncpd.neutralized'] = 'Vous êtes à terre. La ville abandonne la traque.',
 	['ncpd.dispatch.rise'] = '{division} : appel — palier {stage}/6 à {x}, {y}',
 	['ncpd.dispatch.suspect'] = '{division} : appel — palier {stage}/6, {name} à {x}, {y}',
 	['ncpd.dispatch.title'] = 'DISPATCH',
+	['ncpd.alarm.title'] = 'ALERTE MAXTAC',
+	['ncpd.alarm.subtitle'] = 'CYBERPSYCHOSE — PALIER {stage}',
+	['ncpd.alarm.where'] = 'À {metres} m de vous — {x}, {y}',
+	['ncpd.alarm.named'] = 'Suspect : {name}',
+	['ncpd.alarm.respond'] = 'Toutes les unités MaxTac en intervention',
+	['ncpd.alarm.you.title'] = 'CYBERPSYCHOSE',
+	['ncpd.alarm.you.subtitle'] = 'MaxTac a été dépêché pour vous neutraliser',
+	['ncpd.alarm.you.hint'] = 'Semez-les, ou tombez et tout s\u{2019}arrête',
+	['ncpd.alarm.you.brief'] = 'MaxTac vient pour vous',
 	['ncpd.dispatch.homicide'] = 'Homicide signalé en {x}, {y}',
 	['ncpd.dispatch.homicideNamed'] = 'Homicide signalé en {x}, {y} — suspect : {name}',
 	['ncpd.dispatch.homicide.pin'] = 'Homicide',
@@ -187,6 +216,9 @@ local FR = {
 	['ncpd.radio.maxtac.crew'] = 'L\u{2019}AV MaxTac pour {citizen} est à l\u{2019}équipage \u{2014} {crew} à bord.',
 	['ncpd.radio.maxtac.down'] = 'AV MaxTac au sol pour {citizen} \u{2014} {seconds}s en vol.',
 	['ncpd.radio.maxtac.parked'] = 'AV MaxTac posé pour {citizen} \u{2014} l\u{2019}équipage peut remonter pendant {seconds}s.',
+	['ncpd.radio.maxtac.committed'] = 'Toutes les escouades MaxTac sont engagées. Le NCPD retient {citizen} en attendant.',
+	['ncpd.radio.maxtac.free'] = 'Une escouade MaxTac est libre \u{2014} en route pour {citizen}.',
+	['ncpd.radio.neutralized'] = 'Suspect {citizen} à terre. Toutes les unités, repliez-vous.',
 	['ncpd.unknownLaw'] = 'Infraction inconnue.',
 	['ncpd.unknownStage'] = 'Ce n\u{2019}est pas un palier de chaleur.',
 	['ncpd.offline'] = 'Ce joueur n\u{2019}est pas connecté.',

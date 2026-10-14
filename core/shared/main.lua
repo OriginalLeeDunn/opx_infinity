@@ -70,6 +70,8 @@ OPX.IsClient = TriggerServerEvent ~= nil
 OPX.Config = OPX.Config or { SHARED = {}, MODULES = {} }
 
 local resolvedTimer
+-- An upvalue, not `math.floor` per call: see `OPX.Now`.
+local floor = math.floor
 
 --- Monotonic milliseconds since process start.
 -- @author dop42
@@ -86,7 +88,13 @@ function OPX.Now()
 	-- the stand-up re-projection token both died printing it, which left
 	-- records unread and a fitted Sandevistan dead until the next session.
 	-- The contract has always been an integer; make it one.
-	local at = tonumber(resolvedTimer and resolvedTimer() or Open77.time.monotonic() * 1000)
-	if at == nil or at ~= at or at == math.huge or at == -math.huge then return 0 end
-	return math.floor(at)
+	--
+	-- `floor` ALONE, on an upvalue. This is the clock every rate window and
+	-- every paced loop reads, many times a pass, and the guards it carried
+	-- beside the floor -- a non-number, a NaN, an infinity, none of which a
+	-- timer answers -- cost more than two instructions a read: eleven reads in
+	-- the door locks' `Start` were what took the client boot's dearest resume
+	-- past its margin (`tests/run.lua`, the client boot).
+	if resolvedTimer then return floor(resolvedTimer()) end
+	return floor(Open77.time.monotonic() * 1000)
 end

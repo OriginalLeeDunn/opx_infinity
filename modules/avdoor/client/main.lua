@@ -171,7 +171,9 @@ local function hull(id)
 	return nil
 end
 
---- What a vehicle is to this module, memoised by id: `{ aircraft, voiced }`.
+--- What a vehicle is to this module, memoised by id: `{ aircraft, voiced, callout }`.
+-- `voiced` is a MaxTac AV with the base game's sounds (`SOUNDS.RECORDS`);
+-- `callout` is the landing call its record makes (`CALLOUTS.KINDS`), or nil.
 -- A vehicle's record never changes, so one snapshot read per id is enough.
 -- @param id any
 -- @return table|nil nil while the vehicle is not streamed
@@ -185,6 +187,7 @@ local function kindOf(id)
 	known = {
 		aircraft = M.IsAircraft(snapshot.record),
 		voiced = sounds ~= nil and M.IsAircraft(snapshot.record, sounds.RECORDS) or false,
+		callout = M.CalloutKind(snapshot.record, settings().CALLOUTS),
 	}
 	kinds[key] = known
 	return known
@@ -750,14 +753,17 @@ local function say(id, which)
 	Open77.log.info(('[avdoor] flight of %s: %s'):format(tostring(id), which))
 end
 
---- Reads the flight of the MaxTac AV this client is flying, and names the
---- three moments.
+--- Reads the flight of the AV this client is flying -- a MaxTac AV for its
+--- sounds, any AV that makes a landing call for the call -- and names the
+--- moments: take-off, descent, touchdown, and a descent called off.
 -- @param seat table|nil this pass's seat read
 local function readFlight(seat)
-	local block = soundSettings()
-	if block == nil or seat == nil then flight = nil return end
+	if seat == nil then flight = nil return end
 	local kind = kindOf(seat.vehicleId)
-	if kind == nil or kind.voiced ~= true then flight = nil return end
+	if kind == nil or (kind.voiced ~= true and kind.callout == nil) then flight = nil return end
+	-- The thresholds are the SOUNDS block's, and their defaults when it is off:
+	-- a Trauma Team AV's landing call reads the same ground as a MaxTac horn.
+	local block = soundSettings() or {}
 	-- Only the client simulating the hull reads its flight: the other seats
 	-- would each report the same landing.
 	local snapshot = hull(seat.vehicleId)
@@ -782,7 +788,7 @@ local function readFlight(seat)
 		-- said for it -- boarding a hull on the ground is not a landing.
 		flight = { id = seat.vehicleId, z = at.z, at = now, height = height,
 			state = (height ~= nil and height <= band) and 'ground' or 'air',
-			descending = false, stillSince = nil }
+			descending = false, calling = false, stillSince = nil }
 		return
 	end
 
@@ -808,21 +814,33 @@ local function readFlight(seat)
 		return
 	end
 
+	-- `calling` is the landing call's own flag: set by the descent and kept
+	-- through a bob that clears `descending`, so a hull that eases the last
+	-- metres down slower than DESCENT_SPEED still ends its call on the ground.
 	if settled then
 		flight.state = 'ground'
-		if flight.descending then say(flight.id, 'touchdown') end
-		flight.descending = false
+		if flight.descending or flight.calling then say(flight.id, 'touchdown') end
+		flight.descending, flight.calling = false, false
 		return
 	end
 
-	local approach = height ~= nil and height <= M.Number(block.DESCENT_METRES, 1.0, 500.0, 30.0)
+	local ceiling = M.Number(block.DESCENT_METRES, 1.0, 500.0, 30.0)
+	local approach = height ~= nil and height <= ceiling
 	if approach and climb <= -M.Number(block.DESCENT_SPEED, 0.1, 50.0, 1.5) then
 		if not flight.descending then
 			flight.descending = true
+			flight.calling = true
 			say(flight.id, 'descent')
 		end
 	elseif climb > still then
 		flight.descending = false
+		-- CLIMBED BACK OUT OF THE BAND: the landing was called off, and its call
+		-- with it. A bob inside the band is not that -- the hull is still coming
+		-- down, and the call goes on.
+		if flight.calling and height ~= nil and height > ceiling then
+			flight.calling = false
+			say(flight.id, 'abort')
+		end
 	end
 end
 
@@ -1238,10 +1256,17 @@ function M.Start()
 	-- what catches the first frame of an exit, and the flight read inside it is
 	-- rate-limited on its own.
 	watchJob = OPX.Scheduler.Every('avdoor:watch', 100, watch)
+
+	-- The landing pad under an AV the server flies (`client/pad.lua`).
+	if M.Pad ~= nil then M.Pad.Start() end
+	-- The landing call, in this game's own language (`client/callout.lua`).
+	if M.Call ~= nil then M.Call.Start() end
 end
 
 function M.Stop()
 	if watchJob ~= nil then OPX.Scheduler.Cancel(watchJob) end
+	if M.Pad ~= nil then M.Pad.Stop() end
+	if M.Call ~= nil then M.Call.Stop() end
 	endGuard('stopped')
 	endFade(true)
 	local api = OPX.Api.Get('prompts')

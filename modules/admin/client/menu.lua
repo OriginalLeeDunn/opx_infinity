@@ -1084,36 +1084,44 @@ end
 -- leads to one field and a confirm-free amount.
 SCREENS.recoveryPlayers = function()
 	local query = filtering()
+	-- Read through a local, as the players screen reads it: the walk yields on the
+	-- redraw's thread, and a ROSTER answer landing in that gap replaces the
+	-- module's list -- possibly with a shorter one.
+	local list = roster
 	local matched = {}
-	for index = 1, #roster do
-		local entry = roster[index]
+	for index = 1, #list do
+		local entry = list[index]
 		local word = locale('admin.state.' .. entry.state)
 		if matches(query, entry.id, entry.name, entry.user, entry.citizenId, word) then
 			matched[#matched + 1] = entry
 		end
 	end
 
-	local items = searchRows(#matched, #roster)
-	for index = 1, math.min(#matched, MAX_LISTED) do
-		local entry = matched[index]
-		local value = locale('admin.state.' .. entry.state)
-		if entry.bucket ~= 0 then value = value .. ' b' .. entry.bucket end
-		if entry.distance then value = value .. ' ' .. entry.distance .. 'm' end
-		-- THE LABEL IS A STRING AND NOT A `{ text = ... }` TABLE. The `go`/`form`
-		-- helpers unwrap that shape for the rows they build; a row assembled by hand
-		-- has to do it itself, and the contract refuses the WHOLE SCREEN when one
-		-- label is a table -- `invalid_item_label`, which is how the picker drew
-		-- nothing at all while the rest of the panel worked.
-		items[#items + 1] = denied(row('recoveryPlayer_' .. entry.id,
-			('[%d] %s'):format(entry.id, entry.name),
-			{ form = 'recoveryMoney', arg = entry.id },
-			{ value = value, icon = entry.state == 'down' and 'heal' or 'person' }),
-			Command.RECOVERY_MONEY)
-	end
+	-- PAGED like every list on this menu (see `PAGE_ROWS`): a full roster built
+	-- in one resume was past the per-resume budget.
+	local title, listed = paged(matched, 'recoveryPlayers', nil, locale('admin.menu.recoveryPlayer'),
+		function(entry)
+			local value = locale('admin.state.' .. entry.state)
+			if entry.bucket ~= 0 then
+				value = value .. ' ' .. locale('admin.menu.bucket', { bucket = entry.bucket })
+			end
+			if entry.distance then value = value .. ' ' .. entry.distance .. 'm' end
+			-- THE LABEL IS A STRING AND NOT A `{ text = ... }` TABLE. The `go`/`form`
+			-- helpers unwrap that shape for the rows they build; a row assembled by
+			-- hand has to do it itself, and the contract refuses the WHOLE SCREEN when
+			-- one label is a table -- `invalid_item_label`, which is how the picker
+			-- drew nothing at all while the rest of the panel worked.
+			return denied(row('recoveryPlayer_' .. entry.id,
+				('[%d] %s'):format(entry.id, entry.name),
+				{ form = 'recoveryMoney', arg = entry.id },
+				{ value = value, icon = entry.state == 'down' and 'heal' or 'person' }),
+				Command.RECOVERY_MONEY)
+		end)
+	local items = append(searchRows(#matched, #list), listed)
 	if #matched == 0 then
-		items[#items + 1] = empty(#roster > 0 and 'admin.menu.noMatch' or 'admin.menu.nobody')
+		items[#items + 1] = empty(#list > 0 and 'admin.menu.noMatch' or 'admin.menu.nobody')
 	end
-	return locale('admin.menu.recoveryPlayer'), items
+	return title, items
 end
 
 SCREENS.vehicles = function()

@@ -132,10 +132,33 @@ OPX.Config.MODULES.spawn = {
 	-- announces a living body. Drawn together they are three modals fighting for
 	-- one keyboard, so with this true the menu waits for entry to report itself
 	-- idle -- and entry reports the join busy for the fitting room too, which is
-	-- why there is one setting here and not two. The wait is bounded by
+	-- why there is one setting here and not two. Entry also reports a name that
+	-- is owed from the moment the character loads, before its form can open
+	-- (entry's NAME_CLAIM_SECONDS), and never opens that form over this menu
+	-- once it is up. The wait is bounded by
 	-- HOLD_MAX_SECONDS above: a question nobody answers costs the player the
 	-- choice, not the session.
 	WAIT_FOR_ENTRY = true,
+
+	-- Whether the menu waits until the player can see the screen.
+	--
+	-- The menu's page takes the open as soon as its surface is up, which is
+	-- before anybody can see it. At join, the server's loading screen covers every
+	-- surface until the platform has reset the body. During play, a native load
+	-- (a respawn, a teleport) covers it while the load runs. In the bot lab the
+	-- offer came ten seconds before the loading screen came down, so the window
+	-- started with ten of its forty-five seconds hidden. With this true, the menu
+	-- waits while a native load is up and, at join, until the platform has
+	-- finished resetting the body. The server's clock starts when the menu is
+	-- really on screen. The wait is reported to the server like entry's, inside
+	-- HOLD_MAX_SECONDS.
+	WAIT_FOR_SCREEN = true,
+
+	-- The longest one offer waits for the screen, in seconds: 5 at least, 120 at
+	-- most. If the screen still has not cleared by then, the menu opens anyway,
+	-- with a line in the client's log. A loading screen that never says it is
+	-- over then costs the player this wait, never the choice.
+	SCREEN_WAIT_SECONDS = 60,
 
 	-- The places a new character may start.
 	--

@@ -129,6 +129,53 @@ function OPX.Locale.Money(amount, moneyType)
 	return Locale.Text('money.amount', { amount = grouped, currency = currency })
 end
 
+-- ── the player's own game language, for what is HEARD ────────────────────────
+--
+-- The catalogues above are the server's one language (`SHARED.LOCALE`). A voice
+-- line is the player's: the language their game's voice-over is set to, read
+-- off the engine on the client (`Open77.session.locale`, permission
+-- `session.locale`). The bot lab, 2026-10-07: "give the voice locales with
+-- french german spanish etc".
+
+-- The engine's own codes that are not the two-letter ones (`jp`, `kr`, `cz`, `ua`).
+local ENGINE_CODES = { jp = 'ja', kr = 'ko', cz = 'cs', ua = 'uk' }
+
+--- The languages this player's game runs in, best first -- its voice-over, its
+--- text, then the BCP-47 tag -- as two-letter codes. Empty on a server, and on
+--- a client whose game has not reported its language yet.
+-- @return string[]
+local function gameLanguages()
+	local session = type(Open77) == 'table' and Open77.session or nil
+	if type(session) ~= 'table' or type(session.locale) ~= 'function' then return {} end
+	local read, reported = pcall(session.locale)
+	if not read or type(reported) ~= 'table' then return {} end
+	local out = {}
+	for _, code in ipairs({ reported.voiceLanguage, reported.gameLanguage, reported.code }) do
+		if type(code) == 'string' and #code >= 2 then
+			local head = code:sub(1, 2):lower()
+			out[#out + 1] = ENGINE_CODES[head] or head
+		end
+	end
+	return out
+end
+
+--- The variant of something heard in this player's language: `variants` keyed
+--- by two-letter code, `fallback` (the English one) when the game's voice-over
+--- is English, its language has no variant, or it has not reported.
+-- @param variants table|nil
+-- @param fallback any
+-- @return any the variant
+-- @return string its language
+function OPX.Locale.ForVoice(variants, fallback)
+	if type(variants) == 'table' then
+		for _, lang in ipairs(gameLanguages()) do
+			if lang == 'en' then break end
+			if variants[lang] ~= nil then return variants[lang], lang end
+		end
+	end
+	return fallback, 'en'
+end
+
 -- The global shorthand every gameplay file calls.
 locale = Locale.Text
 

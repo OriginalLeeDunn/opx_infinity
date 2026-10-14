@@ -31,6 +31,12 @@ local EVENT_CHANGED = OPX.Event(LOCAL, 'character', 'changed')
 -- announced. Public: a bare AddEventHandler is the documented way to hear it.
 local EVENT_APPEARANCE = OPX.Event(LOCAL, 'appearance', 'decision')
 
+-- The spawn menu's public state. The name form never goes up over an open menu:
+-- the menu stands aside for this module, and this module stands aside for a
+-- menu that is already on screen. Tracked rather than asked, as the fitting
+-- room does (`modules/appearance/client/wardrobe.lua`, `spawnUp`).
+local EVENT_SPAWN = OPX.Event(LOCAL, 'spawn', 'state')
+
 -- Where every server refusal arrives, with the operation it answers.
 -- AddEventHandler and not RegisterNetEvent: `core/client/notify.lua` has already
 -- registered this name for the wire, the dispatcher matches on the name alone,
@@ -91,6 +97,34 @@ local refusal
 -- each standing aside for the one in front, and by nothing else.
 local wardrobeOwed = false
 
+-- THE NAME'S OWN CLAIM, for the same gap the fitting room's claim covers.
+--
+-- The spawn menu stood aside only for a form that was UP. The form waits for
+-- the look to settle, and the server offers the spawn at gameplay-ready, which
+-- comes first: in the bot lab (2026-10-07) the character loaded unnamed at
+-- 11:18:09, the offer came at 11:18:17 with nothing of this module on screen,
+-- the menu opened, and at 11:18:29 the look settled and the form opened over
+-- it and took its keyboard. The window ran out at 11:19:03.
+--
+-- So a loaded character that owes a name holds the join from the moment it
+-- loads: until it is named once the form has been up, and for at most
+-- `NAME_CLAIM_SECONDS` before that, so a look that never settles cannot hold
+-- the spawn choice for ever. `askedOnce` is whether the form has been up for
+-- this character, `claimUntilMs` when the claim lapses if it never was.
+local askedOnce = false
+local claimUntilMs = 0
+
+-- Whether the spawn menu is on screen (`EVENT_SPAWN`).
+local spawnUp = false
+
+-- What the bus was last told: a phase, or 'idle'. The pass says it again only
+-- when it changed -- a name that lands, a claim that lapses -- and every
+-- other call site raises as it always did.
+local told = 'idle'
+
+-- Floor on `NAME_CLAIM_SECONDS`, and its value when the setting is unusable.
+local NAME_CLAIM_FLOOR_SECONDS = 10
+
 -- Milliseconds before a form that was cancelled, or refused, is offered again.
 local RETRY_MS = 1500
 
@@ -105,14 +139,48 @@ local CREATION_RETRY_MS = 2000
 -- something was lost and asking again is better than a character with no name.
 local SENT_WAIT_MS = 8000
 
+--- How long a name owed and not yet asked holds the join, in milliseconds.
+local function claimMs()
+	local seconds = M.Number(M.Settings.NAME_CLAIM_SECONDS, NAME_CLAIM_FLOOR_SECONDS)
+	return math.floor(seconds * 1000)
+end
+
+--- Whether the loaded character owes a name this module will ask for.
+-- True until it is named once the form has been up; before that, only while
+-- the claim has not lapsed. Nothing is owed with no form module to ask it.
+local function nameOwed(atMs)
+	if not running or citizenId == nil then return false end
+	if Form == nil or type(Form.Open) ~= 'function' then return false end
+	if Character == nil or Character.IsNamed() then return false end
+	if askedOnce then return true end
+	return (atMs or OPX.Now()) < claimUntilMs
+end
+
+--- What the join is waiting on now, `what` first when a caller names it.
+local function phaseOf(what)
+	if what ~= nil then return what end
+	if creating then return 'creator' end
+	if naming ~= nil or nameOwed() then return 'name' end
+	if wardrobeOwed then return 'wardrobe' end
+	return nil
+end
+
 --- Announces what this module is waiting for, on the public local bus.
 -- A nil `what` means "nothing of MINE is up", which is not the same as idle: a
--- fitting room still owed is the join still asking, so it is resolved here
--- rather than at each of the five call sites -- every one of which would
--- otherwise have to remember the third question exists.
+-- name still owed, or a fitting room still owed, is the join still asking, so
+-- it is resolved here rather than at each of the call sites -- every one of
+-- which would otherwise have to remember the questions not on screen.
 local function announce(what)
-	if what == nil and wardrobeOwed then what = 'wardrobe' end
-	TriggerEvent(M.Event.ON_STATE, { open = what ~= nil, phase = what or 'idle' })
+	what = phaseOf(what)
+	told = what or 'idle'
+	TriggerEvent(M.Event.ON_STATE, { open = what ~= nil, phase = told })
+end
+
+--- Says the state again when it has changed under nobody's call: a name that
+--- landed, a claim that lapsed.
+local function refresh()
+	local what = phaseOf(nil)
+	if (what or 'idle') ~= told then announce(what) end
 end
 
 -- ── the body and the face ────────────────────────────────────────────────────
@@ -285,6 +353,7 @@ local function askName()
 	if type(opened) == 'table' and opened.ok then
 		naming = opened.value.handle
 		refusal = nil
+		askedOnce = true
 		announce('name')
 		return
 	end
@@ -299,6 +368,10 @@ local function nameWanted(atMs)
 	if not running or citizenId == nil then return false end
 	if naming ~= nil or creating then return false end
 	if Character.IsNamed() then return false end
+	-- NEVER OVER THE SPAWN MENU. Two modals on one keyboard is one of them
+	-- losing its focus; the menu's window is the server's to count and short,
+	-- so the name waits for it and is asked the moment it closes.
+	if spawnUp then return false end
 
 	-- A name is in flight. Nothing is asked until it has been answered, and past
 	-- the deadline it counts as lost rather than as answered.
@@ -342,7 +415,9 @@ local function onLoaded(playerData)
 	if type(playerData) ~= 'table' then return end
 	local citizen = playerData.citizenId
 	if type(citizen) ~= 'string' or citizen == '' then return end
-	if citizen == citizenId then return end
+	-- The same character, changed: the mirror that carries a name it was just
+	-- given is what ends the name's claim.
+	if citizen == citizenId then return refresh() end
 
 	citizenId = citizen
 	creationAsked, creating, creationRetryAtMs = false, false, 0
@@ -351,6 +426,10 @@ local function onLoaded(playerData)
 	-- The claim belongs to the character that left. The appearance module raises
 	-- its own for this one, and until it does the join is not waiting on clothes.
 	wardrobeOwed = false
+	-- Said NOW, before the spawn offer can arrive: a character that owes a name
+	-- holds the join from the moment it loads, not from the moment its form is up.
+	askedOnce, claimUntilMs = false, OPX.Now() + claimMs()
+	announce(nil)
 end
 
 --- Forgets the character that left, and the question it had not answered.
@@ -359,6 +438,7 @@ local function onUnloaded()
 	creationAsked, creating, creationRetryAtMs = false, false, 0
 	refusal, retryAtMs, sentAtMs = nil, 0, 0
 	draft.firstName, draft.lastName = '', ''
+	askedOnce, claimUntilMs = false, 0
 	-- Cleared before the announce below, so the join is reported IDLE rather than
 	-- still waiting on a fitting room for a character that has gone. A claim left
 	-- standing here is the one failure that costs a player their spawn choice
@@ -382,6 +462,8 @@ local function state()
 		creating = creating,
 		naming = naming ~= nil,
 		named = citizenId ~= nil and Character.IsNamed() or false,
+		-- A name owed and not yet asked counts: it holds the join too.
+		nameOwed = nameOwed(),
 		-- Not this module's to answer for, and reported anyway: this is the
 		-- contract for "what is the join still waiting on", and the clothes are
 		-- part of that answer whoever owns them.
@@ -432,6 +514,7 @@ function M.Init()
 	retryAtMs, creationRetryAtMs, sentAtMs = 0, 0, 0
 	draft = { firstName = '', lastName = '' }
 	wardrobeOwed = false
+	askedOnce, claimUntilMs, spawnUp, told = false, 0, false, 'idle'
 end
 
 --- Publishes what this module knows and what it can be asked to redo.
@@ -481,6 +564,9 @@ function M.Start()
 	AddEventHandler(EVENT_UNLOADED, onUnloaded)
 	AddEventHandler(EVENT_APPEARANCE, onAppearance)
 	AddEventHandler(EVENT_REFUSED, onRefused)
+	AddEventHandler(EVENT_SPAWN, function(payload)
+		spawnUp = type(payload) == 'table' and payload.open == true
+	end)
 
 	-- A restart mid-session misses every broadcast and there is no replay, so a
 	-- character already loaded is picked up here.
@@ -488,6 +574,7 @@ function M.Start()
 
 	OPX.Scheduler.Every('entry:tick', TICK_MS, function()
 		local atMs = OPX.Now()
+		refresh()
 		if creationWanted(atMs) then return openCreator() end
 		if nameWanted(atMs) then askName() end
 	end)

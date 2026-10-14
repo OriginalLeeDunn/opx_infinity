@@ -393,6 +393,16 @@ function T.Stood(patientId, why)
 		pcall(TriggerClientEvent, Event.UNPAGE, medicId, patientId)
 	end
 	if treating[patientId] ~= nil then cancel(patientId, 'patient_up') end
+	-- The Trauma Team's own AV (`server/team.lua`) takes them off its list.
+	if M.Team ~= nil and type(M.Team.Stood) == 'function' then pcall(M.Team.Stood, patientId) end
+end
+
+--- Whether a player medic is treating this patient right now: the team's AV
+--- never takes a patient from a medic.
+-- @param patientId number
+-- @return boolean
+function T.Treating(patientId)
+	return treating[patientId] ~= nil
 end
 
 --- A connection left: whatever it was to this file.

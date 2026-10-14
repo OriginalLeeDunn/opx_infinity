@@ -58,11 +58,16 @@
 -- canonical engine bit this file sets with `setEngine`, so an unoccupied airframe
 -- is already audible to every viewer without a second call from us.
 --
--- WHAT THIS FILE DOES NOT CLAIM. The red warning lines under a MaxTac AV are a
--- property of the engine's own spawn setup (`av_spawn_setup`,
--- `summonDistanceMin/Max`, `verticalOffset`), and an unoccupied server-flown AV
--- cannot command them. The authored entry workspots a crew rides are the
--- record's and the platform's mount path's, which is the path used here.
+-- THE RED LASERS UNDER IT ARE THE CLIENT'S. The ring of red beams, the marker
+-- that runs round it and the dotted OPEN77 sign are the landing pad the Open77
+-- client draws under any hull of a record it flies as an AV
+-- (`ApplyLandingLaser`, client/src/api/Vehicles.cpp), centred on the hull, the
+-- sign along the world's axes; which is why the airframe sets down square to
+-- them (`square`). A server-flown hull of a record the client does not fly as
+-- an AV gets the same pad from `modules/avdoor` (`PADS`); this file asks for it
+-- (`Pad`) and the avdoor half declines for the records the client pads itself.
+-- The authored entry workspots a crew rides are the record's and the
+-- platform's mount path's, which is the path used here.
 
 local M = OPX.Modules.Get('ncpd')
 M.Av = {}
@@ -122,11 +127,34 @@ local function lerp(a, b, t) return a + (b - a) * t end
 --- airframe through every phase boundary, which reads as a stutter per phase.
 local function smooth(t) return t * t * (3.0 - 2.0 * t) end
 
-local function bearingTo(from, to)
+--- The game's heading from one point to another: degrees about Z, 0 facing +Y
+--- and growing counter-clockwise, so +X is 270. It is the yaw `create` and
+--- `setTransform` read (`docs/camera.md`: "yaw 0 faces +Y and increases
+--- counter-clockwise"). The airframe used to be given the math angle
+--- (`atan(dy, dx)`, 0 = +X, the one `pointAt` lays points out along), which is
+--- 90 degrees off it: the AV flew in and sat down side-on to its own path. The
+--- bot lab, 2026-10-07: "not showing in a diff angle".
+local function headingTo(from, to)
 	local dx = to.x - from.x
 	local dy = to.y - from.y
 	if dx == 0.0 and dy == 0.0 then return 0.0 end
-	return math.deg(math.atan(dy, dx))
+	return math.deg(math.atan(-dx, dy)) % 360.0
+end
+
+--- A heading squared to the nearest of the four axes. The AV sets down square
+--- to them: the landing pad the client draws under a MaxTac AV is a ring with
+--- the OPEN77 sign laid out along the world's axes (`ApplyLandingLaser`,
+--- client/src/api/Vehicles.cpp), so a hull at 0, 90, 180 or 270 sits square
+--- on its own sign instead of across it at whatever angle it came in.
+local function square(heading)
+	return (math.floor(heading / 90.0 + 0.5) * 90.0) % 360.0
+end
+
+--- A heading `t` of the way from one to another, the short way round.
+local function turn(from, to, t)
+	if t >= 1.0 then return to % 360.0 end
+	local delta = ((to - from + 540.0) % 360.0) - 180.0
+	return (from + delta * t) % 360.0
 end
 
 --- Distance between two points, altitude included.
@@ -160,28 +188,49 @@ local function pointAt(origin, bearing, distance)
 	}
 end
 
+-- How far from the person the AV holds when nobody measured the ground.
+local BESIDE_METRES = 12.0
+
 --- One run: the airframe's own geometry, so every phase reads the same fields.
-local function geometry(target, plan, bearing)
-	local ground = target.z
+-- `site` is where the games measured flat open ground at the person's level
+-- (`LandingSite` on the avdoor contract): the hold and the drop are over it and
+-- the street is its height. Without one, the old place: `BESIDE_METRES` out on
+-- the approach bearing, at the person's own height. `start` is kept when given,
+-- so an AV already waiting out there flies in from where it is.
+local function layout(target, plan, bearing, site, start)
+	local ground = site ~= nil and site.z or target.z
 	local approach = pointAt(target, bearing, plan.ApproachMetres)
-	local hover = pointAt(target, bearing, 12.0)
-	return {
+	local beside = site ~= nil and { x = site.x, y = site.y } or pointAt(target, bearing, BESIDE_METRES)
+	local from = start or { x = approach.x, y = approach.y, z = target.z + plan.ApproachAltitude }
+	local g = {
 		-- Where the run starts: out along the approach bearing and high.
-		start = { x = approach.x, y = approach.y, z = ground + plan.ApproachAltitude },
+		start = { x = from.x, y = from.y, z = from.z },
 		-- Where it holds: beside the player, not on top of them, so the squad
 		-- steps out between the aircraft and the person it came for.
-		hover = { x = hover.x, y = hover.y, z = ground + plan.HoverAltitude },
+		hover = { x = beside.x, y = beside.y, z = ground + plan.HoverAltitude },
 		-- Where the squad leaves and the crew door opens: the same ground point,
 		-- low. `drop.z` is also the last height this module knows the street to
 		-- be at, which is what `Av.AtRest` measures the crew's release against.
-		drop = { x = hover.x, y = hover.y, z = ground + plan.DropAltitude },
+		drop = { x = beside.x, y = beside.y, z = ground + plan.DropAltitude },
 		-- Where it leaves: back out along the same line, climbing.
-		exit = { x = approach.x, y = approach.y, z = ground + plan.ApproachAltitude },
+		exit = { x = from.x, y = from.y, z = from.z },
 		target = { x = target.x, y = target.y, z = target.z },
+		-- The street under the drop, and whether a game measured it.
+		ground = ground,
+		measured = site ~= nil,
 	}
+	-- The headings: nose first down the approach, square to the axes for the
+	-- drop and the hold, nose first again on the way out.
+	g.inbound = headingTo(g.start, g.hover)
+	g.landed = square(headingTo(g.drop, g.target))
+	g.outbound = headingTo(g.hover, g.exit)
+	return g
 end
 
 --- The pose for a phase at `u` in [0, 1].
+-- The heading turns only while the hull is hanging still: down the descent
+-- from the approach's to the square one it sets down on, and through the hover
+-- to the way out. It never snaps, and it never swings at the street.
 local function pose(run, phase, u)
 	local g = run.geometry
 	local eased = smooth(u)
@@ -190,33 +239,34 @@ local function pose(run, phase, u)
 			x = lerp(g.start.x, g.hover.x, eased),
 			y = lerp(g.start.y, g.hover.y, eased),
 			z = lerp(g.start.z, g.hover.z, eased),
-			yaw = bearingTo(g.start, g.hover),
+			yaw = g.inbound,
 		}
 	end
 	if phase == PHASE.DESCEND then
-		return { x = g.hover.x, y = g.hover.y, z = lerp(g.hover.z, g.drop.z, eased), yaw = bearingTo(g.drop, g.target) }
+		return { x = g.hover.x, y = g.hover.y, z = lerp(g.hover.z, g.drop.z, eased),
+			yaw = turn(g.inbound, g.landed, eased) }
 	end
 	if phase == PHASE.DEPLOY then
-		return { x = g.drop.x, y = g.drop.y, z = g.drop.z, yaw = bearingTo(g.drop, g.target) }
+		return { x = g.drop.x, y = g.drop.y, z = g.drop.z, yaw = g.landed }
 	end
 	-- The street hold is the same pose as the drop, held rather than passed
 	-- through: a hull that drifted during the window would make `REACH_METRES` a
 	-- moving target for a body walking up to it.
 	if phase == PHASE.BOARD then
-		return { x = g.drop.x, y = g.drop.y, z = g.drop.z, yaw = bearingTo(g.drop, g.target) }
+		return { x = g.drop.x, y = g.drop.y, z = g.drop.z, yaw = g.landed }
 	end
 	if phase == PHASE.CLIMB then
-		return { x = g.drop.x, y = g.drop.y, z = lerp(g.drop.z, g.hover.z, eased), yaw = bearingTo(g.hover, g.target) }
+		return { x = g.drop.x, y = g.drop.y, z = lerp(g.drop.z, g.hover.z, eased), yaw = g.landed }
 	end
 	if phase == PHASE.HOVER then
-		return { x = g.hover.x, y = g.hover.y, z = g.hover.z, yaw = bearingTo(g.hover, g.target) }
+		return { x = g.hover.x, y = g.hover.y, z = g.hover.z, yaw = turn(g.landed, g.outbound, eased) }
 	end
 	-- EXIT
 	return {
 		x = lerp(g.hover.x, g.exit.x, eased),
 		y = lerp(g.hover.y, g.exit.y, eased),
 		z = lerp(g.hover.z, g.exit.z, eased),
-		yaw = bearingTo(g.hover, g.exit),
+		yaw = g.outbound,
 	}
 end
 
@@ -396,6 +446,38 @@ local function handOver(run, why)
 	M.Radio.Push('maxtac', 'ncpd.radio.maxtac.crew', { citizen = run.citizenId, crew = crew })
 end
 
+--- The landing call on the airframe (`modules/avdoor`, config/avdoor.lua
+--- `CALLOUTS`): "Warning. Clear the area. MaxTac landing." from the approach
+--- until the aircraft is down at the drop. OPTIONAL: without the avdoor
+--- contract, or with the call switched off, the insertion flies exactly as
+--- before, on its own sounds.
+-- @param run table
+-- @param on boolean start it, or end it once the sentence is said
+-- @param why string for the journal
+local function landingCall(run, on, why)
+	local door = OPX.Api.Get('avdoor')
+	if door == nil then return end
+	local call = on and door.Callout or door.Hush
+	if type(call) ~= 'function' then return end
+	local ran, ok, reason
+	if on then
+		-- From where the airframe starts its approach: this controller poses it,
+		-- so it moves the call too (`Follow` in `Av.Step`).
+		local start = run.geometry.start
+		ran, ok, reason = pcall(call, run.avId, 'maxtac', why,
+			{ x = start.x, y = start.y, z = start.z, bucket = run.bucket or 0 })
+	else
+		ran, ok, reason = pcall(call, run.avId, why)
+	end
+	-- Whether `Av.Step` moves the call with each pose.
+	run.calling = on and ran and ok == true or false
+	if not ran then
+		Open77.log.warn(('[ncpd] the MaxTac AV landing call raised: %s'):format(tostring(ok)))
+	elseif on and ok ~= true then
+		Open77.log.info(('[ncpd] the MaxTac AV flies in without its landing call: %s'):format(tostring(reason)))
+	end
+end
+
 --- Stops a run, takes the airframe down and frees the one-at-a-time slot.
 --
 -- A crew changes what "down" means. An airframe with somebody still seated in it
@@ -418,6 +500,10 @@ local function finish(citizenId, why, force)
 	runs[citizenId] = nil
 	if inbound == run then inbound = nil end
 	announceDoor(run, nil)
+	landingCall(run, false, why)
+	if run.survey ~= nil and run.survey.state == 'pending' then run.survey.state = 'abandoned' end
+	local door = OPX.Api.Get('avdoor')
+	if door ~= nil and type(door.Unpad) == 'function' then pcall(door.Unpad, run.avId, why) end
 	if run.handle ~= nil then
 		OPX.Scheduler.Cancel(run.handle)
 		run.handle = nil
@@ -525,6 +611,15 @@ function Av.Step(citizenId)
 		return
 	end
 
+	-- STILL MEASURING THE STREET: the airframe waits where it was created, out
+	-- and high, until the games have answered or the survey's time is up.
+	if run.survey ~= nil and run.survey.state == 'pending' then
+		if OPX.Now() < run.survey.deadline then return end
+		run.survey.state = 'late'
+		Open77.log.warn(('[ncpd] the MaxTac AV for %s flies in without a measured street: the survey '
+			.. 'took longer than %.1fs'):format(tostring(citizenId), (run.survey.deadline - run.survey.since) / 1000.0))
+	end
+
 	local phase = run.phase
 	local length = duration(run, phase)
 	local dt = run.plan.TickMs / 1000.0
@@ -536,6 +631,11 @@ function Av.Step(citizenId)
 	-- `yaw` is passed every tick on purpose: the platform's `setTransform` reads
 	-- an absent heading as 0, not as "keep the current one".
 	local moved, reason = contract.setTransform(run.avId, { x = at.x, y = at.y, z = at.z, yaw = at.yaw })
+	-- The loudspeaker goes where the airframe just went.
+	if run.calling == true then
+		local door = OPX.Api.Get('avdoor')
+		if door ~= nil and type(door.Follow) == 'function' then pcall(door.Follow, run.avId, at) end
+	end
 	if moved ~= true then
 		run.refused = run.refused + 1
 		if run.refused == 1 then
@@ -550,10 +650,15 @@ function Av.Step(citizenId)
 	-- out of the doors at the bottom are bodies that were inside the hull on the
 	-- way down. A caller that passed no mount hook keeps the old shape: the squad
 	-- appears on the ring at the drop.
+	-- The hooks are given the drop -- where the hull hangs, which is where a body
+	-- that boards it is made -- and the STREET under it (`ground`): a body stood
+	-- on the ring at `drop.z` was stood in the air beside a hull holding
+	-- `DROP_ALTITUDE` up.
+	local drop = { x = run.geometry.drop.x, y = run.geometry.drop.y, z = run.geometry.drop.z,
+		ground = run.geometry.ground }
 	if phase == PHASE.DESCEND and run.mounted == false then
 		run.mounted = true
-		callHook(citizenId, run.onMount, 'the squad could not take their seats in the AV',
-			run.geometry.drop, run)
+		callHook(citizenId, run.onMount, 'the squad could not take their seats in the AV', drop, run)
 	end
 
 	-- The squad steps out at the bottom of the descent, before the street hold:
@@ -561,8 +666,7 @@ function Av.Step(citizenId)
 	-- street for it to be where they came from.
 	if phase == PHASE.DEPLOY and run.deployed == false then
 		run.deployed = true
-		callHook(citizenId, run.onDeploy, 'the MaxTac squad could not leave the AV',
-			run.geometry.drop, run)
+		callHook(citizenId, run.onDeploy, 'the MaxTac squad could not leave the AV', drop, run)
 	end
 
 	local following = nextPhase(run, phase)
@@ -586,6 +690,8 @@ function Av.Step(citizenId)
 	run.phaseClock = 0.0
 	if following == PHASE.BOARD then announceDoor(run, doorState(run)) end
 	run.phaseClock = 0.0
+	-- DOWN AT THE DROP: the loudspeaker finishes its sentence and stops.
+	if following == PHASE.DEPLOY then landingCall(run, false, 'down at the drop') end
 
 	-- The aircraft's own voice, the base game's: the drop starting, the horn
 	-- the moment it is down and the squad bails out, the hover while it holds
@@ -793,7 +899,7 @@ function Av.Insert(request)
 	local boardSeconds = boarding ~= nil and boarding.Seconds or 0.0
 
 	local bearing, _ = bearingFor(citizenId)
-	local geometry = geometry(target, plan, bearing)
+	local geometry = layout(target, plan, bearing)
 
 	-- The host's flag table, and only when it really is one: `vehicles.flags`
 	-- is a table of masks on the platform and a function in the test harness,
@@ -808,7 +914,7 @@ function Av.Insert(request)
 		appearance = type(request.appearance) == 'string' and request.appearance ~= ''
 			and request.appearance or nil,
 		position = { x = geometry.start.x, y = geometry.start.y, z = geometry.start.z },
-		yaw = bearingTo(geometry.start, geometry.hover),
+		yaw = geometry.inbound,
 		bucket = request.bucket,
 		flags = createFlags > 0 and createFlags or nil,
 	})
@@ -830,6 +936,8 @@ function Av.Insert(request)
 		plan = plan,
 		geometry = geometry,
 		phase = PHASE.APPROACH,
+		-- The routing bucket it was created in: the landing call is heard there.
+		bucket = request.bucket or 0,
 		phaseClock = 0.0,
 		clock = 0.0,
 		refused = 0,
@@ -845,11 +953,56 @@ function Av.Insert(request)
 		handedOver = false,
 		restClock = 0.0,
 	}
+	-- THE STREET IS MEASURED BEFORE THE AV COMES IN (avdoor `LANDING`): the
+	-- games are asked for flat open ground at the person's level near them, the
+	-- airframe waiting where it was created until they answer. A host that
+	-- cannot be asked flies the old place at once.
+	local door = OPX.Api.Get('avdoor')
+	local canSurvey = false
+	if door ~= nil and type(door.LandingSite) == 'function' and type(door.CanSurvey) == 'function' then
+		local ran, can = pcall(door.CanSurvey)
+		canSurvey = ran and can == true
+	end
+	if canSurvey and type(CreateThread) == 'function' then
+		local budget = 4000
+		if door ~= nil and type(door.SurveyBudgetMs) == 'function' then
+			local ran, ms = pcall(door.SurveyBudgetMs)
+			if ran and tonumber(ms) ~= nil then budget = tonumber(ms) end
+		end
+		local since = OPX.Now()
+		run.survey = { state = 'pending', since = since, deadline = since + budget + 1500 }
+		local survey = run.survey
+		CreateThread(function()
+			local ran, site, why = pcall(door.LandingSite, target, { bearing = bearing, near = BESIDE_METRES })
+			if survey.state ~= 'pending' or runs[citizenId] ~= run then return end
+			survey.state = 'done'
+			if ran and type(site) == 'table' then
+				run.geometry = layout(target, plan, bearing, site, run.geometry.start)
+				Open77.log.info(('[ncpd] the MaxTac AV for %s comes down on measured ground %.0f m from them '
+					.. '(%.1f m %s their level, %d probe(s), %.1fs)'):format(citizenId, site.distance or 0,
+					math.abs(site.z - target.z), site.z >= target.z and 'above' or 'below', site.probes or 0,
+					(OPX.Now() - since) / 1000.0))
+			else
+				Open77.log.warn(('[ncpd] the MaxTac AV for %s comes down at the old place, %.0f m from them '
+					.. 'at their height: %s'):format(citizenId, BESIDE_METRES, tostring(ran and why or site)))
+			end
+		end)
+	end
+
 	run.handle = OPX.Scheduler.Every(('ncpd.av.%s'):format(citizenId), plan.TickMs, function()
 		Av.Step(citizenId)
 	end)
 	runs[citizenId] = run
 	inbound = run
+	-- The loudspeaker, from the first pose of the approach.
+	landingCall(run, true, ('the insertion for %s'):format(citizenId))
+	-- The landing pad on the street under her (avdoor `PADS`): the platform
+	-- draws its own under a record it flies as an AV, and this asks for ours
+	-- only where it does not.
+	if door ~= nil and type(door.Pad) == 'function' then
+		pcall(door.Pad, avId, { record = request.record or 'Vehicle.max_tac_av', bucket = run.bucket,
+			why = ('the insertion for %s'):format(citizenId) })
+	end
 
 	Open77.log.info(('[ncpd] MaxTac AV inbound for %s: %s from %.0fm out at %.0fm altitude, %.0fs to the drop%s')
 		:format(citizenId, tostring(request.record or 'Vehicle.max_tac_av'),

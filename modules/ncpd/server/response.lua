@@ -44,9 +44,80 @@ M.Response = Response
 
 --- What this module has standing in the world, per character.
 -- @field stage number the stage these units answer
+-- @field wanted number the stage the ledger asked for (above `stage` while a
+--   cyberpsycho waits for a MaxTac squad)
 -- @field vehicles table[] ids returned by the host
 -- @field npcs table[] ids returned by the host
+-- @field queued boolean MaxTac was committed elsewhere: NCPD holds them
+-- @field trimmed table `{ units, vehicles }` the ceiling held back
 local deployed = {}
+
+-- ── the ceiling ──────────────────────────────────────────────────────────────
+--
+-- THE STREET HAS ROOM FOR SO MANY, FOR EVERYBODY AT ONCE. The owner,
+-- 2026-10-07: "theres a stacking bug spawning in reapedetly maxtac agents more
+-- and more its slowing my game down almost crashing". The lab's server log had
+-- 35 responses standing at once -- 265 officers and troopers, 126 cars -- because
+-- every wanted character was stood a whole response of their own and nothing
+-- ever counted them together. `LIMITS` in config/ncpd.lua is that count: NCPD
+-- officers and cars across every response, and how many MaxTac squads are out.
+
+--- A whole number from config inside a band, or the fallback.
+local function whole(value, low, high, fallback)
+	local read = tonumber(value)
+	if read == nil or read ~= read or read < low or read > high then return fallback end
+	return math.floor(read)
+end
+
+--- The street's ceiling. A missing or malformed block is the defaults;
+--- `LIMITS = false` is no ceiling at all (the old shape).
+-- @return table|nil `{ units, vehicles, squads }`, nil when there is none
+local function limits()
+	-- Read in two steps: `a and false or nil` is nil, and `false` is the switch.
+	local declared = nil
+	if type(M.Settings) == 'table' then declared = M.Settings.LIMITS end
+	if declared == false then return nil end
+	local block = type(declared) == 'table' and declared or {}
+	return {
+		units = whole(block.UNITS, 0, 1000, 24),
+		vehicles = whole(block.VEHICLES, 0, 500, 10),
+		squads = whole(block.MAXTAC_SQUADS, 0, 32, 1),
+	}
+end
+Response.Limits = limits
+
+--- What every response but one has standing: NCPD officers and cars, and the
+--- MaxTac squads (a squad is counted whole, never against NCPD's room).
+-- @param except string|nil the citizen whose own response is not counted
+-- @return table `{ units, vehicles, squads }`
+local function standing(except)
+	local used = { units = 0, vehicles = 0, squads = 0 }
+	for citizenId, held in pairs(deployed) do
+		if citizenId ~= except then
+			if held.division == M.DIVISION.MAXTAC then
+				used.squads = used.squads + 1
+			else
+				used.units = used.units + #(held.npcs or {})
+				used.vehicles = used.vehicles + #(held.vehicles or {})
+			end
+		end
+	end
+	return used
+end
+
+--- The stage that holds a cyberpsycho while every MaxTac squad is out: the
+--- highest stage below theirs that NCPD answers, or nil when the ladder has none.
+-- @param stage number
+-- @return number|nil
+local function holdStage(stage)
+	for below = stage - 1, 1, -1 do
+		local row = Law.Stage(below)
+		if row ~= nil and row.Division ~= nil and row.Division ~= M.DIVISION.MAXTAC then
+			return below
+		end
+	end
+	return nil
+end
 
 --- A host call that cannot take the module down with it.
 -- The pursuit mode's own idiom, and the reason is the same: a record the host
@@ -95,14 +166,19 @@ local function bearing(centre, index, count, radius)
 	}
 end
 
---- The heading from one point to another, in the game's degrees.
+--- The heading from one point to another, in the game's degrees: 0 faces +Y
+--- and it grows counter-clockwise, so +X is 270 (`docs/camera.md`). This used
+--- to answer the math angle (`atan(dy, dx)`, 0 = +X), 90 degrees off: every
+--- officer stood side-on to the person they came for, every car parked across
+--- the way it was meant to face, and the roadblock showed its nose instead of
+--- its flank.
 -- @param from table
 -- @param to table
 -- @return number
 local function facing(from, to)
 	local dx, dy = to.x - from.x, to.y - from.y
 	if dx == 0.0 and dy == 0.0 then return 0.0 end
-	return math.deg(math.atan(dy, dx))
+	return math.deg(math.atan(-dx, dy)) % 360.0
 end
 
 --- The host's own vehicle flag mask.
@@ -363,10 +439,15 @@ end
 -- The previous stage is always removed first, including when the new stage is 0:
 -- a player who has been cleared has nothing standing, and a player who climbed
 -- must not keep the cars of three stages at once.
+--
+-- Under the ceiling (`LIMITS`): NCPD stands what the other responses leave of
+-- its officers and cars, and a cyberpsycho past `MAXTAC_SQUADS` is held by NCPD's
+-- top stage. Both are topped up by `Response.Refill` when room comes free.
 -- @param citizenId string
 -- @param playerId number
 -- @param stage number the engine's heat stage to answer
--- @return table a `Result`: `{ ok, value = { stage, vehicles, npcs, refused, av } }`
+-- @return table a `Result`: `{ ok, value = { stage, wanted, vehicles, npcs, refused, av,
+--   queued, trimmed } }`
 function Response.Apply(citizenId, playerId, stage)
 	if type(citizenId) ~= 'string' or citizenId == '' then
 		return OPX.Result.Err('ncpd.noCitizen')
@@ -387,10 +468,65 @@ function Response.Apply(citizenId, playerId, stage)
 		return OPX.Result.Err('ncpd.noPosition', tostring(playerId))
 	end
 
+	-- ONE MAXTAC SQUAD PER CYBERPSYCHO, AND ONLY SO MANY SQUADS. A psycho past
+	-- `LIMITS.MAXTAC_SQUADS` is still at MaxTac's stage -- the stars, the alarm
+	-- and the call-out are the ledger's and unchanged -- but the bodies standing
+	-- for them are NCPD's top stage until a squad is free (`Response.Refill`).
+	local wanted = stage
+	local ceiling = limits()
+	local used = standing(citizenId)
+	local queued = false
+	if ceiling ~= nil and row.Division == M.DIVISION.MAXTAC and used.squads >= ceiling.squads then
+		queued = true
+		local hold = holdStage(stage)
+		stage = hold or 0
+		row = hold ~= nil and Law.Stage(hold) or { Division = M.DIVISION.NCPD, Response = { UNITS = 0, VEHICLES = {} } }
+	end
+
 	local division = row.Division
 	local response = row.Response
-	local held = { stage = stage, division = division, vehicles = {}, npcs = {}, refused = {} }
+	local held = { stage = stage, wanted = wanted, division = division, vehicles = {}, npcs = {},
+		refused = {}, playerId = playerId, since = OPX.Now(), queued = queued,
+		trimmed = { units = 0, vehicles = 0 }, granted = { units = 0, vehicles = 0 } }
 	deployed[citizenId] = held
+
+	-- NCPD'S ROOM: what every other response leaves of `LIMITS.UNITS` and
+	-- `LIMITS.VEHICLES`. The cars are granted in proportion to the officers, so a
+	-- street with room for two officers is not given four empty cars.
+	local unitsWanted = math.max(0, math.floor(tonumber(response.UNITS) or 0))
+	local carsWanted = #(type(response.VEHICLES) == 'table' and response.VEHICLES or {})
+	do
+		local ncpdBlock = M.Settings.NCPD
+		local spec = type(ncpdBlock) == 'table' and ncpdBlock.ROADBLOCK or nil
+		if response.ROADBLOCK == true and type(spec) == 'table' and carsWanted > 0 then
+			carsWanted = carsWanted + math.max(1, math.floor(tonumber(spec.CARS) or 2))
+			unitsWanted = unitsWanted + math.max(0, math.floor(tonumber(spec.OFFICERS) or 0))
+		end
+	end
+	local room = nil
+	if ceiling ~= nil and division ~= M.DIVISION.MAXTAC then
+		local unitsGranted = math.min(unitsWanted, math.max(0, ceiling.units - used.units))
+		local carsGranted = math.min(carsWanted, math.max(0, ceiling.vehicles - used.vehicles))
+		if unitsGranted < unitsWanted then
+			carsGranted = math.min(carsGranted, unitsGranted > 0
+				and math.ceil(carsWanted * unitsGranted / math.max(1, unitsWanted)) or 0)
+		end
+		room = { units = unitsGranted, vehicles = carsGranted }
+		held.granted = { units = unitsGranted, vehicles = carsGranted }
+	end
+
+	--- Whether one more of a kind fits under the ceiling; a miss is counted.
+	-- @param kind string `units` or `vehicles`
+	-- @return boolean
+	local function fits(kind)
+		if room == nil then return true end
+		if room[kind] <= 0 then
+			held.trimmed[kind] = held.trimmed[kind] + 1
+			return false
+		end
+		room[kind] = room[kind] - 1
+		return true
+	end
 
 	-- Before a single unit: the bucket has to allow police, or every spawn below
 	-- this line is being asked of an engine that has been told to spawn nothing.
@@ -410,12 +546,14 @@ function Response.Apply(citizenId, playerId, stage)
 	-- ── the cars ────────────────────────────────────────────────────────────
 	local vehicles = type(response.VEHICLES) == 'table' and response.VEHICLES or {}
 	for index = 1, #vehicles do
-		local at2 = bearing(at, index, #vehicles, 14.0)
-		local id, reason = carry(vehicles[index], at2, facing(at2, at), at.bucket, { siren = true })
-		if id == nil then
-			held.refused[#held.refused + 1] = ('%s:%s'):format(vehicles[index], tostring(reason))
-		else
-			held.vehicles[#held.vehicles + 1] = id
+		if fits('vehicles') then
+			local at2 = bearing(at, index, #vehicles, 14.0)
+			local id, reason = carry(vehicles[index], at2, facing(at2, at), at.bucket, { siren = true })
+			if id == nil then
+				held.refused[#held.refused + 1] = ('%s:%s'):format(vehicles[index], tostring(reason))
+			else
+				held.vehicles[#held.vehicles + 1] = id
+			end
 		end
 	end
 
@@ -425,14 +563,16 @@ function Response.Apply(citizenId, playerId, stage)
 	for index = 1, units do
 		local record = roster[((index - 1) % math.max(1, #roster)) + 1]
 		if record == nil then break end
-		local at2 = bearing(at, index, units, 8.0)
-		attempted = attempted + 1
-		local id, reason = officer(record, at2, facing(at2, at), at.bucket, held, playerId,
-			divisionGroup(division))
-		if id == nil then
-			held.refused[#held.refused + 1] = ('%s:%s'):format(record, tostring(reason))
-		else
-			held.npcs[#held.npcs + 1] = id
+		if fits('units') then
+			local at2 = bearing(at, index, units, 8.0)
+			attempted = attempted + 1
+			local id, reason = officer(record, at2, facing(at2, at), at.bucket, held, playerId,
+				divisionGroup(division))
+			if id == nil then
+				held.refused[#held.refused + 1] = ('%s:%s'):format(record, tostring(reason))
+			else
+				held.npcs[#held.npcs + 1] = id
+			end
 		end
 	end
 
@@ -445,30 +585,35 @@ function Response.Apply(citizenId, playerId, stage)
 		local centre = { x = at.x, y = at.y + ahead, z = at.z }
 		local cars = math.max(1, math.floor(tonumber(blockSpec.CARS) or 2))
 		for index = 1, cars do
-			local slot = index - (cars + 1) / 2
-			local at2 = { x = centre.x + slot * spacing, y = centre.y, z = centre.z }
-			-- Across the player's path rather than along it: the blockade
-			-- presents its flank, which is what makes it a wall.
-			local id, reason = carry(vehicles[1], at2, facing(at, at2) + 90.0, at.bucket,
-				{ siren = true, locked = true, immortal = true })
-			if id == nil then
-				held.refused[#held.refused + 1] = ('roadblock:%s:%s'):format(vehicles[1], tostring(reason))
-			else
-				held.vehicles[#held.vehicles + 1] = id
+			if fits('vehicles') then
+				local slot = index - (cars + 1) / 2
+				local at2 = { x = centre.x + slot * spacing, y = centre.y, z = centre.z }
+				-- Across the player's path rather than along it: the blockade
+				-- presents its flank, which is what makes it a wall.
+				local id, reason = carry(vehicles[1], at2, (facing(at, at2) + 90.0) % 360.0, at.bucket,
+					{ siren = true, locked = true, immortal = true })
+				if id == nil then
+					held.refused[#held.refused + 1] = ('roadblock:%s:%s'):format(vehicles[1], tostring(reason))
+				else
+					held.vehicles[#held.vehicles + 1] = id
+				end
 			end
 		end
-		local standing = math.max(0, math.floor(tonumber(blockSpec.OFFICERS) or 0))
-		for index = 1, standing do
+		local blockOfficers = math.max(0, math.floor(tonumber(blockSpec.OFFICERS) or 0))
+		for index = 1, blockOfficers do
 			local record = roster[((index - 1) % math.max(1, #roster)) + 1]
 			if record == nil then break end
-			local at2 = bearing(centre, index, standing, 4.0)
-			attempted = attempted + 1
-			local id, reason = officer(record, at2, facing(at, at2), at.bucket, held, playerId,
-				divisionGroup(division))
-			if id == nil then
-				held.refused[#held.refused + 1] = ('roadblock:%s:%s'):format(record, tostring(reason))
-			else
-				held.npcs[#held.npcs + 1] = id
+			if fits('units') then
+				local at2 = bearing(centre, index, blockOfficers, 4.0)
+				attempted = attempted + 1
+				-- Behind the cars, facing the person the block is for.
+				local id, reason = officer(record, at2, facing(at2, at), at.bucket, held, playerId,
+					divisionGroup(division))
+				if id == nil then
+					held.refused[#held.refused + 1] = ('roadblock:%s:%s'):format(record, tostring(reason))
+				else
+					held.npcs[#held.npcs + 1] = id
+				end
 			end
 		end
 	end
@@ -587,9 +732,13 @@ function Response.Apply(citizenId, playerId, stage)
 			local hull = contract ~= nil and type(contract.get) == 'function'
 				and contract.get(avId) or nil
 			local where = type(hull) == 'table' and hull or drop
+			-- Where each body would stand: on the STREET under the drop
+			-- (`drop.ground`, measured by the games when they could), never on
+			-- a ring in the air at the hull's height.
+			local street = { x = drop.x, y = drop.y, z = tonumber(drop.ground) or drop.z }
 			local aboard = 0
 			for index = 1, math.min(placeable, #rideSeats) do
-				local at2 = bearing(drop, index, placeable, 3.5)
+				local at2 = bearing(street, index, placeable, 3.5)
 				local id = stand(at2, index, where)
 				troopers[index] = id
 				if id ~= nil then
@@ -628,6 +777,7 @@ function Response.Apply(citizenId, playerId, stage)
 		local function stepOut(avId, drop)
 			local npcs = Open77 and Open77.npcs
 			local tasks = npcs and npcs.tasks
+			local street = { x = drop.x, y = drop.y, z = tonumber(drop.ground) or drop.z }
 			for index = 1, placeable do
 				if seated[index] == true then
 					if type(tasks) == 'table' and type(tasks.exitVehicle) == 'function' then
@@ -637,7 +787,7 @@ function Response.Apply(citizenId, playerId, stage)
 						end
 					end
 				elseif troopers[index] == nil then
-					troopers[index] = stand(bearing(drop, index, placeable, 3.5), index)
+					troopers[index] = stand(bearing(street, index, placeable, 3.5), index)
 				end
 			end
 		end
@@ -723,6 +873,7 @@ function Response.Apply(citizenId, playerId, stage)
 
 	return OPX.Result.Ok({
 		stage = stage,
+		wanted = wanted,
 		division = division,
 		vehicles = #held.vehicles,
 		npcs = #held.npcs,
@@ -731,7 +882,77 @@ function Response.Apply(citizenId, playerId, stage)
 		refused = held.refused,
 		seats = held.seats,
 		filled = held.filled,
+		-- MaxTac was committed elsewhere: NCPD's `stage` holds them.
+		queued = queued,
+		-- What the ceiling held back, `{ units, vehicles }`.
+		trimmed = { units = held.trimmed.units, vehicles = held.trimmed.vehicles },
 	})
+end
+
+--- Stands up what the ceiling held back, once there is room for it.
+--
+-- Highest stage first, then whoever waited longest. A held cyberpsycho is re-stood
+-- the moment a MaxTac squad is free; an NCPD response the ceiling trimmed is
+-- re-stood when the room the others leave it has GROWN past what it was granted,
+-- which is never twice for the same room, so this cannot churn a street.
+-- @return table[] `{ citizenId, playerId, stage, queued, applied }` per response re-stood
+function Response.Refill()
+	local ceiling = limits()
+	if ceiling == nil then return {} end
+	local waiting = {}
+	for citizenId, held in pairs(deployed) do
+		if held.queued == true or held.trimmed.units > 0 or held.trimmed.vehicles > 0 then
+			waiting[#waiting + 1] = { citizenId = citizenId, held = held }
+		end
+	end
+	table.sort(waiting, function(a, b)
+		if a.held.wanted ~= b.held.wanted then return a.held.wanted > b.held.wanted end
+		if a.held.since ~= b.held.since then return a.held.since < b.held.since end
+		return a.citizenId < b.citizenId
+	end)
+	local done = {}
+	for _, item in ipairs(waiting) do
+		local held = deployed[item.citizenId]
+		if held == item.held then
+			local used = standing(item.citizenId)
+			local more = false
+			if held.queued == true and used.squads < ceiling.squads then
+				more = true
+			elseif held.trimmed.units > 0 or held.trimmed.vehicles > 0 then
+				-- A held psycho is first in line for NCPD's room as well: the
+				-- list is sorted by the stage they are wanted at.
+				more = (held.trimmed.units > 0 and ceiling.units - used.units > held.granted.units)
+					or (held.trimmed.vehicles > 0 and ceiling.vehicles - used.vehicles > held.granted.vehicles)
+			end
+			if more then
+				local applied = Response.Apply(item.citizenId, held.playerId, held.wanted)
+				done[#done + 1] = {
+					citizenId = item.citizenId,
+					playerId = held.playerId,
+					stage = held.wanted,
+					queued = held.queued == true,
+					applied = applied,
+				}
+			end
+		end
+	end
+	return done
+end
+
+--- The whole street: every response's officers, cars and squads, beside the
+--- ceiling they stand under.
+-- @return table `{ units, vehicles, squads, responses, queued, limits }`
+function Response.Street()
+	local used = standing(nil)
+	local responses, queued = 0, 0
+	for _, held in pairs(deployed) do
+		responses = responses + 1
+		if held.queued == true then queued = queued + 1 end
+	end
+	used.responses = responses
+	used.queued = queued
+	used.limits = limits()
+	return used
 end
 
 --- What one character's response has standing, without touching the world.
@@ -740,13 +961,15 @@ end
 function Response.Status(citizenId)
 	local held = deployed[citizenId]
 	if held == nil then
-		return { stage = 0, division = nil, vehicles = 0, npcs = 0 }
+		return { stage = 0, wanted = 0, division = nil, vehicles = 0, npcs = 0, queued = false }
 	end
 	return {
 		stage = held.stage,
+		wanted = held.wanted or held.stage,
 		division = held.division,
 		vehicles = #(held.vehicles or {}),
 		npcs = #(held.npcs or {}),
+		queued = held.queued == true,
 	}
 end
 

@@ -226,6 +226,36 @@ OPX.Config.MODULES.ncpd = {
 		RESET_SECONDS = 90.0,
 	},
 
+	-- HOW MUCH THE CITY PUTS ON THE STREET AT ONCE, for every wanted character
+	-- together. The owner, 2026-10-07: "theres a stacking bug spawning in
+	-- reapedetly maxtac agents more and more its slowing my game down almost
+	-- crashing". Fifty bots killing each other left 35 responses standing at
+	-- once -- 265 officers and troopers, 126 cars -- because every wanted
+	-- character was stood a whole response of their own and none came down.
+	--
+	-- `UNITS` and `VEHICLES` are NCPD's: every officer and every car (the
+	-- roadblock's too) standing for every wanted character. A stage asked for
+	-- past them stands what is left, with cars in proportion to its officers, and
+	-- the rest when another response comes down.
+	--
+	-- `MAXTAC_SQUADS` is how many cyberpsychos MaxTac answers at once. Another one
+	-- is still at MaxTac's stage -- the stars, the alarm and the call-out are
+	-- unchanged -- but NCPD's top stage holds them until a squad is free, and the
+	-- squad then comes to them. 0 is a MaxTac of players only.
+	--
+	-- `NEUTRALIZED_SECONDS`: a wanted character who has been down this long is
+	-- NEUTRALIZED -- the stage is cleared and the response goes home, the way a
+	-- MaxTac squad leaves once the psycho is down. `false` keeps a downed suspect
+	-- wanted, with the units standing over them, until the stage decays.
+	--
+	-- `LIMITS = false` is the old street: no ceiling, nobody neutralized.
+	LIMITS = {
+		UNITS = 24,
+		VEHICLES = 10,
+		MAXTAC_SQUADS = 1,
+		NEUTRALIZED_SECONDS = 10,
+	},
+
 	-- MAXTAC: the division that arrives when the NCPD ladder has failed.
 	--
 	-- WHO ANSWERS. A player is offered a seat in the squad if they hold
@@ -339,6 +369,55 @@ OPX.Config.MODULES.ncpd = {
 			-- that wants MaxTac alone on the board names `{ 'maxtac' }`.
 			JOBS = false,
 		},
+
+		-- THE MAXTAC ALARM, for the squad, when somebody goes cyberpsycho. A stage
+		-- that crosses into MaxTac's (the LADDER's `maxtac` division) alerts every
+		-- on-duty holder of JOBS. First comes a FLASH_MS flash: a red frame round
+		-- the screen's edge and "MAXTAC ALERT" in the top part of the screen, over
+		-- a klaxon and a voice ("MaxTac alert. Cyberpsycho reported. All MaxTac
+		-- units, respond."). Then a slim strip at the top edge holds who and how
+		-- far until DURATION_MS is up. It never covers the middle of the screen,
+		-- and it never takes the keyboard or the pointer: the squad has to fight
+		-- and run for the AV while it is up.
+		--
+		-- THE BOT LAB, 2026-10-07: "the maxtac alert is covering the whole screen
+		-- while i try to get rid of the cyberpsycho i cant see". The first alarm
+		-- held a band across the middle of the screen for nine seconds, and bots
+		-- killing each other brought it back every few seconds. So an alarm within
+		-- QUIET_MS of the last flash only updates the strip: no second flash and
+		-- no second klaxon.
+		--
+		-- It rides the call-out like the board does -- the same rise, the same
+		-- cooldown, the suspect never told -- so it cannot fire where the board
+		-- would not. SOUND is a bare file name under the page's own `audio/`,
+		-- read by each receiving client; `''` keeps the screen and drops the
+		-- sound. SOUNDS is the same klaxon and voice ("MaxTac alert. Cyberpsycho
+		-- reported. All MaxTac units respond.") in other languages, by the
+		-- game's two-letter language code: a player whose game's voice-over is
+		-- one of them hears it in that language (the bot lab, 2026-10-07: "give
+		-- the voice locales with french german spanish etc"), anybody else
+		-- SOUND. `enabled = false` takes the alarm away and leaves the board.
+		ALARM = {
+			enabled = true,
+			JOBS = { 'maxtac' },
+			DURATION_MS = 9000,
+			FLASH_MS = 1500,
+			QUIET_MS = 30000,
+			SOUND = 'maxtac-alarm.wav',
+			SOUNDS = {
+				fr = 'maxtac-alarm-fr.mp3', de = 'maxtac-alarm-de.mp3', es = 'maxtac-alarm-es.mp3',
+				it = 'maxtac-alarm-it.mp3', pl = 'maxtac-alarm-pl.mp3', pt = 'maxtac-alarm-pt.mp3',
+				ru = 'maxtac-alarm-ru.mp3', uk = 'maxtac-alarm-uk.mp3', cs = 'maxtac-alarm-cs.mp3',
+				hu = 'maxtac-alarm-hu.mp3', zh = 'maxtac-alarm-zh.mp3', ko = 'maxtac-alarm-ko.mp3',
+				ja = 'maxtac-alarm-ja.mp3',
+			},
+			VOLUME = 1.0,
+			-- The cyberpsycho's own screen: a klaxon and what is coming for them
+			-- ("CYBERPSYCHO -- MaxTac has been dispatched to neutralize you"), never
+			-- the squad's alarm with their own name in it. `false`: nothing.
+			SUSPECT = true,
+			SUSPECT_SOUND = 'maxtac-klaxon.wav',
+		},
 	},
 
 	-- ── A KILL IS CALLED IN THE MOMENT IT HAPPENS ──────────────────────────
@@ -397,11 +476,27 @@ OPX.Config.MODULES.ncpd = {
 		LAW = 'murder',
 		POLICE_LAW = 'murderPolice',
 
-		-- An officer ON DUTY in `ALERTS.JOBS` who kills is not charged and not
-		-- called in: use of force is the job, and a squad that became wanted for
-		-- stopping a wanted player would be hunting itself. Off the clock they
-		-- answer like anybody else.
+		-- An officer ON DUTY in `ALERTS.JOBS` who kills a player who was WANTED,
+		-- or who had just hurt them (inside ATTRIBUTION_MS), is not charged and
+		-- not called in: use of force is the job, and a squad that became wanted
+		-- for stopping a wanted player would be hunting itself. Any other body is
+		-- a murder like anybody's, badge or not, and counts toward the
+		-- cyberpsycho rule below. The bot lab, 2026-10-07: "i killed more then 3
+		-- bot players and i didnt get maxtac alert" -- an on-duty tester's four
+		-- bystanders were all booked as use of force. `'all'` exempts every kill
+		-- on duty (the old rule); `false` exempts none. Off the clock they answer
+		-- like anybody else.
 		EXEMPT_ON_DUTY = true,
+
+		-- THE CYBERPSYCHO. The owner, 2026-10-07: "when i kill more then 3 people
+		-- thats when your labeled cyberphysco". A character charged with more than
+		-- PSYCHO_KILLS of the CALL_OUT laws below (murder, an officer's murder)
+		-- inside PSYCHO_WINDOW_SECONDS goes straight to MaxTac's stage: the
+		-- MaxTac alarm, the dispatch board and the AV, as if the ladder had been
+		-- climbed. Kills an on-duty officer makes are use of force (above) and
+		-- never counted. `PSYCHO_KILLS = false` leaves it to the ladder.
+		PSYCHO_KILLS = 3,
+		PSYCHO_WINDOW_SECONDS = 600,
 
 		-- The laws that are a body on the street, and the sentence each is called
 		-- in with (a catalogue key; `<key>Named` is the variant that names the

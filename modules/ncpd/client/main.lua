@@ -165,6 +165,10 @@ RegisterNetEvent(M.Event.STAGE, function(payload)
 	if heat ~= true then
 		-- The ledger is the city's; the client only says it cannot show it.
 		OPX.Toast.Locale('ncpd.seamUnavailable', nil, 'error')
+	elseif stage == 0 and payload.reason == 'neutralized' then
+		-- Cleared over their own body (`LIMITS.NEUTRALIZED_SECONDS`): the city
+		-- stood down because they went down, not because it lost interest.
+		OPX.Toast.Locale('ncpd.neutralized', nil, 'info')
 	elseif stage == 0 then
 		OPX.Toast.Locale('ncpd.cleared', nil, 'success')
 	elseif asked then
@@ -278,6 +282,96 @@ RegisterNetEvent(M.Event.DISPATCH, function(payload)
 	if raised == nil then
 		Open77.log.warn(('[ncpd] a dispatch was not drawn: %s'):format(tostring(why)))
 	end
+end)
+
+-- ── the maxtac alarm ───────────────────────────────────────────────────────────
+--
+-- THE SQUAD'S WHOLE SCREEN when somebody goes cyberpsycho (`ALERTS.ALARM`): a
+-- flashing red frame and "MAXTAC ALERT" over a klaxon and a voice, drawn on the
+-- page's notice layer (`ui/src/modules/alarm`). It takes neither the keyboard
+-- nor the pointer -- the squad has to run for the AV while it is up. The words
+-- are resolved here, in the player's language; the sound and the lifetime are
+-- this client's own config, as the board's are.
+
+--- How far this body is from a point on the ground, in whole metres, or nil.
+local function metresTo(x, y)
+	local character = Open77 and Open77.character
+	if type(character) ~= 'table' or type(character.position) ~= 'function' then return nil end
+	local read, px, py = pcall(character.position)
+	if not read or type(px) ~= 'number' or type(py) ~= 'number' then return nil end
+	local dx, dy = x - px, y - py
+	return math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
+end
+
+RegisterNetEvent(M.Event.ALARM, function(payload)
+	if type(payload) ~= 'table' then return end
+	local alerts = type(M.Settings) == 'table' and M.Settings.ALERTS or nil
+	local alarm = type(alerts) == 'table' and alerts.ALARM or nil
+	if type(alarm) ~= 'table' or alarm.enabled == false then return end
+
+	local stage = math.floor(tonumber(payload.stage) or 5)
+	local x, y = tonumber(payload.x), tonumber(payload.y)
+
+	--- A configured number of milliseconds within [low, high], or `default`.
+	local function ms(value, default, low, high)
+		value = tonumber(value)
+		if value == nil or value ~= value then return default end
+		return math.floor(math.max(low, math.min(high, value)))
+	end
+	local volume = tonumber(alarm.VOLUME)
+	if volume == nil or volume ~= volume then volume = 1.0 end
+	volume = math.max(0.0, math.min(1.0, volume))
+
+	-- THE PSYCHO'S OWN SCREEN: what is coming for them, never who they are.
+	if payload.suspect == true then
+		if alarm.SUSPECT == false then return end
+		local duration = ms(alarm.DURATION_MS, 9000, 1000, 60000)
+		local mine = OPX.UI.Send('overlay', 'alarm:show', {
+			title = locale('ncpd.alarm.you.title'),
+			subtitle = locale('ncpd.alarm.you.subtitle'),
+			lines = { locale('ncpd.alarm.you.hint') },
+			brief = { locale('ncpd.alarm.you.brief') },
+			durationMs = duration,
+			flashMs = ms(alarm.FLASH_MS, 1500, 0, duration),
+			quietMs = 0,
+			sound = type(alarm.SUSPECT_SOUND) == 'string' and alarm.SUSPECT_SOUND or '',
+			volume = volume,
+		})
+		Open77.log.info(('[ncpd] CYBERPSYCHO: this player is MaxTac\'s business now (stage %d)%s')
+			:format(stage, mine and '' or ': the page did not take the alarm'))
+		return
+	end
+
+	-- `brief` is what the strip at the top edge holds once the flash is over:
+	-- who and where. `lines` adds the order to respond, for the flash.
+	local brief = {}
+	local name = type(payload.name) == 'string' and payload.name or ''
+	if name ~= '' then brief[#brief + 1] = locale('ncpd.alarm.named', { name = name }) end
+	if x ~= nil and y ~= nil then
+		local metres = metresTo(x, y)
+		brief[#brief + 1] = locale('ncpd.alarm.where', {
+			metres = metres ~= nil and tostring(metres) or '?', x = math.floor(x), y = math.floor(y),
+		})
+	end
+	local lines = {}
+	for index = 1, #brief do lines[index] = brief[index] end
+	lines[#lines + 1] = locale('ncpd.alarm.respond')
+
+	local duration = ms(alarm.DURATION_MS, 9000, 1000, 60000)
+	local sent = OPX.UI.Send('overlay', 'alarm:show', {
+		title = locale('ncpd.alarm.title'),
+		subtitle = locale('ncpd.alarm.subtitle', { stage = stage }),
+		lines = lines,
+		brief = brief,
+		durationMs = duration,
+		flashMs = ms(alarm.FLASH_MS, 1500, 0, duration),
+		quietMs = ms(alarm.QUIET_MS, 30000, 0, 600000),
+		-- In the language this player's game speaks (`SOUNDS`), English otherwise.
+		sound = OPX.Locale.ForVoice(alarm.SOUNDS, type(alarm.SOUND) == 'string' and alarm.SOUND or ''),
+		volume = math.max(0.0, math.min(1.0, volume)),
+	})
+	Open77.log.info(('[ncpd] MAXTAC ALARM received (stage %d)%s'):format(stage,
+		sent and '' or ': the page did not take it'))
 end)
 
 -- ── the crew door ─────────────────────────────────────────────────────────────

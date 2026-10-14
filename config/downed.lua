@@ -79,6 +79,81 @@ OPX.Config.MODULES.downed = {
 			ACCOUNT = 'BANK',
 			PER_PATIENT_MS = 600000,
 		},
+
+		-- THE TRAUMA TEAM'S OWN AV. The bot lab, 2026-10-07: "the whole trauma
+		-- team av isnt landing when somebody is down and reviving them". A
+		-- distress signal now also brings the city's Trauma Team: an AV with its
+		-- landing call ("Warning. Clear the area. Trauma Team landing.", see
+		-- CALLOUTS in config/avdoor.lua) lands LAND_OFFSET_METRES from the body.
+		-- A MEDIC runs to the patient with the GUARDS beside them, treats for
+		-- TREAT_SECONDS and revives them where they lie (REVIVE above). Then the
+		-- team boards and the AV leaves.
+		--
+		--   * PLAYERS FIRST. A patient nobody was paged for gets the team after
+		--     DELAY_SECONDS. One an on-duty medic was paged for is left to that
+		--     medic for MEDIC_HEAD_START_SECONDS (`false`: never). A patient a
+		--     medic is treating is never taken.
+		--   * ONE AV PER SCENE. A patient down within SCENE_METRES of an AV still
+		--     coming or on the ground joins its list, and the medic goes from body
+		--     to body. At most MAX_RUNS AVs fly at once. HOLD_SECONDS bounds the
+		--     time on the ground.
+		--   * The revive is timed by the server: the run to the body (RUN_SPEED
+		--     metres a second, 12 s at most) plus TREAT_SECONDS. A walk a client
+		--     never shows costs the patient no revive.
+		--
+		-- The AV is flown like the MaxTac insertion: frozen and posed by the
+		-- server, APPROACH_METRES out at APPROACH_ALTITUDE, in over
+		-- CRUISE_SECONDS to HOVER_ALTITUDE, down over DESCENT_SECONDS to
+		-- LAND_ALTITUDE over the ground, then up over CLIMB_SECONDS and out
+		-- EXIT_METRES over EXIT_SECONDS. MEDIC and GUARDS are `Character.*`
+		-- records (the prologue's Trauma Team); they are passive, silent and
+		-- invulnerable. `TEAM = false` or `enabled = false` keeps the pages and
+		-- flies nothing.
+		--
+		-- THE AIRFRAME IS ONE THE GAMES CAN DRAW. The bot lab, 2026-10-07: "i hear
+		-- tramua team but i dont see av". `Vehicle.av_trauma` names an entity
+		-- template that is in none of the game's archives (2.31, base and
+		-- Phantom Liberty), so every game registered its spawn and never drew it.
+		-- `AV.RECORDS` are Trauma Team airframes whose templates are there
+		-- (basegame_4_gamedata.archive), in the order they are tried: the games
+		-- near the landing spot are asked whether they draw the hull, and one that
+		-- registered it and did not draw it in WATCH_SECONDS sends the AV on in the
+		-- next record, where it is. WATCH_METRES is how near "near" is.
+		TEAM = {
+			enabled = true,
+			DELAY_SECONDS = 8,
+			MEDIC_HEAD_START_SECONDS = 45,
+			SCENE_METRES = 60.0,
+			MAX_RUNS = 2,
+			MEDIC = 'Character.q001_tt_medic',
+			GUARDS = { 'Character.q001_tt_soldier' },
+			RUN_SPEED = 4.5,
+			TREAT_SECONDS = 6,
+			BOARD_SECONDS = 3,
+			HOLD_SECONDS = 90,
+			AV = {
+				-- The prologue's Trauma Team AV first; then two of the city's.
+				-- Not `Vehicle.av_trauma` or `Vehicle.sq024_trauma_team_av`: no
+				-- template in the game's archives, nothing a game can draw.
+				RECORDS = { 'Vehicle.q001_trauma_av', 'Vehicle.sq021_av_trauma', 'Vehicle.mws_pac_06_trauma_av' },
+				WATCH_SECONDS = 12,
+				WATCH_METRES = 400.0,
+				APPROACH_METRES = 260.0,
+				APPROACH_ALTITUDE = 80.0,
+				HOVER_ALTITUDE = 22.0,
+				LAND_ALTITUDE = 1.5,
+				LAND_OFFSET_METRES = 10.0,
+				CRUISE_SECONDS = 6,
+				DESCENT_SECONDS = 4,
+				CLIMB_SECONDS = 4,
+				EXIT_SECONDS = 6,
+				EXIT_METRES = 320.0,
+				TICK_MS = 100,
+				-- The engine on while the team is on the street. Off by default:
+				-- the AV sits down and spools up again to leave.
+				ENGINE_ON_GROUND = false,
+			},
+		},
 	},
 
 	-- Callers allowed to revive, and callers allowed to set the screen aside

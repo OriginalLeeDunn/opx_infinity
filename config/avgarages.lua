@@ -127,21 +127,27 @@ OPX.Config.MODULES.avgarages = {
 	-- `_no_thruster` variants are left out of the shipped list on purpose: a
 	-- hangar issues aircraft a crew flies. Add any of them here if this server
 	-- wants them.
+	--
+	-- AND THREE RECORDS NO GAME CAN DRAW. `Vehicle.av_luxury`,
+	-- `Vehicle.av_militech` and `Vehicle.av_trauma` name entity templates that
+	-- are in none of the game's archives (2.31, base and Phantom Liberty: their
+	-- resource hashes are missing from all 584,344 files), so a hull issued in one
+	-- is registered by every game and never drawn -- the bot lab heard the Trauma
+	-- Team's AV and never saw it (2026-10-07). `q001_luxury_av` and
+	-- `q001_trauma_av` below are the same aircraft with templates that exist.
+	-- Every record left here was checked the same way.
 	FLEET = {
-		{ RECORD = 'Vehicle.av_luxury', LABEL = 'Luxury AV' },
-		{ RECORD = 'Vehicle.av_militech', LABEL = 'Militech AV' },
 		{ RECORD = 'Vehicle.av_militech_manticore', LABEL = 'Militech Manticore' },
 		{ RECORD = 'Vehicle.av_rayfield_excalibur', LABEL = 'Rayfield Excalibur' },
-		{ RECORD = 'Vehicle.av_trauma', LABEL = 'Trauma Team AV' },
 		{ RECORD = 'Vehicle.av_kurt_barghest', LABEL = 'Barghest AV' },
 		{ RECORD = 'Vehicle.av_zetatech_atlus', LABEL = 'Zetatech Atlus' },
 		{ RECORD = 'Vehicle.av_zetatech_octant', LABEL = 'Zetatech Octant' },
 		{ RECORD = 'Vehicle.av_zetatech_surveyor', LABEL = 'Zetatech Surveyor' },
 		{ RECORD = 'Vehicle.av_zetatech_valgus', LABEL = 'Zetatech Valgus' },
 		{ RECORD = 'Vehicle.batty_av', LABEL = 'Batty AV' },
-		{ RECORD = 'Vehicle.q001_luxury_av', LABEL = 'Luxury AV (Q001)' },
+		{ RECORD = 'Vehicle.q001_luxury_av', LABEL = 'Luxury AV' },
 		{ RECORD = 'Vehicle.q001_police_av', LABEL = 'Police AV' },
-		{ RECORD = 'Vehicle.q001_trauma_av', LABEL = 'Trauma Team AV (Q001)' },
+		{ RECORD = 'Vehicle.q001_trauma_av', LABEL = 'Trauma Team AV' },
 		{ RECORD = 'Vehicle.mq027_news_av', LABEL = 'Zetatech News AV' },
 		{ RECORD = 'Vehicle.q110_huge_cargo_av', LABEL = 'Cargo AV' },
 		{ RECORD = 'Vehicle.q110_max_tac_heli', LABEL = 'MaxTac Helicopter' },

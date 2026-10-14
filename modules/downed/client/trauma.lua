@@ -223,6 +223,47 @@ local function tick()
 	syncRow()
 end
 
+--- Watches the Trauma Team's AV come in, and tells the server whether this game
+--- drew it (`server/team.lua`). The bot lab, 2026-10-07: "i hear tramua team but
+--- i dont see av" -- its record named an entity template the game does not have,
+--- and the spawn this client registered never finished. Three answers:
+---   * drawn: `streamed`;
+---   * registered here and not drawn `ms` after the create arrived: `stuck`,
+---     and the server flies the next record;
+---   * the create never reached this game, or the hull went away (swapped or
+---     gone): nothing, because there is nothing this game can say about it.
+-- @param key string the hull's id, as the server spelled it
+-- @param ms number how long a registered hull may take to be drawn
+local function watchHull(key, ms)
+	local api = Open77.vehicles
+	if type(api) ~= 'table' or type(api.get) ~= 'function' then return end
+	-- A decimal id is the platform's number; anything else is passed as spelled.
+	local id = key:match('^%d+$') and tonumber(key) or key
+	local started, since = OPX.Now(), nil
+	while true do
+		local read, car = pcall(api.get, id)
+		local now = OPX.Now()
+		if read and type(car) == 'table' then
+			if car.streamed == true then
+				TriggerServerEvent(Event.TEAM_SEEN, { id = key, state = 'streamed', ms = now - (since or started) })
+				return
+			end
+			since = since or now
+			if now - since >= ms then
+				Open77.log.warn(('[downed] trauma team: this game registered the AV %s (%s) %.0fs ago and has '
+					.. 'not drawn it'):format(key, tostring(car.record), (now - since) / 1000.0))
+				TriggerServerEvent(Event.TEAM_SEEN, { id = key, state = 'stuck', ms = now - since })
+				return
+			end
+		elseif since ~= nil then
+			return
+		elseif now - started >= ms + 30000 then
+			return
+		end
+		Wait(250)
+	end
+end
+
 --- What this half knows, for a diagnostic or a test.
 function C.Status()
 	local count = 0
@@ -283,6 +324,17 @@ function C.Start()
 	end)
 	RegisterNetEvent(Event.RUN, onRun)
 	RegisterNetEvent(Event.ANSWER, onAnswer)
+	-- Whether this game draws the Trauma Team's AV, when the server asks.
+	RegisterNetEvent(Event.TEAM_WATCH, function(payload)
+		if type(payload) ~= 'table' or payload.id == nil then return end
+		local key = tostring(payload.id)
+		if #key > 32 then return end
+		local ms = math.floor(math.max(2000, math.min(60000, tonumber(payload.ms) or 12000)))
+		CreateThread(function()
+			local ran, failure = pcall(watchHull, key, ms)
+			if not ran then Open77.log.warn('[downed] trauma team: the AV watch failed: ' .. tostring(failure)) end
+		end)
+	end)
 
 	-- The bar's own outcome. Only `finished` means the treatment happened; every
 	-- other ending is it NOT happening and must reach the server as an abort, or
