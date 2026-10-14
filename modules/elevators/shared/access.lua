@@ -238,6 +238,12 @@ function Access.Problems()
 			lines[#lines + 1] = name .. ' must be a finite number above zero'
 		end
 	end
+	-- `Open77.elevators.nearby` takes 1 to 300 metres and nothing else, so a
+	-- wider scan found no lift at all and nothing said why.
+	local scan = finiteNumber(Config.SCAN_RADIUS)
+	if scan ~= nil and (scan < 1 or scan > 300) then
+		lines[#lines + 1] = 'SCAN_RADIUS must be between 1 and 300 metres (the host refuses wider)'
+	end
 
 	for key, elevator in pairs(ELEVATORS) do
 		if type(elevator) ~= 'table' then

@@ -1,6 +1,7 @@
---- The creator surface, client half: menus, forms, toasts, bars and gestures
---- another resource may put on THIS player's screen, and the public client
---- events it may subscribe to.
+--- The creator surface, client half: menus, forms, panels, toasts, bars, eye
+--- rows, key hints and gestures another resource may put on THIS player's
+--- screen, reads of the local player, and the public client events it may
+--- subscribe to.
 -- @author dop42
 --
 -- LAST IN THE CLIENT MANIFEST, for the reason its server twin gives: it wraps
@@ -32,7 +33,8 @@
 -- itself, and never takes over a screen another owner holds. When a caller
 -- resource stops, whatever it left open here is taken down with it.
 
-local CALLER_PATTERN = '^[%w_%-%.]+$'
+-- What a toast id a caller names may be: the resource-name alphabet.
+local ID_PATTERN = '^[%w_%-%.]+$'
 
 -- An export name a caller may ask its answers to be delivered to.
 local REPLY_PATTERN = '^[%w_]+$'
@@ -46,28 +48,15 @@ local gestures = {}
 -- Reply failures already said, by `caller \1 reason`.
 local said = {}
 
-local function refuse(code) return { ok = false, error = code } end
-local function ok(value) return { ok = true, value = value } end
-
-local function answered(result)
-	if type(result) ~= 'table' then return refuse('error.unavailable') end
-	if result.ok == true then return ok(result.value) end
-	return refuse(type(result.error) == 'string' and result.error or 'error.unavailable')
-end
+-- The answer shapes, the caller gate and the allowlist test are shared with the
+-- server surface: `core/shared/exports.lua`.
+local Export = OPX.Export
+local refuse, ok, answered = Export.Refuse, Export.Ok, Export.Answered
+local admits, hasExports = Export.Admits, Export.Available
 
 local function settings()
 	local client = OPX.Config.CLIENT or {}
 	return type(client.EXPORTS) == 'table' and client.EXPORTS or {}
-end
-
-local function admits(list, caller)
-	if list == '*' then return true end
-	if type(list) ~= 'table' then return false end
-	if list[caller] == true then return true end
-	for _, name in ipairs(list) do
-		if name == caller then return true end
-	end
-	return false
 end
 
 --- The owner string a caller's screens are kept under.
@@ -123,25 +112,12 @@ local function forCaller(payload, caller)
 	return copy
 end
 
---- Whether this host offers `exports`.
--- On op77 `exports` is a CALLABLE TABLE, not a function: it is called to
--- publish and indexed for `exports.other:name()`, so `type` answers 'table'.
--- Testing for 'function' alone read every real host as having none, and the
--- whole creator surface went unpublished without an error.
-local function hasExports()
-	local kind = type(exports)
-	return kind == 'function' or kind == 'table' or kind == 'userdata'
-end
-
 --- Publishes one export behind the caller gate.
 local function publish(name, body)
 	if not hasExports() then return end
 	exports(name, function(...)
-		local caller = GetInvokingResource ~= nil and GetInvokingResource() or nil
-		if type(caller) ~= 'string' or #caller < 1 or #caller > 64
-			or not caller:match(CALLER_PATTERN) then
-			return refuse('export.callerDenied')
-		end
+		local caller = Export.Caller()
+		if caller == nil then return refuse('export.callerDenied') end
 		if not admits(settings().CALLERS, caller) then return refuse('export.callerDenied') end
 
 		local args = table.pack(...)
@@ -229,7 +205,7 @@ end)
 --- A toast id a caller may name, kept inside its own prefix.
 local function toastId(caller, id)
 	if id == nil then return nil end
-	if type(id) ~= 'string' or #id < 1 or #id > 48 or not id:match(CALLER_PATTERN) then
+	if type(id) ~= 'string' or #id < 1 or #id > 48 or not id:match(ID_PATTERN) then
 		return false
 	end
 	return ownerOf(caller) .. ':' .. id
@@ -396,6 +372,270 @@ for event, shape in pairs(SUBSCRIBABLE) do
 	end)
 end
 
+-- ── a name a module already answers to ───────────────────────────────────────
+-- The target, prompt and panel stores key a row on its OWNER'S NAME, and a
+-- module of this runtime registers under its own id. A resource named like one
+-- of them -- a `target` or an `inventory` resource -- would share that module's
+-- rows: clear them, replace them, be swept with them. Refused instead.
+
+--- Whether a caller's name is one a module of this runtime already uses.
+local function takenName(caller)
+	return OPX.Modules.Record(caller) ~= nil
+end
+
+-- ── the eye ──────────────────────────────────────────────────────────────────
+-- ROWS ON THE TARGET EYE, OWNED BY THE CALLER. The owner is the caller's own
+-- resource name, which is how the eye already tells a separate resource's row
+-- from a module's: it reads that resource's generation, sweeps the rows when it
+-- stops or reloads, and asks its callbacks over an export call in slices, never
+-- inside one resume (`modules/target/client/main.lua`).
+--
+-- A CALLBACK IS AN EXPORT NAME OF THE CALLER'S. `onSelect = 'OnPick'` calls
+-- `exports.<caller>:OnPick(context)`; `canInteract` and `checked` the same,
+-- answering true or false. A function cannot cross the marshaller, and a
+-- `{ resource, export }` pair naming any resource but the caller is refused:
+-- one resource's row must never run another resource's code.
+
+-- The callback fields of a row.
+local TARGET_CALLBACKS = { 'onSelect', 'canInteract', 'checked' }
+
+-- The register function for each kind, and whether it takes a list of where
+-- (models, entities, spheres) before the rows.
+local TARGET_KINDS = {
+	any = { fn = 'Register' },
+	players = { fn = 'RegisterPlayers' },
+	self = { fn = 'RegisterSelf' },
+	vehicles = { fn = 'RegisterVehicles' },
+	npcs = { fn = 'RegisterNpcs' },
+	props = { fn = 'RegisterProps' },
+	doors = { fn = 'RegisterDoors' },
+	world = { fn = 'RegisterWorld' },
+	sky = { fn = 'RegisterSky' },
+	models = { fn = 'RegisterModels', where = true },
+	entities = { fn = 'RegisterEntities', where = true },
+	spheres = { fn = 'RegisterSpheres', where = true },
+}
+
+--- A row, or a patch, with its callbacks held to the caller's own exports; nil
+--- when one names anything else.
+local function ownRow(caller, row)
+	if type(row) ~= 'table' then return nil end
+	local copy = OPX.Table.DeepCopy(row)
+	copy.owner = nil
+	for _, field in ipairs(TARGET_CALLBACKS) do
+		local callback = copy[field]
+		if callback ~= nil then
+			if type(callback) == 'table' then
+				if callback.resource ~= caller or type(callback.export) ~= 'string' then return nil end
+				copy[field] = callback.export
+			elseif type(callback) ~= 'string' then
+				return nil
+			end
+		end
+	end
+	return copy
+end
+
+--- One row, or a list of them, each held to the caller's exports.
+local function ownRows(caller, definitions)
+	if type(definitions) ~= 'table' then return nil end
+	if definitions.id ~= nil then return ownRow(caller, definitions) end
+	local out = {}
+	for index, row in ipairs(definitions) do
+		out[index] = ownRow(caller, row)
+		if out[index] == nil then return nil end
+	end
+	if #out == 0 then return nil end
+	return out
+end
+
+publish('AddTarget', function(caller, kind, definitions, where)
+	local target = OPX.Api.Get('target')
+	if target == nil then return refuse('error.unavailable') end
+	if takenName(caller) then return refuse('export.ownerTaken') end
+	local entry = type(kind) == 'string' and TARGET_KINDS[kind] or nil
+	if entry == nil then return refuse('export.badArgument') end
+	local rows = ownRows(caller, definitions)
+	if rows == nil then return refuse('export.badArgument') end
+	if entry.where then
+		if type(where) ~= 'table' then return refuse('export.badArgument') end
+		return answered(target[entry.fn](caller, OPX.Table.DeepCopy(where), rows))
+	end
+	return answered(target[entry.fn](caller, rows))
+end)
+
+publish('UpdateTarget', function(caller, token, patch)
+	local target = OPX.Api.Get('target')
+	if target == nil then return refuse('error.unavailable') end
+	if takenName(caller) then return refuse('export.ownerTaken') end
+	if type(token) ~= 'string' then return refuse('export.badArgument') end
+	local own = ownRow(caller, patch)
+	if own == nil then return refuse('export.badArgument') end
+	return answered(target.Update(caller, token, own))
+end)
+
+publish('RemoveTarget', function(caller, tokens)
+	local target = OPX.Api.Get('target')
+	if target == nil then return refuse('error.unavailable') end
+	if takenName(caller) then return refuse('export.ownerTaken') end
+	if type(tokens) == 'string' then return answered(target.Unregister(caller, tokens)) end
+	if type(tokens) ~= 'table' or #tokens == 0 then return refuse('export.badArgument') end
+	return answered(target.UnregisterMany(caller, OPX.Table.DeepCopy(tokens)))
+end)
+
+publish('ClearTargets', function(caller)
+	local target = OPX.Api.Get('target')
+	if target == nil then return refuse('error.unavailable') end
+	if takenName(caller) then return refuse('export.ownerTaken') end
+	return answered(target.Clear(caller))
+end)
+
+-- ── the key strip ────────────────────────────────────────────────────────────
+-- Display only: a group of key hints the caller owns, validated whole by the
+-- prompts module. Taken down when the caller stops, by the module's own sweep
+-- and by the stop handler below.
+
+publish('ShowPrompt', function(caller, id, spec)
+	local prompts = OPX.Api.Get('prompts')
+	if prompts == nil then return refuse('error.unavailable') end
+	if takenName(caller) then return refuse('export.ownerTaken') end
+	if type(spec) ~= 'table' then return refuse('export.badArgument') end
+	return answered(prompts.Show(caller, id, OPX.Table.DeepCopy(spec)))
+end)
+
+publish('UpdatePrompt', function(caller, id, patch)
+	local prompts = OPX.Api.Get('prompts')
+	if prompts == nil then return refuse('error.unavailable') end
+	if takenName(caller) then return refuse('export.ownerTaken') end
+	if type(patch) ~= 'table' then return refuse('export.badArgument') end
+	return answered(prompts.Update(caller, id, OPX.Table.DeepCopy(patch)))
+end)
+
+publish('HidePrompt', function(caller, id)
+	local prompts = OPX.Api.Get('prompts')
+	if prompts == nil then return refuse('error.unavailable') end
+	if takenName(caller) then return refuse('export.ownerTaken') end
+	return answered(prompts.Hide(caller, id))
+end)
+
+publish('HideAllPrompts', function(caller)
+	local prompts = OPX.Api.Get('prompts')
+	if prompts == nil then return refuse('error.unavailable') end
+	if takenName(caller) then return refuse('export.ownerTaken') end
+	return answered(prompts.HideAll(caller))
+end)
+
+-- ── the panel ────────────────────────────────────────────────────────────────
+-- The side panel, opened like a menu: owned `ext:<caller>`, never over another
+-- owner's panel, answered on `opx:on:panel:action` through the reply export.
+
+-- Which panel each caller has open, by handle.
+local panels = {}
+
+publish('OpenPanel', function(caller, spec)
+	local panel = OPX.Api.Get('panel')
+	if panel == nil then return refuse('error.unavailable') end
+	local built = specOf(spec)
+	if built == nil then return refuse('export.badArgument') end
+	local export = replyOf(spec.reply)
+	built.owner = ownerOf(caller)
+	built.on = function(payload)
+		if payload.action == 'close' and panels[payload.handle] == caller then
+			panels[payload.handle] = nil
+		end
+		reply(caller, export, 'opx:on:panel:action', forCaller(payload, caller))
+	end
+	local opened = panel.Open(built)
+	if opened.ok then panels[opened.value.handle] = caller end
+	return answered(opened)
+end)
+
+publish('UpdatePanel', function(caller, handle, patch)
+	local panel = OPX.Api.Get('panel')
+	if panel == nil then return refuse('error.unavailable') end
+	if panels[handle] ~= caller then return refuse('stale_handle') end
+	if type(patch) ~= 'table' then return refuse('export.badArgument') end
+	return answered(panel.Update(handle, OPX.Table.DeepCopy(patch)))
+end)
+
+publish('AppendPanel', function(caller, handle, items, done)
+	local panel = OPX.Api.Get('panel')
+	if panel == nil then return refuse('error.unavailable') end
+	if panels[handle] ~= caller then return refuse('stale_handle') end
+	if type(items) ~= 'table' or (done ~= nil and type(done) ~= 'boolean') then
+		return refuse('export.badArgument')
+	end
+	return answered(panel.Append(handle, OPX.Table.DeepCopy(items), done))
+end)
+
+publish('ClosePanel', function(caller, handle)
+	local panel = OPX.Api.Get('panel')
+	if panel == nil then return refuse('error.unavailable') end
+	if panels[handle] ~= caller then return refuse('stale_handle') end
+	return answered(panel.Close(handle, 'caller'))
+end)
+
+-- ── a crafting bench the caller registered ───────────────────────────────────
+-- The bench is registered on the server (`RegisterCraftingBench`), under
+-- `<caller>:<key>`; this opens its screen for the local player, which the
+-- server answers after measuring the reach and asking the bench's job gate.
+
+publish('OpenCraftingBench', function(caller, key)
+	local crafting = OPX.Api.Get('crafting')
+	if crafting == nil or crafting.Open == nil then return refuse('error.unavailable') end
+	if type(key) ~= 'string' or #key < 1 or #key > 32 or not key:match('^[%w_%-%.]+$') then
+		return refuse('export.badArgument')
+	end
+	return answered(crafting.Open(caller .. ':' .. key))
+end)
+
+-- ── what the local player is ─────────────────────────────────────────────────
+-- Reads of THIS client's own state, from the mirrors the modules keep. Advice
+-- for drawing a screen, never a gate: the server re-derives everything that
+-- matters.
+
+publish('GetPlayerData', function()
+	local character = OPX.Api.Get('character')
+	if character == nil then return refuse('error.unavailable') end
+	if not character.IsLoggedIn() then return refuse('error.notLoggedIn') end
+	return ok(closedPlayer(character.GetPlayerData()))
+end)
+
+publish('GetItemCount', function(_, name)
+	local inventory = OPX.Api.Get('inventory')
+	if inventory == nil then return refuse('error.unavailable') end
+	if type(name) ~= 'string' or #name < 1 or #name > 64 then return refuse('export.badArgument') end
+	return ok(inventory.GetItemCount(name))
+end)
+
+publish('HasItem', function(_, name, count)
+	local inventory = OPX.Api.Get('inventory')
+	if inventory == nil then return refuse('error.unavailable') end
+	if type(name) ~= 'string' or #name < 1 or #name > 64 then return refuse('export.badArgument') end
+	local wanted = count == nil and 1 or math.tointeger(count)
+	if wanted == nil or wanted < 1 then return refuse('export.badArgument') end
+	return ok(inventory.GetItemCount(name) >= wanted)
+end)
+
+publish('GetItem', function(_, name)
+	local inventory = OPX.Api.Get('inventory')
+	if inventory == nil then return refuse('error.unavailable') end
+	if type(name) ~= 'string' or #name < 1 or #name > 64 then return refuse('export.badArgument') end
+	return ok(inventory.GetItem(name))
+end)
+
+publish('IsDown', function()
+	local downed = OPX.Api.Get('downed')
+	if downed == nil then return refuse('error.unavailable') end
+	return answered(downed.IsDown())
+end)
+
+publish('GetNeeds', function()
+	local needs = OPX.Api.Get('needs')
+	if needs == nil then return refuse('error.unavailable') end
+	return answered(needs.GetNeeds())
+end)
+
 -- ── the answers that arrive later ────────────────────────────────────────────
 
 -- A bar is answered on its module's own bus, under the owner it was started
@@ -448,6 +688,22 @@ AddEventHandler(OPX.Host.CLIENT_RESOURCE_STOP, function(name)
 	-- Nobody left to deliver to: an export call into a stopped resource is a
 	-- refusal per raise, and a later resource of that name never asked.
 	for _, heard in pairs(subscribers) do heard[name] = nil end
+	local panel = OPX.Api.Get('panel')
+	for handle, caller in pairs(panels) do
+		if caller == name then
+			panels[handle] = nil
+			if panel ~= nil then panel.Close(handle, 'owner_stopped') end
+		end
+	end
+	-- The eye and the strip sweep a stopped owner on their own; this is the
+	-- same, at once rather than on their next pass. Never for a module's name,
+	-- which those stores keep their own rows under.
+	if not takenName(name) then
+		local target = OPX.Api.Get('target')
+		if target ~= nil then target.Clear(name) end
+		local prompts = OPX.Api.Get('prompts')
+		if prompts ~= nil then prompts.HideAll(name) end
+	end
 end)
 
 if not hasExports() then

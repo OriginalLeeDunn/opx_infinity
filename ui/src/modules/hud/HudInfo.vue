@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, shallowRef } from 'vue'
-import { list, text } from '@/bridge/types'
+import { text, records } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
 import { useLocale } from '@/composables/useLocale'
@@ -60,11 +60,14 @@ function toneOf(value: unknown): Tone {
 }
 
 useBridge('opx:hud:info', (payload: Payload) => {
-  lines.value = list<Payload>(payload.lines)
+  lines.value = records(payload.lines)
     .filter((row) => text(row.id) !== '')
     .map((row) => ({
       id: text(row.id),
-      label: t(text(row.label)),
+// The KEY, translated where it is drawn: Lua sends each payload once (deduped by
+      // signature), so one that beat the locale catalogue would otherwise keep the raw
+      // key on screen until the value next changed. `t()` in the template is reactive.
+      label: text(row.label),
       // Already formatted by Lua: separators, currency symbols and rounding are all
       // decisions, and a page that formatted a number would be making one.
       value: text(row.value),
@@ -77,13 +80,12 @@ useBridge('opx:hud:info', (payload: Payload) => {
   <section v-if="lines.length" class="info" :class="end ? 'to-end' : 'to-start'">
     <div class="inner">
       <div
-        v-for="(line, at) in lines"
+        v-for="line in lines"
         :key="line.id"
         class="line"
         :class="line.tone"
-        :style="`--op-slot: ${at}`"
       >
-        <span class="label">{{ line.label }}</span>
+        <span class="label">{{ t(line.label) }}</span>
         <span v-if="line.value" class="value">{{ line.value }}</span>
       </div>
     </div>
@@ -222,7 +224,9 @@ useBridge('opx:hud:info', (payload: Payload) => {
 
 .line {
   animation: line-in var(--op-enter-ms) var(--op-stutter) backwards;
-  animation-delay: calc(var(--slot, 0) * 28ms + 40ms);
+  /* NO STAGGER, on the owner's word: rows land together, as the menu's buttons and
+     the eye's rows do. A per-row delay read as the rows trickling in. */
+  animation-delay: 40ms;
 }
 
 /* A left-anchored read-out arrives from its own edge. */

@@ -167,6 +167,8 @@ function stopPress(report: boolean): void {
   if (raise !== undefined) clearTimeout(raise)
   raise = undefined
   window.removeEventListener('pointerup', onPointerUp)
+  window.removeEventListener('pointercancel', onPointerUp)
+  window.removeEventListener('blur', onPointerUp)
   const was = pressing.value
   pressing.value = false
   filled.value = false
@@ -198,6 +200,12 @@ function startPress(): void {
   // there -- which on this control would read as a hold that had already finished.
   raise = setTimeout(() => { filled.value = true }, FRAME_MS)
   window.addEventListener('pointerup', onPointerUp)
+  // A release this page never sees -- the window lost focus mid-hold, the engine
+  // cancelled the pointer -- must end the hold too. Otherwise the beat kept saying
+  // `holding: true` with no finger on anything, and Lua would carry out a give-up
+  // the player had already let go of.
+  window.addEventListener('pointercancel', onPointerUp)
+  window.addEventListener('blur', onPointerUp)
 }
 
 function askWait(): void {
@@ -229,9 +237,11 @@ function blank(): void {
   aside.value = false
   waiting.value = false
   notice.value = ''
-  fellAt.value = 0
-  // Stops `useCountdown`'s interval: it watches this and only runs above zero.
-  unlockAt.value = 0
+  // THE TWO CLOCKS STOP WHERE THEY ARE, and are not zeroed. Zeroed, the fade-out
+  // drew the DOWN FOR readout as `now - 0` -- tens of millions of minutes -- and the
+  // give-up row flipped from its lock to "available" on the way out. `show` writes
+  // both afresh, and a new deadline restarts the countdown on its own.
+  lock.stop()
   stopPress(false)
   if (ticker !== undefined) clearInterval(ticker)
   ticker = undefined
@@ -445,7 +455,11 @@ onUnmounted(() => {
           <!-- A refusal, in the player's language, decided and worded by the
                server. It is a line of type and not a frame, for the same reason
                the readouts are not. -->
-          <p v-if="notice" class="notice op-copy">{{ notice }}</p>
+          <!-- ALWAYS IN THE LAYOUT, one line tall, and empty when there is nothing to
+               say. Mounted only for a refusal, it grew a vertically centred bay by its
+               own height: the whole panel, the button under the cursor with it, rose
+               ~15px and dropped back five seconds later. -->
+          <p class="notice op-copy" :aria-hidden="!notice">{{ notice }}</p>
         </div>
       </div>
     </div>
@@ -674,6 +688,9 @@ onUnmounted(() => {
 
 .choice-hint {
   color: var(--op-text-dim);
+  /* It carries the give-up lock's mm:ss, re-drawn every second in a proportional
+     face: the clock's width changed with its digits and the line shivered. */
+  font-variant-numeric: tabular-nums;
 }
 
 .choice.is-off .choice-hint {
@@ -706,6 +723,8 @@ onUnmounted(() => {
    ========================================================================== */
 .notice {
   margin: 0;
+  /* The line is reserved whether or not it is spoken in: see the template. */
+  min-height: 1.4em;
   padding: 0 calc(var(--op-space-5) + var(--op-cut-lg)) var(--op-space-4)
     calc(var(--op-space-5) + var(--op-rule));
   color: var(--op-alarm);

@@ -17,18 +17,18 @@ local EN = {
 	['entry.name.firstHint'] = 'Vee',
 	['entry.name.lastHint'] = 'Vector',
 
-	['entry.refusal.unknown'] = 'That was refused ({code}).',
+	['entry.refusal.unknown'] = 'That was refused. Try again.',
 }
 
 local FR = {
-	['entry.name.title'] = 'QUI ETES-VOUS',
+	['entry.name.title'] = 'QUI ÊTES-VOUS',
 	['entry.name.about'] = "Le nom qui figure sur vos papiers. Il ne s'écrit qu'une fois.",
 	['entry.name.firstName'] = 'Prénom',
 	['entry.name.lastName'] = 'Nom',
 	['entry.name.firstHint'] = 'Vee',
 	['entry.name.lastHint'] = 'Vector',
 
-	['entry.refusal.unknown'] = 'Cela a été refusé ({code}).',
+	['entry.refusal.unknown'] = 'Cela a été refusé. Réessayez.',
 }
 
 -- Kept on the module table as well as registered: the two are compared at start,

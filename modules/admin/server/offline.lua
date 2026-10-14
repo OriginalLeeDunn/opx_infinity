@@ -57,13 +57,6 @@ local CODES = {
 -- player id: there is no player to name -- that is the whole reason to be here.
 local TERM = { name = 'name|citizenId', help = 'admin.help.findTerm' }
 
---- Whether the character contract answered at start.
--- @author dop42
--- @return boolean
-function Offline.Running()
-	return Server.Contract('character') ~= nil
-end
-
 --- This module's word for a contract refusal.
 local function codeOf(error)
 	return CODES[tostring(error)] or 'refused'
@@ -156,7 +149,7 @@ function Offline.Register()
 			local term = M.Trimmed(args[1], 64)
 			if term == nil then return refuse(source, raw, 'search_short') end
 
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				local rows, code, page = Offline.Page({ mode = 'search', term = term })
 				if rows == nil then return refuse(source, raw, code) end
 

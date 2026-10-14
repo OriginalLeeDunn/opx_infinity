@@ -30,13 +30,22 @@ local function validName(value, maximum)
 		and value:match('^[%w_:%-%.]+$') ~= nil
 end
 
---- Checks the two things this half can check, and answers the refusal.
+--- Checks the two things this half can check: answers the player id to send to,
+--- or nil and the refusal.
+--
+-- ONE CONNECTED PLAYER, NEVER A BROADCAST. This used to ask only that the id be
+-- a finite number, and -1 is one: `TriggerClientEvent(..., -1, ...)` is every
+-- client, so any module's prompt for "player -1" went up on the whole server's
+-- strip, answered Ok. A 0, a fraction or the id of a slot nobody holds passed
+-- too, reached nobody, and was still answered Ok. Checked the way the chat
+-- module checks its target.
 local function addressed(source, owner)
-	if not OPX.Math.IsFinite(tonumber(source)) then
-		return Result.Err('prompts.invalidPlayer')
+	local id = math.tointeger(tonumber(source))
+	if id == nil or id < 1 or id > 2147483647 or OPX.UserIdOf(id) == nil then
+		return nil, Result.Err('prompts.invalidPlayer')
 	end
-	if not validName(owner, MAX_OWNER) then return Result.Err('prompts.invalidOwner') end
-	return nil
+	if not validName(owner, MAX_OWNER) then return nil, Result.Err('prompts.invalidOwner') end
+	return id
 end
 
 --- Puts a group up on one player's strip, or replaces the one that owner already
@@ -48,9 +57,9 @@ end
 -- @param spec table title, priority and rows
 -- @return Result
 local function show(source, owner, id, spec)
-	local refused = addressed(source, owner)
-	if refused ~= nil then return refused end
-	TriggerClientEvent(M.Event.SHOW, source, { owner = owner, id = id, spec = spec })
+	local player, refused = addressed(source, owner)
+	if player == nil then return refused end
+	TriggerClientEvent(M.Event.SHOW, player, { owner = owner, id = id, spec = spec })
 	return Result.Ok({ id = id })
 end
 
@@ -62,9 +71,9 @@ end
 -- @param patch table
 -- @return Result
 local function update(source, owner, id, patch)
-	local refused = addressed(source, owner)
-	if refused ~= nil then return refused end
-	TriggerClientEvent(M.Event.UPDATE, source, { owner = owner, id = id, patch = patch })
+	local player, refused = addressed(source, owner)
+	if player == nil then return refused end
+	TriggerClientEvent(M.Event.UPDATE, player, { owner = owner, id = id, patch = patch })
 	return Result.Ok({ id = id })
 end
 
@@ -75,9 +84,9 @@ end
 -- @param id string
 -- @return Result
 local function hide(source, owner, id)
-	local refused = addressed(source, owner)
-	if refused ~= nil then return refused end
-	TriggerClientEvent(M.Event.HIDE, source, { owner = owner, id = id })
+	local player, refused = addressed(source, owner)
+	if player == nil then return refused end
+	TriggerClientEvent(M.Event.HIDE, player, { owner = owner, id = id })
 	return Result.Ok({ id = id })
 end
 
@@ -87,10 +96,10 @@ end
 -- @param owner string
 -- @return Result
 local function hideAll(source, owner)
-	local refused = addressed(source, owner)
-	if refused ~= nil then return refused end
+	local player, refused = addressed(source, owner)
+	if player == nil then return refused end
 	-- The whole payload is the owner name; this one is not a table.
-	TriggerClientEvent(M.Event.HIDE_ALL, source, owner)
+	TriggerClientEvent(M.Event.HIDE_ALL, player, owner)
 	return Result.Ok(true)
 end
 

@@ -34,6 +34,11 @@ local PENDING_MS = 30000
 local armed = {}
 local pending = {}
 
+-- Weapons whose rounds are being read back on the way to the holster, by
+-- serial. Until the reading lands, the item still carries the count of the last
+-- sync, and it must not leave the bag carrying it.
+local reading = {}
+
 --- Whether weapons are on and the whole relay is installed.
 local function available()
 	local weapons = Open77.weapons
@@ -281,12 +286,50 @@ function Weapons.Holster(source, sync)
 	if sync and held.ammoItem and held.state == 'armed' and not held.loading then
 		local requestId = Open77.weapons.requestSnapshot(source)
 		if requestId then
+			reading[held.serial] = true
 			remember(requestId, { source = source, kind = 'holster', held = held })
 			return
 		end
 	end
 	local requestId = Open77.weapons.remove(source, Options.WEAPON_SLOT)
 	if requestId then remember(requestId, { source = source, kind = 'remove' }) end
+end
+
+--- Whether a bag stack may leave its bag right now, and the refusal if not.
+--
+-- THE ROUNDS FIRED SINCE THE LAST SYNC. The item's `ammo` only comes down when a
+-- reading of the engine says so, and the sync runs every `AMMO_SYNC_MS`. A drawn
+-- weapon moved, handed over or dropped was holstered by `CheckHeld` WITHOUT a
+-- reading -- the item had already left the bag the reading lowers -- so every
+-- round fired since the last sync came back with it: empty the magazine, drop
+-- the gun, pick it up, and it was full again.
+--
+-- So the drawn weapon does not leave the bag while it is drawn. The first
+-- attempt holsters it WITH a reading and is refused `holstering`; the reading
+-- lowers the item where it still is, in the bag; and the attempt after it goes
+-- through with the true count. A weapon with nothing to read (no ammunition, or
+-- still being drawn) is let go as before.
+-- Called by `Containers.Move` for every stack leaving a container.
+-- @author dop42
+-- @param bag table the container the stack is leaving
+-- @param entry table the stack
+-- @return string|nil the refusal code
+function Weapons.BeforeLeave(bag, entry)
+	if bag.kind ~= KIND.CHARACTER then return nil end
+	local metadata = entry.metadata
+	local serial = type(metadata) == 'table' and metadata.serial or nil
+	if type(serial) ~= 'string' then return nil end
+	if reading[serial] then return 'holstering' end
+	local source = Players.SourceOf(bag.owner)
+	local held = source and armed[source]
+	if not held or held.serial ~= serial or held.name ~= entry.name then return nil end
+	if not held.ammoItem or held.state ~= 'armed' or not available() then return nil end
+	Weapons.Holster(source, true)
+	-- No reading could be asked for (the relay refused it, or rounds are being
+	-- loaded and the item was just set from a fresh reading): the weapon is
+	-- away, and the stack goes as it always did.
+	if not reading[serial] then return nil end
+	return 'holstering'
 end
 
 --- Spends an ammunition item on the held weapon, up to its maximum.
@@ -342,7 +385,10 @@ function Weapons.Forget(source, connected)
 		armed[source] = nil
 	end
 	for key, step in pairs(pending) do
-		if step.source == source then pending[key] = nil end
+		if step.source == source then
+			if step.kind == 'holster' and step.held then reading[step.held.serial] = nil end
+			pending[key] = nil
+		end
 	end
 end
 
@@ -393,6 +439,10 @@ local function completed(playerId, requestId, _operation, accepted, reason, resu
 		end
 		return
 	end
+
+	-- The reading on the way to the holster has landed, or been refused: either
+	-- way the item may leave the bag now.
+	if step.kind == 'holster' and step.held then reading[step.held.serial] = nil end
 
 	if accepted ~= true then
 		if step.held then step.held.loading = false end
@@ -510,6 +560,7 @@ function Weapons.SweepPending()
 		if now - (step.atMs or now) > PENDING_MS then
 			pending[key] = nil
 			if step.held then step.held.loading = false end
+			if step.kind == 'holster' and step.held then reading[step.held.serial] = nil end
 		end
 	end
 end

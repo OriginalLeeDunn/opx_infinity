@@ -28,28 +28,18 @@ local M = OPX.Modules.Declare{
 	requires = { 'character' },
 }
 
--- The three prefixes are disjoint by construction (see core/shared/channels.lua):
--- the host dispatcher matches on the name alone, so a local `TriggerEvent` on a
--- NET name would re-enter the handler registered for the wire.
-local NET = OPX.Channel.NET
-
 M.Event = {
-	-- Client to server. Every payload is attacker-controlled; only `source` is
-	-- not, and both handlers re-derive the character and the ownership from it.
-	SPAWN = OPX.Event(NET, 'vehicles', 'spawn'),
-	STORE = OPX.Event(NET, 'vehicles', 'store'),
+	-- Nothing from the client: a car comes out and goes back through `garages`
+	-- and staff, which call the contract. See `M.Start` in server/main.lua.
 
 	-- The public server bus, for OTHER resources: a vehicle came out of storage
 	-- or went back into it. `(source|nil, { citizenId, plate, ... })`; see
-	-- `core/server/publish.lua` and README.md "For creators".
+	-- `core/server/publish.lua` and docs/MANUAL.md "For creators".
 	ON_SPAWNED = OPX.Event(OPX.Channel.LOCAL, 'vehicles', 'spawned'),
 	ON_STORED = OPX.Event(OPX.Channel.LOCAL, 'vehicles', 'stored'),
+	-- A vehicle row made for a character (bought, given, a reward), and one moved
+	-- to stored or impounded by `SetState` -- the impound door.
+	ON_REGISTERED = OPX.Event(OPX.Channel.LOCAL, 'vehicles', 'registered'),
+	ON_STATE = OPX.Event(OPX.Channel.LOCAL, 'vehicles', 'state'),
 }
 
---- Which request a refusal answers.
--- Passed to `OPX.Refuse`: without it a client waiting on one of several requests
--- cannot tell which `error.tooFast` is its own.
-M.Operation = {
-	SPAWN = 'vehicleSpawn',
-	STORE = 'vehicleStore',
-}

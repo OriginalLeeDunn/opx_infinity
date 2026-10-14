@@ -61,13 +61,6 @@ local CITIZEN = { name = 'citizenId', help = 'admin.help.citizenId' }
 local FIRST = { name = 'firstName', help = 'admin.help.firstName' }
 local LAST = { name = 'lastName', help = 'admin.help.lastName' }
 
---- Whether the character contract answered at start.
--- @author dop42
--- @return boolean
-function Characters.Running()
-	return Server.Contract('character') ~= nil
-end
-
 --- This module's word for a contract refusal.
 local function codeOf(error)
 	return CODES[tostring(error)] or 'refused'
@@ -137,7 +130,7 @@ function Characters.Register()
 		handler = function(source, args, raw)
 			local playerId = Server.Target(source, raw, args[1])
 			if playerId == nil then return end
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				local rows, code = Characters.Rows(playerId)
 				if rows == nil then return refuse(source, raw, code) end
 
@@ -167,7 +160,8 @@ function Characters.Register()
 		help = 'admin.help.charRename', params = { CITIZEN, FIRST, LAST }, inGame = true,
 		handler = function(source, args, raw)
 			local citizenId = M.Trimmed(args[1], 32)
-			if citizenId == nil then return refuse(source, raw, 'unknown_citizen') end
+			-- `{who}` is in the sentence; without it the operator read the braces.
+			if citizenId == nil then return refuse(source, raw, 'unknown_citizen', { who = '?' }) end
 			-- Both halves before the thread: a missing argument is not worth a
 			-- database round trip, and the refusal reads the same either way.
 			if M.Trimmed(args[2], 32) == nil or M.Trimmed(args[3], 32) == nil then
@@ -177,7 +171,15 @@ function Characters.Register()
 			local contract = Server.Contract('character')
 			if contract == nil then return refuse(source, raw, 'characters_unavailable') end
 
-			CreateThread(function()
+			-- A character being played by a protected player is theirs to keep.
+			for _, id in ipairs(Server.PlayerIds()) do
+				if Server.CitizenOf(id) == citizenId then
+					if Server.Shielded(source, raw, id, 'admin.character.rename') then return end
+					break
+				end
+			end
+
+			Server.Heavy(source, raw, function()
 				local renamed, result = pcall(contract.RenameCharacter, citizenId,
 					args[2], args[3], source)
 				if not renamed or type(result) ~= 'table' then
@@ -187,10 +189,13 @@ function Characters.Register()
 				if not result.ok then
 					audit(source, 'admin.character.rename', false, nil,
 						('%s: %s'):format(citizenId, tostring(result.error)))
-					return refuse(source, raw, codeOf(result.error))
+					return refuse(source, raw, codeOf(result.error), { who = citizenId })
 				end
 
-				local full = ('%s %s'):format(result.value.firstName, result.value.lastName)
+				-- Read defensively: this runs on a bare thread, where a raise is no
+				-- answer and no audit line at all, after the rename has happened.
+				local value = type(result.value) == 'table' and result.value or {}
+				local full = ('%s %s'):format(tostring(value.firstName or '?'), tostring(value.lastName or '?'))
 				audit(source, 'admin.character.rename', true, nil,
 					('%s -> %s'):format(citizenId, full))
 				answer(source, raw, true, 'admin.done.charRenamed',
@@ -207,18 +212,21 @@ function Characters.Register()
 		help = 'admin.help.charDelete', params = { CITIZEN }, inGame = true,
 		handler = function(source, args, raw)
 			local citizenId = M.Trimmed(args[1], 32)
-			if citizenId == nil then return refuse(source, raw, 'unknown_citizen') end
+			if citizenId == nil then return refuse(source, raw, 'unknown_citizen', { who = '?' }) end
 
 			local contract = Server.Contract('character')
 			if contract == nil then return refuse(source, raw, 'characters_unavailable') end
 
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				-- Read BEFORE the delete, and only for the message: afterwards the
 				-- player holding it has been logged out and there is nobody left to
 				-- tell. A read that fails costs the toast and not the delete.
 				local holder = nil
 				for _, id in ipairs(Server.PlayerIds()) do
 					if Server.CitizenOf(id) == citizenId then holder = id break end
+				end
+				if holder ~= nil and Server.Shielded(source, raw, holder, 'admin.character.delete') then
+					return
 				end
 
 				local removed, result = pcall(contract.RemoveCharacter, citizenId, source)
@@ -229,7 +237,7 @@ function Characters.Register()
 				if not result.ok then
 					audit(source, 'admin.character.delete', false, holder,
 						('%s: %s'):format(citizenId, tostring(result.error)))
-					return refuse(source, raw, codeOf(result.error))
+					return refuse(source, raw, codeOf(result.error), { who = citizenId })
 				end
 
 				audit(source, 'admin.character.delete', true, holder, citizenId)

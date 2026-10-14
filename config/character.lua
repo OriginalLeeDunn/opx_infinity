@@ -5,7 +5,7 @@
 -- resource set, so nothing secret belongs here -- an entry in SLOTS_BY_USER names
 -- an account id and travels with it.
 --
--- JOBS, GANGS and ORIGINS are definitions, not settings: the key is what is
+-- JOBS and GANGS are definitions, not settings: the key is what is
 -- written on a character's row, so rows are added freely and NEVER renamed --
 -- renaming one renames what players already own. Grades are indexed from 0 and
 -- contiguous. `none` is the absence of a gang, kept as an entry so that nothing
@@ -449,33 +449,6 @@ OPX.Config.MODULES.character = {
 				[1] = { name = 'Rider' },
 				[2] = { name = 'Elder', isBoss = true, bankAuth = true },
 			},
-		},
-	},
-
-	-- Lifepaths, and NOTHING READS THIS YET. The claim that used to stand here --
-	-- "offered at creation, validated against this list" -- was not true: no file
-	-- in the runtime reads `ORIGINS`, and nothing writes `charInfo.origin`, so the
-	-- field replicated on the state bag is always empty. The creator this would be
-	-- offered in belongs to the platform and runs at join, before this runtime has
-	-- a character to put a lifepath on.
-	--
-	-- It is kept rather than deleted because it is the list an owner would edit
-	-- the moment the creation path exists, and because the bag field is already a
-	-- published shape. Whoever wires it: validate the chosen key against this
-	-- table on the SERVER before writing `charInfo.origin`, the way
-	-- `player.lua`'s name setter validates, and delete this note.
-	ORIGINS = {
-		nomad = {
-			label = 'Nomad',
-			description = 'Raised in the Badlands, loyal to a clan and to nobody in the city.',
-		},
-		streetkid = {
-			label = 'Streetkid',
-			description = 'Born in Night City. Knows every alley and who owns it.',
-		},
-		corpo = {
-			label = 'Corpo',
-			description = 'Grew up inside a tower. Knows what the city looks like from above.',
 		},
 	},
 }

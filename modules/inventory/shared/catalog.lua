@@ -283,6 +283,162 @@ function Catalog.Finish()
 	table.sort(names)
 end
 
+-- ── items registered at runtime ──────────────────────────────────────────────
+-- ANOTHER RESOURCE MAY ADD AN ITEM WHILE THE SERVER RUNS, through the
+-- `RegisterItem` export. The definition is checked HERE, by the one function
+-- both halves run, so the server cannot accept a row the client would refuse
+-- and draw differently. It is refused WHOLE on the first thing wrong, unlike a
+-- config row, which is a boot warning: a creator calling an export is told why
+-- at the call, and half an item is worse than none.
+--
+-- WHAT A RUNTIME ITEM MAY NOT BE: a weapon or ammunition (those need a TweakDB
+-- record and a class, which only `data/weapons.lua` can vouch for), a name
+-- the catalogue already carries from config, or a name another owner
+-- registered. Its own owner may register it again, which REPLACES it -- a
+-- creator restarting its resource sends the same definitions again.
+--
+-- IT IS NOT REMOVED WHEN ITS OWNER STOPS. Stacks of it are in bags and in the
+-- database, and an item that vanished from the catalogue under them would weigh
+-- the default and draw as its bare name until the owner came back.
+
+-- The creator-facing fields, lower case, and the catalogue key each becomes.
+local RUNTIME_FIELDS = {
+	label = 'LABEL', description = 'DESCRIPTION', weight = 'WEIGHT', stack = 'STACK',
+	drop = 'DROP', category = 'CATEGORY', image = 'IMAGE', model = 'MODEL', use = 'USE',
+}
+
+-- The fields of `use`, lower case.
+local RUNTIME_USE = { consume = 'CONSUME', close = 'CLOSE', status = 'STATUS', animation = 'ANIMATION' }
+
+-- Most needs one runtime item's `use.status` may move. The needs a server has
+-- are a handful; see the client budget note where it is checked.
+local RUNTIME_STATUS_MAX = 8
+
+-- Runtime definitions by name, as given (lower case), with their owner: what
+-- the server sends a client that joins after they were registered.
+local runtime = {}
+
+--- The first thing wrong with a runtime definition, or nil and the catalogue
+--- row it becomes.
+local function runtimeRow(raw)
+	if type(raw) ~= 'table' or getmetatable(raw) ~= nil then return 'definition' end
+	local row = {}
+	for key, value in pairs(raw) do
+		local field = type(key) == 'string' and RUNTIME_FIELDS[key] or nil
+		if field == nil then return 'field:' .. tostring(key) end
+		row[field] = value
+	end
+	if row.LABEL ~= nil and textField(row.LABEL) == nil then return 'label' end
+	if row.DESCRIPTION ~= nil and textField(row.DESCRIPTION) == nil then return 'description' end
+	if row.WEIGHT ~= nil and Common.Integer(row.WEIGHT, 0, 1000000000) == nil then return 'weight' end
+	if row.STACK ~= nil and type(row.STACK) ~= 'boolean' then return 'stack' end
+	if row.DROP ~= nil and type(row.DROP) ~= 'boolean' then return 'drop' end
+	if row.CATEGORY ~= nil and Common.Word(row.CATEGORY, 32, '^[%w_]+$') == nil then return 'category' end
+	if row.CATEGORY == 'weapon' or row.CATEGORY == 'ammo' then return 'category' end
+	if row.IMAGE ~= nil and Common.Word(row.IMAGE, 64, '^[%w_%-%.]+$') == nil then return 'image' end
+	if row.MODEL ~= nil then
+		local model = Common.Word(row.MODEL, 256, '^[%w_%-%.]+$')
+		if model == nil or model:find('%.mesh$') then return 'model' end
+	end
+	if row.USE ~= nil then
+		if type(row.USE) ~= 'table' then return 'use' end
+		local use = {}
+		for key, value in pairs(row.USE) do
+			local field = type(key) == 'string' and RUNTIME_USE[key] or nil
+			if field == nil then return 'use.' .. tostring(key) end
+			use[field] = value
+		end
+		if use.CONSUME ~= nil and Common.Integer(use.CONSUME, 0, 1000000) == nil then
+			return 'use.consume'
+		end
+		if use.CLOSE ~= nil and type(use.CLOSE) ~= 'boolean' then return 'use.close' end
+		if use.STATUS ~= nil then
+			if type(use.STATUS) ~= 'table' then return 'use.status' end
+			-- BOUNDED, because every client walks this table twice (here and in
+			-- `useOf`) inside the one resume that received it: a few hundred keys
+			-- on one item spend the whole budget, the client's handler is killed,
+			-- and the item the server took never reaches that client.
+			local keys = 0
+			for key, amount in pairs(use.STATUS) do
+				keys = keys + 1
+				if keys > RUNTIME_STATUS_MAX or type(key) ~= 'string' or #key > 32
+					or not OPX.Math.IsFinite(amount) then
+					return 'use.status'
+				end
+			end
+		end
+		if use.ANIMATION ~= nil then
+			local animation = use.ANIMATION
+			if type(animation) ~= 'table' or Common.Word(animation.name, 32, '^[%w_]+$') == nil
+				or (animation.variant ~= nil and Common.Integer(animation.variant, 1, 64) == nil)
+				or (animation.durationMs ~= nil
+					and Common.Integer(animation.durationMs, 1000, 600000) == nil) then
+				return 'use.animation'
+			end
+			use.ANIMATION = { NAME = animation.name, VARIANT = animation.variant,
+				DURATION_MS = animation.durationMs }
+		end
+		row.USE = use
+	end
+	return nil, row
+end
+
+--- Puts a name into the sorted list where it belongs. A binary search and one
+--- insert, never a sort: a client receives these a chunk at a time inside one
+--- resume, and sorting a few hundred names there costs more than its budget.
+local function placeName(name)
+	local low, high = 1, #names
+	while low <= high do
+		local middle = (low + high) // 2
+		if names[middle] < name then low = middle + 1 else high = middle - 1 end
+	end
+	table.insert(names, low, name)
+end
+
+--- Adds, or replaces for its own owner, one item at runtime.
+-- @author dop42
+-- @param name any
+-- @param raw any the creator-facing definition, lower-case fields
+-- @param owner string who registered it
+-- @return boolean
+-- @return string|nil the refusal: `bad_name`, `item_taken`, `bad_definition:<field>`
+function Catalog.Register(name, raw, owner)
+	if Common.Word(name, Catalog.NAME_MAX, Catalog.NAME) == nil then return false, 'bad_name' end
+	if type(owner) ~= 'string' or owner == '' then return false, 'bad_owner' end
+	local held = entries[name]
+	if held ~= nil and held.owner ~= owner then return false, 'item_taken' end
+	local wrong, row = runtimeRow(raw)
+	if wrong ~= nil then return false, 'bad_definition:' .. wrong end
+
+	local entry = base(name, row, 'runtime ' .. owner)
+	entry.use = useOf(name, row.USE, 'runtime ' .. owner)
+	entry.usable = entry.use ~= nil
+	entry.owner = owner
+	entries[name] = entry
+	if held == nil then placeName(name) end
+	runtime[name] = { owner = owner, definition = Common.Copy(raw) }
+	return true, nil
+end
+
+--- Every item registered at runtime: name -> { owner, definition }. A copy.
+-- @author dop42
+-- @return table
+function Catalog.Runtime()
+	return Common.Copy(runtime)
+end
+
+--- How many items one owner registered at runtime.
+-- @author dop42
+-- @param owner string
+-- @return integer
+function Catalog.RuntimeCount(owner)
+	local count = 0
+	for _, held in pairs(runtime) do
+		if held.owner == owner then count = count + 1 end
+	end
+	return count
+end
+
 --- One catalogue entry by name, or nil.
 -- @author dop42
 -- @param name any

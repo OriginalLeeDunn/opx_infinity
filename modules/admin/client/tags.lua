@@ -5,16 +5,17 @@
 -- server sends it only to a player the ACL grants `opx.admin.self.tags`. Nothing
 -- here asks for it: it arrives, and it stops arriving the moment the grant does.
 --
--- THE CHARACTER IS NOT ON THAT LIST, and deliberately not. Who somebody is
--- PLAYING is on their replicated state bag, which this client already holds for
--- everybody in its bucket -- so it is read here rather than sent, and a tag costs
--- the wire nothing it was not already costing. `character`'s own contract is the
--- reader (`GetPlayerIdentity`); this file never touches `Open77.state` itself.
+-- THE CHARACTER IS ON THAT LIST TOO, and it used not to be. Who somebody was
+-- PLAYING was read off their replicated state bag -- which every client in the
+-- bucket held, staff or not, so the staff tool was reading a list every stranger
+-- had. Never a name to a stranger is the owner's decision: the bag carries
+-- nothing now, and the character and citizen id arrive with the account on the
+-- staff list, behind the same grant.
 --
--- A tag therefore carries three names and each has a different provenance:
---   `name`       the CHARACTER, off the bag -- what the city calls them
---   `user`       the ACCOUNT, off the staff list -- what a ban is keyed on
---   `citizenId`  the character's public id, off the bag -- what survives both
+-- A tag therefore carries three names, all off the staff list:
+--   `name`       the CHARACTER -- what the city calls them
+--   `user`       the ACCOUNT -- what a ban is keyed on
+--   `citizenId`  the character's public id -- what survives both
 -- With no character loaded the account moves into `name` and `user` goes empty:
 -- a tag over a body has to say something, and the account is what there is.
 --
@@ -228,22 +229,6 @@ local function colour(value, fallback)
 	return fallback
 end
 
--- Answered for anybody there is nothing to say about, so a caller may index it.
-local EMPTY_IDENTITY = {}
-
--- Who a player is playing, off the replicated bag through `character`'s contract.
--- A runtime with no character module, a host that does not replicate bags, and a
--- slot that has loaded nobody all answer the same empty table.
-local function identityOf(playerId)
-	local character = Client.Contract('character')
-	if type(character) ~= 'table' or type(character.GetPlayerIdentity) ~= 'function' then
-		return EMPTY_IDENTITY
-	end
-	local read, identity = pcall(character.GetPlayerIdentity, playerId)
-	if not read or type(identity) ~= 'table' then return EMPTY_IDENTITY end
-	return identity
-end
-
 -- Fades a tag over the far part of the distance, in tenths, so the view is not
 -- asked to redraw for a hundredth of an alpha.
 local function alphaFor(distance)
@@ -395,9 +380,6 @@ local function pass()
 			-- construction, in any view, on any build -- and a tag that the page
 			-- can actually put over a head is drawn, which is what the box says.
 			if distance and entry.entity ~= nil and (entry.isLocal ~= true or ownShown) then
-				-- One bag read per body per pass, and the contract caches it: see
-				-- `modules/character/client/state.lua`.
-				local identity = identityOf(id)
 				rows[#rows + 1] = {
 					playerId = id,
 					entity = entry.entity,
@@ -414,9 +396,9 @@ local function pass()
 					-- it, which is why `user` is nil rather than repeated whenever that
 					-- fallback is what happened. The page then never has to work out
 					-- which of two names it is looking at.
-					name = identity.name or row.name,
-					user = identity.name and row.name or nil,
-					citizenId = identity.citizenId,
+					name = row.character or row.name,
+					user = row.character and row.name or nil,
+					citizenId = row.citizenId,
 					staff = row.staff == true,
 					offsetZ = headOffset(entry.entity, entry.position),
 					alpha = alphaFor(distance),
@@ -448,7 +430,7 @@ local function pass()
 	ownQuiet = ownMissing ~= nil and ownQuiet + 1 or 0
 	if ownQuiet == math.max(2, math.floor(2000 / tuning.updateMs)) and not reported.own then
 		reported.own = true
-		M.Client.Journal(('the own name tag is on but not drawn: %s'):format(ownMissing))
+		Client.Journal(('the own name tag is on but not drawn: %s'):format(ownMissing))
 	end
 
 	-- WHAT THIS PASS DECIDED, in one sentence, once per distinct decision. Every
@@ -475,7 +457,18 @@ local function pass()
 	local signature = table.concat(parts, '\n')
 	if signature == published then return end
 	published = signature
-	publish('rows', { rows = rows })
+	-- THE VIEW DRAWS ON A RESUME OF ITS OWN. This pass is a scheduler job, and
+	-- the scheduler runs up to four jobs in one resume of the client's only loop:
+	-- `ON_TAGS` is a local event, dispatched synchronously, so the view placing
+	-- and anchoring up to 32 tags -- creating every anchor on the first frame --
+	-- was spent on that same shared budget, on top of this pass's own walk over
+	-- 32 bodies. The frame is handed over on a one-shot thread instead, and
+	-- dropped there if a newer frame, a hide or a stop came after it.
+	if type(CreateThread) ~= 'function' then return publish('rows', { rows = rows }) end
+	CreateThread(function()
+		if published ~= signature or not shown then return end
+		publish('rows', { rows = rows })
+	end)
 end
 
 -- Saves the switch on this machine for this server.
@@ -541,7 +534,11 @@ function Tags.Start()
 		for _, entry in ipairs(payload.rows) do
 			local id = tonumber(type(entry) == 'table' and entry.id or nil)
 			if id and type(entry.name) == 'string' then
-				incoming[id] = { name = Text.Bytes(entry.name, 192), staff = entry.staff == true }
+				incoming[id] = { name = Text.Bytes(entry.name, 192), staff = entry.staff == true,
+					character = type(entry.character) == 'string' and entry.character ~= ''
+						and Text.Bytes(entry.character, 192) or nil,
+					citizenId = type(entry.citizenId) == 'string' and entry.citizenId ~= ''
+						and Text.Bytes(entry.citizenId, 64) or nil }
 			end
 		end
 		-- Swapped whole, never merged: a list that arrived in pieces and was

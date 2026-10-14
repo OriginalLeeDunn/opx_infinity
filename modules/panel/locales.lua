@@ -16,7 +16,7 @@ OPX.Locale.Register('en', {
 	-- about it or not -- and a caller may still override it like any other label.
 	['panel.nothing'] = 'Nothing',
 	['panel.confirmYes'] = 'Confirm',
-	['panel.confirmNo'] = 'Back',
+	['panel.confirmNo'] = 'Cancel',
 })
 
 OPX.Locale.Register('fr', {
@@ -26,5 +26,5 @@ OPX.Locale.Register('fr', {
 	['panel.search'] = 'Rechercher',
 	['panel.nothing'] = 'Rien',
 	['panel.confirmYes'] = 'Confirmer',
-	['panel.confirmNo'] = 'Retour',
+	['panel.confirmNo'] = 'Annuler',
 })

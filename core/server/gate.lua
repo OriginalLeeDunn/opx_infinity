@@ -53,6 +53,9 @@ local INCARNATORS = { 'opx77_appearance', 'open77_appearance' }
 -- How often the watch looks at the slot it is watching.
 local WATCH_TICK_MS = 1000
 
+-- How many times the watch tries a release the host refuses before it stops.
+local MAX_RELEASE_ATTEMPTS = 5
+
 -- The shortest deadline that is worth declaring at all.
 local FLOOR_MS = 1000
 
@@ -374,6 +377,11 @@ function OPX.Gate.Watch(source, timeoutMs, onGiveUp)
 	local userId = session.userId
 	local deadline = OPX.Now() + deadlineFor(timeoutMs)
 
+	-- Set once `onGiveUp` has agreed, so a release that has to be retried does
+	-- not ask it again: it is documented to be called once.
+	local givingUp = false
+	local attempts = 0
+
 	CreateThread(function()
 		while true do
 			Wait(WATCH_TICK_MS)
@@ -384,15 +392,40 @@ function OPX.Gate.Watch(source, timeoutMs, onGiveUp)
 			-- The whole decision runs under `pcall`: a raise here would leave this
 			-- player holding the gate for the rest of the session.
 			local ok, done = pcall(function()
-				if OPX.Now() < deadline then return false end
-				if onGiveUp ~= nil and onGiveUp(source) == false then return true end
+				if not givingUp then
+					if OPX.Now() < deadline then return false end
+					if onGiveUp ~= nil and onGiveUp(source) == false then return true end
+					givingUp = true
+					Open77.log.warn(('[gate] %d spent too long behind the gate; releasing without them')
+						:format(source))
+				end
 
-				Open77.log.warn(('[gate] %d spent too long behind the gate; releasing without them')
-					:format(source))
 				-- The identity this watch was started for, not whoever holds the
 				-- slot by the time the deadline arrives.
-				Gate.Release(source, 'watch-timeout', userId)
-				return true
+				if Gate.Release(source, 'watch-timeout', userId) then return true end
+
+				-- A REFUSED RELEASE IS RETRIED, AND IT ENDED THE WATCH. This
+				-- answered `true` whatever `Release` said, while `Release` leaves
+				-- the session marked held on a refusal precisely so that "the watch,
+				-- or a later release, [can] try again" -- and the watch was the
+				-- one thing that never did. A refused or raising release therefore
+				-- left a hold that belonged to nobody, with no deadline, and the
+				-- player on a loading screen until the host's liveness interval.
+				--
+				-- The token goes before the retry: a refusal is most often
+				-- `session_mismatch`, and resending the same stale number would be
+				-- refused the same way every second. With none held, `Release`
+				-- asks the host for the current one -- safe here, because the
+				-- identity check above runs first. Bounded, so a host that keeps
+				-- refusing costs a few lines and not one a second for ever.
+				attempts = attempts + 1
+				live.gateSession = nil
+				if attempts >= MAX_RELEASE_ATTEMPTS then
+					Open77.log.error(('[gate] gave up releasing %d after %d refused attempts')
+						:format(source, attempts))
+					return true
+				end
+				return false
 			end)
 
 			if not ok then

@@ -1,4 +1,5 @@
 import { report } from '@/bridge/diag'
+import { own } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 
 /**
@@ -125,7 +126,7 @@ export function applyTheme(payload: Payload): void {
 
   const refused: string[] = []
   for (const key of Object.keys(payload)) {
-    const knob = KNOBS[key]
+    const knob = own(KNOBS, key)
     if (!knob) {
       refused.push(key)
       continue

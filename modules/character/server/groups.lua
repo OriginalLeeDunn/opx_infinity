@@ -31,6 +31,34 @@ function M.Groups.GetGang(name)
 	return M.Settings.GANGS[name]
 end
 
+--- Every job or gang this server defines, as a list a caller can carry: each
+--- with its grades as a list ordered by level. A COPY.
+-- Grades are keyed from 0 in the config, and a table keyed from 0 does not cross
+-- a marshaller as a list; each grade carries its `level` instead.
+-- @author dop42
+-- @param groupType GroupType job or gang
+-- @return table[]|nil nil for any other group type
+function M.Groups.List(groupType)
+	local defined = groupType == 'job' and M.Settings.JOBS
+		or groupType == 'gang' and M.Settings.GANGS or nil
+	if defined == nil then return nil end
+	local out = {}
+	for name, definition in pairs(defined) do
+		local grades = {}
+		for level, grade in pairs(type(definition.grades) == 'table' and definition.grades or {}) do
+			if math.type(level) == 'integer' and type(grade) == 'table' then
+				grades[#grades + 1] = { level = level, name = grade.name,
+					payment = grade.payment, isBoss = grade.isBoss == true }
+			end
+		end
+		table.sort(grades, function(a, b) return a.level < b.level end)
+		out[#out + 1] = { name = name, label = definition.label, type = definition.type,
+			defaultDuty = definition.defaultDuty == true, grades = grades }
+	end
+	table.sort(out, function(a, b) return a.name < b.name end)
+	return out
+end
+
 --- Resolves a job and grade into the PlayerData.job shape.
 -- A Result rather than nil, so a caller can tell "no such job" from "no such
 -- grade in that job".

@@ -13,8 +13,9 @@
 -- applies armour after it; a need is a value this module owns outright.
 --
 -- The bounds below load on both sides, so the two halves cannot clamp
--- differently: the client applies them to every export, to the decay and to the
--- server's answer, and the server to every push and every stored row.
+-- differently. The SERVER owns the values (the owner's ruling, 2026-10): it
+-- decays them, raises them, stores them and sends them; the client reads what it
+-- is sent through the same bounds and draws it.
 
 OPX.Modules.Declare{
 	id = 'needs',

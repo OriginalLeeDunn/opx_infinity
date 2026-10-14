@@ -24,6 +24,16 @@ local usables = {}
 -- When each player's last accepted use was, for the cooldown.
 local lastUse = {}
 
+-- Until when each player is still eating or drinking the last thing they used:
+-- the end of its animation, on the server's clock.
+--
+-- THE COOLDOWN IS 750 MS AND A BITE IS 3 SECONDS. A hotbar key pressed four
+-- times inside one burrito ate four of them -- each use consumed the item and
+-- moved the needs at once, the progress bar refused the second gesture as busy,
+-- and the player saw one animation and lost the stack. A use whose item plays a
+-- timed gesture now holds the next one off until the gesture is over.
+local busyUntil = {}
+
 --- Registers the function to call when an item is used.
 -- The last registration wins, and replacing one somebody else holds is a warning:
 -- two modules fighting over one item is a bug in one of them, and only the
@@ -58,6 +68,30 @@ function Actions.UnregisterUsable(name, owner)
 	return true
 end
 
+--- Who handles the use of an item, or nil.
+-- @author dop42
+-- @param name string
+-- @return string|nil the owner given at registration
+function Actions.UsableOwner(name)
+	local current = usables[name]
+	return current and current.owner or nil
+end
+
+--- Removes every use handler one owner registered. For an owner that stopped.
+-- @author dop42
+-- @param owner string
+-- @return integer how many went
+function Actions.UnregisterOwner(owner)
+	local gone = 0
+	for name, current in pairs(usables) do
+		if current.owner == owner then
+			usables[name] = nil
+			gone = gone + 1
+		end
+	end
+	return gone
+end
+
 --- Asks a use handler whether the use goes ahead, inside its deadline.
 --
 -- The handler runs on a thread of its own and NOT under a pcall: it may reach the
@@ -87,6 +121,41 @@ local function ask(entry, source, info)
 	return answer, nil
 end
 
+--- Heals a player by a share of their maximum health, through the host.
+-- THE MEDICAL ITEMS DID NOTHING. They carried `USE = { CONSUME = 1 }` and no
+-- handler, so a use destroyed one and healed nobody. The heal is the server's,
+-- read and written through `Open77.players.getHealth` / `setHealth`, and it is
+-- refused -- before anything is consumed -- for a player who is down (none of
+-- these revives) or already at full health.
+-- @param source Source
+-- @param percent number
+-- @return boolean
+-- @return string|nil
+local function heal(source, percent)
+	local downed = OPX.Api.Get('downed')
+	if downed ~= nil and type(downed.IsDown) == 'function' then
+		local read, answer = pcall(downed.IsDown, source)
+		if read and type(answer) == 'table' and answer.ok and type(answer.value) == 'table'
+			and answer.value.down == true then
+			return false, 'dead'
+		end
+	end
+	local players = Open77.players
+	if type(players) ~= 'table' or type(players.getHealth) ~= 'function'
+		or type(players.setHealth) ~= 'function' then
+		return false, 'use_refused'
+	end
+	local read, health = pcall(players.getHealth, source)
+	if not read or type(health) ~= 'table' then return false, 'use_refused' end
+	local current, maximum = tonumber(health.health), tonumber(health.maxHealth)
+	if current == nil or maximum == nil or maximum <= 0 then return false, 'use_refused' end
+	if current >= maximum then return false, 'full_health' end
+	local wanted = math.min(maximum, current + maximum * percent / 100)
+	local called, ok = pcall(players.setHealth, source, wanted)
+	if not called or ok ~= true then return false, 'use_refused' end
+	return true
+end
+
 --- Uses the item in a bag slot: draws a weapon, loads rounds, or consumes.
 -- @author dop42
 -- @param source Source
@@ -101,6 +170,7 @@ function Actions.Use(source, slot)
 	if now - (lastUse[source] or -math.huge) < OPX.Tune.Number('INVENTORY_USE_COOLDOWN_MS', 0) then
 		return false, 'too_fast'
 	end
+	if now < (busyUntil[source] or -math.huge) then return false, 'too_fast' end
 	local may, refusal = Players.MayAct(source)
 	if not may then return false, refusal end
 	-- HANDS FULL. Somebody carrying a hauling crate cannot draw a weapon or use
@@ -120,7 +190,20 @@ function Actions.Use(source, slot)
 
 	if item.weapon then
 		lastUse[source] = now
-		return M.Weapons.Use(source, bag, slot, item)
+		local drawn, why = M.Weapons.Use(source, bag, slot, item)
+		-- A DRAWN WEAPON CLOSES THE SCREEN, as food does. It returned before the
+		-- `used` event, so the inventory stayed over the gun the player had just
+		-- asked to hold. Only a draw: putting one away leaves the screen up.
+		if drawn and M.Weapons.Held(source) ~= nil then
+			TriggerClientEvent(M.Event.USED, source, {
+				name = entry.name,
+				slot = slot,
+				label = Catalog.Label(entry.name),
+				close = true,
+				weapon = true,
+			})
+		end
+		return drawn, why
 	end
 	if item.ammo then
 		lastUse[source] = now
@@ -133,7 +216,23 @@ function Actions.Use(source, slot)
 
 	local use = item.use or {}
 	local consume = use.consume or 0
+	local healing = Options.HEALING[entry.name]
+	if healing ~= nil and not handler then
+		-- The slot is held across the host calls, as it is for a handler: the
+		-- heal lands first and the unit it costs is taken after it.
+		if not Containers.Hold(bag, slot) then return false, 'in_use' end
+		local healed, why = heal(source, healing)
+		Containers.Release(bag, slot)
+		if not healed then return false, why end
+	end
 	if handler then
+		-- THE SLOT IS HELD FOR AS LONG AS THE HANDLER RUNS, because the handler
+		-- yields -- `ask` waits on it in 25 ms steps at the very least -- and the
+		-- consume comes after it. Unheld, the stack could be dragged away, handed
+		-- over, dropped, split or used a second time in that window: the handler
+		-- applied its effect and the consume found nothing to take. See
+		-- `Containers.Hold` for what a held slot refuses.
+		if not Containers.Hold(bag, slot) then return false, 'in_use' end
 		local answer, refusal = ask(handler, source, {
 			name = entry.name,
 			slot = slot,
@@ -142,6 +241,7 @@ function Actions.Use(source, slot)
 			label = Catalog.Label(entry.name),
 			citizenId = Players.Citizen(source),
 		})
+		Containers.Release(bag, slot)
 		if not answer then return false, refusal end
 		if answer.consume ~= nil then
 			consume = Common.Integer(answer.consume, 0, Options.MAX_STACK) or consume
@@ -149,9 +249,10 @@ function Actions.Use(source, slot)
 	end
 
 	if consume > 0 then
-		-- The handler yielded, so the stack may have moved. The slot is trusted
-		-- only while it still carries the same entry with enough units in it;
-		-- otherwise the units go by name and metadata instead.
+		-- Nothing could MOVE the stack while the slot was held, so it is normally
+		-- exactly where it was. A path that names the slot itself
+		-- (`TakeFromSlot`, a staff clear) may still have changed it, and then the
+		-- units go by name and metadata instead.
 		local consumed
 		if bag.items[slot] == entry and entry.count >= consume then
 			consumed = Containers.TakeFromSlot(bag, slot, consume)
@@ -160,6 +261,26 @@ function Actions.Use(source, slot)
 		end
 		if not consumed then return false, 'not_enough' end
 	end
+
+	-- THE NEEDS MOVE HERE, ON THE SERVER, and only after the unit is gone. The
+	-- client used to add `use.status` to its own copy and push it, which is the
+	-- door the owner closed (2026-10): a client could have "eaten" anything. The
+	-- contract is optional -- with none the item is still consumed and only what
+	-- it would have moved is lost -- and a need the operator has not declared
+	-- costs the move, not the use.
+	if type(use.status) == 'table' and next(use.status) ~= nil then
+		local needs = OPX.Api.Get('needs')
+		if needs ~= nil and type(needs.AddNeeds) == 'function' then
+			local moved = needs.AddNeeds(source, use.status, 'use')
+			if type(moved) == 'table' and moved.ok ~= true then
+				Open77.log.debug(('[inventory] the needs of a use were refused: %s')
+					:format(tostring(moved.error)))
+			end
+		end
+	end
+
+	local gesture = type(use.animation) == 'table' and tonumber(use.animation.durationMs) or nil
+	if gesture and gesture > 0 then busyUntil[source] = now + gesture end
 
 	TriggerClientEvent(M.Event.USED, source, {
 		name = entry.name,
@@ -182,7 +303,63 @@ function Actions.Use(source, slot)
 	return true, nil
 end
 
---- Hands a stack from one player's bag to a nearby player's.
+-- ── giving: an offer, and the receiver's yes ───────────────────────────────
+--
+-- A GIVE ASKS FIRST (the owner's ruling, 2026-10). It used to move the stack on
+-- the giver's press alone: anybody in reach could fill a stranger's bag with
+-- whatever they liked -- contraband before a search, a hundred stones, a dead
+-- weight that pins them under their limit. Now the press raises an OFFER, the
+-- receiver is asked -- the item and the count, and where the giver stands, never
+-- who -- and nothing moves until they say yes. The yes is checked again from
+-- scratch: both still able to act, still in reach, the same stack still in the
+-- giver's slot, and room in the receiver's bag.
+
+-- How long an offer stands, and the floor between two offers from one giver.
+local GIVE_TTL_MS = 15000
+local GIVE_FLOOR_MS = 3000
+
+-- token -> the offer; and the one token each player is giving and being given.
+local offers, offerFrom, offerTo = {}, {}, {}
+local offerSeq = 0
+
+--- The largest token a client may name back.
+local MAX_TOKEN = 2147483647
+
+--- Forgets an offer on both sides.
+local function dropOffer(offer)
+	offers[offer.token] = nil
+	if offerFrom[offer.from] == offer.token then offerFrom[offer.from] = nil end
+	if offerTo[offer.to] == offer.token then offerTo[offer.to] = nil end
+end
+
+-- A player's facing in degrees, or nil on a host that cannot say. Read off the
+-- rich player snapshot, the way the staff position capture reads it.
+local function headingOf(source)
+	local api = Open77.players
+	if type(api) ~= 'table' or type(api.get) ~= 'function' then return nil end
+	local read, snapshot = pcall(api.get, source)
+	if not read or type(snapshot) ~= 'table' then return nil end
+	local yaw = tonumber(snapshot.heading) or tonumber(snapshot.yaw)
+	if not OPX.Math.IsFinite(yaw) then return nil end
+	return yaw
+end
+
+-- Which side of `here`, facing `yaw`, `there` stands: 'ahead', 'behind', 'left'
+-- or 'right' -- the #91 wording the give list and the give offer both use -- or
+-- nil without a facing. A yaw of 0 faces +Y and turns towards -X (see
+-- `World.Ahead`), so forward is (-sin, cos) and right is (cos, sin).
+local function sideOf(here, there, yaw)
+	if yaw == nil then return nil end
+	local radians = math.rad(yaw)
+	local dx, dy = there.x - here.x, there.y - here.y
+	local along = -math.sin(radians) * dx + math.cos(radians) * dy
+	local across = math.cos(radians) * dx + math.sin(radians) * dy
+	if math.abs(along) >= math.abs(across) then return along >= 0 and 'ahead' or 'behind' end
+	return across >= 0 and 'right' or 'left'
+end
+
+--- Raises an offer of a stack from one player's bag to a nearby player.
+--- Nothing moves: the receiver answers through `Actions.AnswerGive`.
 -- @author dop42
 -- @param source Source
 -- @param target any
@@ -196,6 +373,9 @@ function Actions.Give(source, target, slot, count)
 	if not target or not slot or target == source then return false, 'bad_request' end
 	local may, refusal = Players.MayAct(source)
 	if not may then return false, refusal end
+
+	local here, there = World.Position(source), World.Position(target)
+	if not World.InReach(here, there) then return false, 'too_far' end
 	if not Players.GateOpen(target) then return false, 'not_ready' end
 
 	local from, reason = Players.Bag(source)
@@ -208,19 +388,115 @@ function Actions.Give(source, target, slot, count)
 	count = count == nil and entry.count or Common.Integer(count, 1, entry.count)
 	if not count then return false, 'bad_count' end
 
-	local here, there = World.Position(source), World.Position(target)
-	if not World.InReach(here, there) then return false, 'too_far' end
-	-- Loading the second bag yielded, so the source stack is read again.
-	if from.items[slot] ~= entry or entry.count < count then return false, 'empty_slot' end
+	-- One offer out per giver and one in per receiver: a second press is not a
+	-- second card on somebody's screen, and nobody is buried under offers.
+	if offerFrom[source] ~= nil then return false, 'give_pending' end
+	if offerTo[target] ~= nil then return false, 'give_busy' end
+	if OPX.Cooling(source, 'inventory.giveOffer', GIVE_FLOOR_MS) then return false, 'too_fast' end
+	if not Containers.CanCarry(to, entry.name, count, entry.metadata) then return false, 'no_room' end
 
-	local name = entry.name
-	local moved, refusal = Containers.Move(from, slot, to, nil, count)
-	if not moved then return false, refusal end
+	offerSeq = offerSeq % MAX_TOKEN + 1
+	local now = OPX.Now()
+	local offer = {
+		token = offerSeq, from = source, to = target, slot = slot, entry = entry,
+		name = entry.name, count = count, expiresAt = now + GIVE_TTL_MS,
+	}
+	offers[offer.token], offerFrom[source], offerTo[target] = offer, offer.token, offer.token
 
-	local label = Catalog.Label(name)
-	OPX.NotifyLocale(source, 'inventory.notify.gave', { count = count, item = label }, 'success')
-	OPX.NotifyLocale(target, 'inventory.notify.received', { count = count, item = label }, 'info')
+	local label = Catalog.Label(entry.name)
+	if entry.name == Options.CURRENCY_ITEM and Options.CURRENCY_MONEY_TYPE ~= nil then
+		label = OPX.Locale.Money(count, Options.CURRENCY_MONEY_TYPE)
+	end
+	local gap = World.Distance(there, here)
+	TriggerClientEvent(M.Event.GIVE_OFFER, target, offer.token, {
+		item = label,
+		count = count,
+		-- Where the GIVER stands, seen from the receiver: the receiver's facing.
+		side = sideOf(there, here, headingOf(target)),
+		distance = math.floor(gap * 10 + 0.5) / 10,
+		expiresInMs = GIVE_TTL_MS,
+	})
+	OPX.NotifyLocale(source, 'inventory.notify.giveOffered', { count = count, item = label }, 'info')
 	return true, nil
+end
+
+--- The receiver's answer to an offer. Only the receiver it was made to may
+--- answer it, and a yes is checked again before anything moves.
+-- @author dop42
+-- @param source Source the answering receiver
+-- @param token any
+-- @param accepted any
+-- @return boolean
+-- @return string|nil
+function Actions.AnswerGive(source, token, accepted)
+	token = Common.Integer(token, 1, MAX_TOKEN)
+	local offer = token and offers[token] or nil
+	if offer == nil or offer.to ~= source then return false, 'give_gone' end
+	dropOffer(offer)
+
+	local giver, label = offer.from, Catalog.Label(offer.name)
+	local said = { count = offer.count, item = label }
+	if OPX.Now() > offer.expiresAt then
+		OPX.NotifyLocale(giver, 'inventory.notify.giveExpired', said, 'info')
+		return false, 'give_gone'
+	end
+	if accepted ~= true then
+		OPX.NotifyLocale(giver, 'inventory.notify.giveDeclined', said, 'info')
+		return true, nil
+	end
+
+	local function fail(code)
+		OPX.NotifyLocale(giver, 'inventory.notify.giveFailed', said, 'warning')
+		return false, code
+	end
+	if not Players.MayAct(giver) or not Players.MayAct(source) then return fail('not_ready') end
+	if not World.InReach(World.Position(giver), World.Position(source)) then return fail('too_far') end
+	local from = Players.Bag(giver)
+	local to = Players.Bag(source)
+	if not from or not to then return fail('target_unavailable') end
+	local entry = from.items[offer.slot]
+	if entry ~= offer.entry or entry.count < offer.count then return fail('give_changed') end
+	if not Containers.CanCarry(to, entry.name, offer.count, entry.metadata) then return fail('no_room') end
+
+	local moved, refusal = Containers.Move(from, offer.slot, to, nil, offer.count)
+	if not moved then return fail(refusal) end
+
+	if offer.name == Options.CURRENCY_ITEM and Options.CURRENCY_MONEY_TYPE ~= nil then
+		local amount = OPX.Locale.Money(offer.count, Options.CURRENCY_MONEY_TYPE)
+		OPX.NotifyLocale(giver, 'inventory.notify.gaveMoney', { amount = amount }, 'success')
+		OPX.NotifyLocale(source, 'inventory.notify.receivedMoney', { amount = amount }, 'info')
+		return true, nil
+	end
+	OPX.NotifyLocale(giver, 'inventory.notify.gave', said, 'success')
+	OPX.NotifyLocale(source, 'inventory.notify.received', said, 'info')
+	return true, nil
+end
+
+--- Withdraws every offer past its deadline, telling both sides.
+-- @author dop42
+function Actions.SweepOffers()
+	local now = OPX.Now()
+	for _, offer in pairs(offers) do
+		if now > offer.expiresAt then
+			dropOffer(offer)
+			TriggerClientEvent(M.Event.GIVE_WITHDRAWN, offer.to, offer.token)
+			OPX.NotifyLocale(offer.from, 'inventory.notify.giveExpired',
+				{ count = offer.count, item = Catalog.Label(offer.name) }, 'info')
+		end
+	end
+end
+
+--- Withdraws whatever a departing player was giving or being given.
+local function forgetOffers(source)
+	for _, token in ipairs({ offerFrom[source], offerTo[source] }) do
+		local offer = offers[token]
+		if offer ~= nil then
+			dropOffer(offer)
+			if offer.from == source then
+				TriggerClientEvent(M.Event.GIVE_WITHDRAWN, offer.to, offer.token)
+			end
+		end
+	end
 end
 
 --- Drops a stack onto the nearest pile that will take it, or onto a new one.
@@ -263,10 +539,12 @@ function Actions.Drop(source, slot, count, yaw)
 	if pile and not Containers.CanCarry(pile, entry.name, count, entry.metadata) then pile = nil end
 	if not pile then
 		local citizenId = Players.Citizen(source)
-		if not citizenId or not World.MayCreateDrop(source, citizenId) then
-			OPX.NotifyLocale(source, 'inventory.error.drop_limit', nil, 'error')
-			return nil, 'drop_limit'
-		end
+		-- The door toasts the refusal (`requests.lua`); toasting it here too was
+		-- the same sentence twice. The cooldown is its own reason: it said "too
+		-- many piles" to a player who had made one a second ago.
+		local may, why = false, 'drop_limit'
+		if citizenId then may, why = World.MayCreateDrop(source, citizenId) end
+		if not may then return nil, why or 'drop_limit' end
 		pile = World.CreateDrop(source, citizenId, position, entry.name)
 	end
 
@@ -386,10 +664,16 @@ function Actions.OpenVehicle(source, kind, vehicleId)
 	return container, nil
 end
 
---- The players in reach, nearest first, by id and rounded distance only.
--- Never a name: the list is drawn beside a bag, and who is standing near somebody
--- is not this module's to tell.
+--- The players in reach, nearest first: id, rounded distance and which side of
+--- the giver they stand on. NEVER A NAME.
 -- @author dop42
+--
+-- THE OWNER'S DECISION, and it reverses a change that shipped for one release:
+-- in roleplay a character's name is something you learn by meeting them, and a
+-- give list that printed it told every stranger within arm's reach who they
+-- were. So the server does not put a name in this answer at all -- not hidden
+-- on the page, absent from the wire. What tells two people apart instead is
+-- where they stand ("To your left · 1.2 m"), with the short id beside it.
 -- @param source Source
 -- @return table[]
 function Actions.Nearby(source)
@@ -397,6 +681,7 @@ function Actions.Nearby(source)
 	if Options.NEARBY_MAX <= 0 then return out end
 	local here = World.Position(source)
 	if not here then return out end
+	local yaw = headingOf(source)
 
 	local players = Players.List()
 	for index = 1, #players do
@@ -406,7 +691,8 @@ function Actions.Nearby(source)
 			if there and there.bucket == here.bucket then
 				local gap = World.Distance(here, there)
 				if gap <= Options.REACH then
-					out[#out + 1] = { id = other, distance = math.floor(gap * 10 + 0.5) / 10 }
+					out[#out + 1] = { id = other, distance = math.floor(gap * 10 + 0.5) / 10,
+						side = sideOf(here, there, yaw) }
 				end
 			end
 		end
@@ -420,6 +706,8 @@ end
 -- @author dop42
 -- @param source Source
 function Actions.Forget(source)
+	forgetOffers(source)
 	lastUse[source] = nil
+	busyUntil[source] = nil
 	World.Forget(source)
 end

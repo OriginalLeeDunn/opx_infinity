@@ -26,10 +26,15 @@ local Command = M.Command
 M.Menu = {}
 local Menu = M.Menu
 
--- Most list rows one screen draws, leaving room for the navigation row under it.
-local MAX_LISTED = 190
-
--- Rows one page of a catalogue list draws.
+-- ROWS ONE PAGE OF A LIST DRAWS, and every list on this menu is paged.
+--
+-- The roster, a bag, the saved places, an account's characters and the ammo
+-- kinds used to draw up to 190 rows on one screen, and the menu contract checks
+-- every row of a spec it is handed -- its id, its text, the size of its data --
+-- inside the one resume that hands it over. That is several hundred
+-- instructions a row: a full roster or a full bag was tens of thousands in one
+-- resume, past the per-resume budget, and the redraw died with the old screen
+-- still up. Twenty rows is the catalogues' page, and now everyone's.
 local PAGE_ROWS = 20
 
 -- Milliseconds between two looks at whether the down screen should be aside.
@@ -159,7 +164,8 @@ local function guarded(id, labelKey, tokens, confirmKey, refresh, popAfter)
 	-- for a confirmation. A guarded row carrying `back = true` therefore popped on
 	-- press and never confirmed and never ran: the delete row did nothing at all,
 	-- silently, while looking exactly like a row that had been pressed.
-	item.data = { confirm = tokens, key = confirmKey, refresh = refresh, popAfter = popAfter }
+	item.data = { confirm = tokens, key = confirmKey, refresh = refresh, popAfter = popAfter,
+		label = item.label }
 	return item
 end
 
@@ -222,16 +228,46 @@ local SEARCH_FROM = 12
 -- `drawNow`, in the owner's log after the redraw moved off the callers), and
 -- the coroutine died with the menu half-drawn. So the walk yields every
 -- `BREATHE_EVERY` rows -- but only on the redraw's own thread, which `draw`
--- marks: a builder called anywhere else runs straight, and nothing else here
+-- names: a builder called anywhere else runs straight, and nothing else here
 -- may be paused halfway.
+--
+-- THE THREAD IS NAMED, NOT FLAGGED. This was one boolean, set while the redraw
+-- ran, and a second redraw thread -- the stale take-over in `draw`, after a
+-- build that outlived `DRAW_STALE_MS` at a low frame rate -- shared it: the
+-- first to finish cleared it and the other walked on without yielding, into
+-- the budget. Every thread `draw` started is remembered and yields here; only
+-- the newest one -- `drawThread` -- may hand its screen to the contract.
 local BREATHE_EVERY = 25
 local breaths = 0
-local onDrawThread = false
+local drawThread = nil
+-- A plain table, not a weak one: the client sandbox has no `setmetatable`. A
+-- thread removes itself when it ends; only one the budget killed stays, and
+-- that is one entry per kill.
+local drawThreads = {}
+
+-- Whether the code running now is one of the redraw's threads, where a yield is
+-- safe and wanted.
+local function onDrawThread()
+	return drawThreads[coroutine.running()] == true and type(Wait) == 'function'
+end
+
+-- Whether a build running now still owns the redraw: run inline (no thread at
+-- all), or on the newest drawing thread rather than one taken over since.
+local function ownsDraw()
+	return not onDrawThread() or coroutine.running() == drawThread
+end
+
+-- Declared here so a breath can say the redraw is still alive; `draw` owns it.
+local drawingSince = nil
 
 local function breathe()
 	breaths = breaths + 1
 	if breaths % BREATHE_EVERY ~= 0 then return end
-	if onDrawThread and type(Wait) == 'function' then Wait(0) end
+	if onDrawThread() then
+		-- A long walk is a live one, not a thread the budget killed.
+		drawingSince = Client.NowMs()
+		Wait(0)
+	end
 end
 
 -- Whether a row's words match the query. Case-insensitive, plain substring, and
@@ -360,21 +396,30 @@ local function flip(id, labelKey, name, on, enabled, offKey)
 	return item
 end
 
--- One page of a long list, with a row to the next.
+-- One page of a long list, with a row to the next. Only the rows on the page
+-- are built: `build` makes a whole menu row, and a list is filtered down to
+-- plain entries first so that a thousand matches cost a thousand comparisons
+-- and twenty rows, not a thousand rows.
+--
+-- THE PAGE IS THE STACK ENTRY'S, not the argument's. It used to be `arg.p`,
+-- which only a screen whose argument is a table can carry -- the roster, a bag
+-- and the saved places take a bare player id, which is why they were never
+-- paged and drew everything instead. The next-page row pushes the same screen
+-- with the same argument and the page beside it, so Back is a page back.
 local function paged(list, screen, arg, title, build)
+	local current = building()
 	local pages = math.max(1, math.ceil(#list / PAGE_ROWS))
-	local page = math.min(math.max(math.floor(tonumber(arg.p) or 1), 1), pages)
+	local page = math.min(math.max(math.floor(tonumber(current and current.page) or 1), 1), pages)
 	local first = (page - 1) * PAGE_ROWS + 1
 	local items = {}
 	for index = first, math.min(#list, first + PAGE_ROWS - 1) do
 		items[#items + 1] = build(list[index])
 	end
 	if page < pages then
-		local following = {}
-		for key, value in pairs(arg) do following[key] = value end
-		following.p = page + 1
-		items[#items + 1] = go('more', 'admin.menu.more', screen, following,
+		local more = go('more', 'admin.menu.more', screen, arg,
 			{ value = ('%d/%d'):format(page + 1, pages), icon = 'arrow' })
+		more.data.page = page + 1
+		items[#items + 1] = more
 	end
 	if pages > 1 then title = ('%s %d/%d'):format(title, page, pages) end
 	return title, items
@@ -579,9 +624,15 @@ SCREENS.players = function()
 	-- the haystack as well as its own filter: typing `down` finds the same rows
 	-- the state filter would, which is the answer to a search box that silently
 	-- ignores the word somebody typed into it.
+	--
+	-- The roster is read through a local: the walk yields on the redraw's
+	-- thread, and a ROSTER answer landing in that gap replaces the module's list
+	-- -- possibly with a shorter one, which an index into the upvalue would then
+	-- run off the end of.
+	local list = roster
 	local matched = {}
-	for index = 1, #roster do
-		local entry = roster[index]
+	for index = 1, #list do
+		local entry = list[index]
 		local word = locale('admin.state.' .. entry.state)
 		if (state == 'all' or entry.state == state)
 			and matches(query, entry.id, entry.name, entry.user, entry.citizenId, word) then
@@ -590,22 +641,22 @@ SCREENS.players = function()
 	end
 
 	local extras = {}
-	if #roster >= SEARCH_FROM or state ~= 'all' then extras[1] = stateRow(state) end
-	local items = searchRows(#matched, #roster, extras)
-
-	for index = 1, math.min(#matched, MAX_LISTED) do
-		local entry = matched[index]
+	if #list >= SEARCH_FROM or state ~= 'all' then extras[1] = stateRow(state) end
+	local title, listed = paged(matched, 'players', nil, locale('admin.menu.players'), function(entry)
 		local value = locale('admin.state.' .. entry.state)
-		if entry.bucket ~= 0 then value = value .. ' b' .. entry.bucket end
+		if entry.bucket ~= 0 then
+			value = value .. ' ' .. locale('admin.menu.bucket', { bucket = entry.bucket })
+		end
 		if entry.distance then value = value .. ' ' .. entry.distance .. 'm' end
-		items[#items + 1] = go('player_' .. entry.id,
+		return go('player_' .. entry.id,
 			{ text = ('[%d] %s'):format(entry.id, entry.name) }, 'player', entry.id,
 			{ value = value, icon = entry.state == 'down' and 'heal' or 'person' })
-	end
+	end)
+	local items = append(searchRows(#matched, #list, extras), listed)
 	if #matched == 0 then
-		items[#items + 1] = empty(#roster > 0 and 'admin.menu.noMatch' or 'admin.menu.nobody')
+		items[#items + 1] = empty(#list > 0 and 'admin.menu.noMatch' or 'admin.menu.nobody')
 	end
-	return locale('admin.menu.players'), items
+	return title, items
 end
 
 SCREENS.player = function(id)
@@ -754,33 +805,35 @@ SCREENS.playerCharacters = function(id)
 	if chars.target == tostring(id) then
 		for _, entry in ipairs(chars.rows) do
 			held = held + 1
-			local name = characterName(entry)
-			if matches(query, name, entry.citizenId, entry.job, entry.gang)
-				and #rows < MAX_LISTED then
-				local item = go('char_' .. entry.citizenId, { text = name }, 'character',
-					entry.citizenId, { icon = entry.live and 'star' or 'person' })
-				-- `live` is the one being played right now and `active` the one the
-				-- ACCOUNT is locked on. They are usually the same and are not while a
-				-- switch is in flight, so the value says which claim is being made.
-				item.value = entry.live and locale('admin.menu.charLive')
-					or (entry.active and locale('admin.menu.charActive'))
-					or entry.gender or nil
-				-- The citizen id is what every command here takes, so it is on the
-				-- row rather than a level in; the date is what tells two unnamed
-				-- characters apart.
-				item.description = entry.createdAt
-					and ('%s  %s'):format(entry.citizenId, entry.createdAt) or entry.citizenId
-				rows[#rows + 1] = item
+			if matches(query, characterName(entry), entry.citizenId, entry.job, entry.gang) then
+				rows[#rows + 1] = entry
 			end
 		end
 	end
-	local items = append(searchRows(#rows, held), rows)
+	local title, listed = paged(rows, 'playerCharacters', id, titleFor('admin.menu.charList', id),
+		function(entry)
+			local item = go('char_' .. entry.citizenId, { text = characterName(entry) }, 'character',
+				entry.citizenId, { icon = entry.live and 'star' or 'person' })
+			-- `live` is the one being played right now and `active` the one the
+			-- ACCOUNT is locked on. They are usually the same and are not while a
+			-- switch is in flight, so the value says which claim is being made.
+			item.value = entry.live and locale('admin.menu.charLive')
+				or (entry.active and locale('admin.menu.charActive'))
+				or entry.gender or nil
+			-- The citizen id is what every command here takes, so it is on the
+			-- row rather than a level in; the date is what tells two unnamed
+			-- characters apart.
+			item.description = entry.createdAt
+				and ('%s  %s'):format(entry.citizenId, entry.createdAt) or entry.citizenId
+			return item
+		end)
+	local items = append(searchRows(#rows, held), listed)
 	if #rows == 0 then
 		items[#items + 1] = query and empty('admin.menu.noMatch')
 			or placeholder(chars.target == tostring(id) and chars or { loaded = false },
 				'admin.menu.charNone')
 	end
-	return titleFor('admin.menu.charList', id), items
+	return title, items
 end
 
 SCREENS.character = function(citizenId)
@@ -1080,8 +1133,13 @@ SCREENS.vehicles = function()
 	local flags = {}
 	for _, flag in ipairs(M.Section('VEHICLES').FLAGS or {}) do
 		if type(flag) == 'string' and flag:match('^[%w_]+$') then
-			flags[#flags + 1] = icon(command('flag_' .. flag,
-				{ text = locale('admin.menu.flag', { flag = flag }) },
+			-- THE FLAG'S OWN WORDS, and its config name only for a flag nobody wrote
+			-- any for. This row read `Toggle engineOn`: a code name, and a verb that
+			-- says nothing about what pressing it does.
+			local worded = 'admin.menu.flag.' .. flag
+			local label = OPX.Locale.Exists(worded) and locale(worded)
+				or locale('admin.menu.flag', { flag = flag })
+			flags[#flags + 1] = icon(command('flag_' .. flag, { text = label },
 				{ Command.VEHICLE_FLAG, 'near', flag }), 'flag')
 		end
 	end
@@ -1129,8 +1187,7 @@ SCREENS.vehicleList = function(arg)
 		breathe()
 		if matches(query, entry.label, entry.name) then matching[#matching + 1] = entry end
 	end
-	local title, listed = paged(matching, 'vehicleList',
-		type(arg) == 'table' and arg or {}, found and found.label or '?', function(entry)
+	local title, listed = paged(matching, 'vehicleList', arg, found and found.label or '?', function(entry)
 			local tokens = target == 'me' and { Command.VEHICLE_SPAWN, entry.name }
 				or { Command.VEHICLE_GIVE, tostring(target), entry.name }
 			local item = icon(command('entry_' .. entry.name, { text = entry.label }, tokens),
@@ -1175,8 +1232,7 @@ SCREENS.pedList = function(arg)
 		breathe()
 		if matches(query, entry.label, entry.name) then matching[#matching + 1] = entry end
 	end
-	local title, listed = paged(matching, 'pedList',
-		type(arg) == 'table' and arg or {}, found and found.label or '?', function(entry)
+	local title, listed = paged(matching, 'pedList', arg, found and found.label or '?', function(entry)
 			local item = icon(command('ped_' .. entry.name, { text = entry.label },
 				modelTokens(target, entry.name)), 'person')
 			item.description = entry.name
@@ -1200,8 +1256,7 @@ SCREENS.weaponList = function(arg)
 			if matches(query, entry.label, entry.name) then matching[#matching + 1] = entry end
 		end
 	end
-	local title, listed = paged(matching, 'weaponList', type(arg) == 'table' and arg or {},
-		locale('admin.menu.weapons'), function(entry)
+	local title, listed = paged(matching, 'weaponList', arg, locale('admin.menu.weapons'), function(entry)
 			local item = offline(icon(command('entry_' .. entry.name, { text = entry.label },
 				{ Command.WEAPON_GIVE, target, entry.name }), 'weapon'))
 			item.description = entry.name
@@ -1222,25 +1277,31 @@ SCREENS.ammoList = function(target)
 		breathe()
 		if entry.ammo then
 			kinds = kinds + 1
-			if matches(query, entry.label, entry.name) and #rows < MAX_LISTED then
-				local item = form('ammo_' .. entry.name, 'admin.menu.giveAmmo', 'ammoGive',
-					{ t = tostring(target), n = entry.name, l = entry.label },
-					Command.WEAPON_GIVEAMMO)
-				item.label = entry.label
-				item.description = entry.name
-				rows[#rows + 1] = offline(icon(item, 'ammo'))
-			end
+			if matches(query, entry.label, entry.name) then rows[#rows + 1] = entry end
 		end
 	end
-	local items = append(searchRows(#rows, kinds), rows)
+	local title, listed = paged(rows, 'ammoList', target, titleFor('admin.menu.giveAmmo', target),
+		function(entry)
+			local item = form('ammo_' .. entry.name, 'admin.menu.giveAmmo', 'ammoGive',
+				{ t = tostring(target), n = entry.name, l = entry.label },
+				Command.WEAPON_GIVEAMMO)
+			item.label = entry.label
+			item.description = entry.name
+			return offline(icon(item, 'ammo'))
+		end)
+	local items = append(searchRows(#rows, kinds), listed)
 	if #rows == 0 then
 		items[#items + 1] = query and empty('admin.menu.noMatch')
 			or placeholder(catalog, 'admin.menu.catalogEmpty')
 	end
-	return titleFor('admin.menu.giveAmmo', target), items
+	return title, items
 end
 
+-- Both catalogue screens take a table argument, and `Menu.OpenAt` -- public, the
+-- `admin.OpenAt` export -- passes whatever it was given: a nil there indexed
+-- `arg.t` and raised inside the redraw.
 SCREENS.itemCategories = function(arg)
+	arg = type(arg) == 'table' and arg or {}
 	local query = filtering()
 	local counts, names = {}, {}
 	for _, entry in ipairs(catalog.rows) do
@@ -1254,8 +1315,13 @@ SCREENS.itemCategories = function(arg)
 		if matches(query, name) then matching[#matching + 1] = name end
 	end
 	local items = searchRows(#matching, #names)
-	for _, name in ipairs(matching) do
-		items[#items + 1] = go('cat_' .. name, { text = name }, 'itemList',
+	-- THE ROW ID IS THE CATEGORY'S PLACE, NOT ITS NAME. The server sends the
+	-- name as the item catalogue spells it, trimmed and nothing else, and a
+	-- name with a space in it -- `body armor` -- is not an id the menu contract
+	-- accepts: one such category refused the whole screen. The name is in the
+	-- row's text and its argument, which is all that reads it.
+	for index, name in ipairs(matching) do
+		items[#items + 1] = go('cat_' .. index, { text = name }, 'itemList',
 			{ t = arg.t, m = arg.m, c = name }, { value = tostring(counts[name]), icon = 'folder' })
 	end
 	if #matching == 0 then
@@ -1267,6 +1333,7 @@ SCREENS.itemCategories = function(arg)
 end
 
 SCREENS.itemList = function(arg)
+	arg = type(arg) == 'table' and arg or {}
 	local query = filtering()
 	local all, matching = {}, {}
 	for _, entry in ipairs(catalog.rows) do
@@ -1276,7 +1343,7 @@ SCREENS.itemList = function(arg)
 			if matches(query, entry.label, entry.name) then matching[#matching + 1] = entry end
 		end
 	end
-	local title, listed = paged(matching, 'itemList', arg, arg.c, function(entry)
+	local title, listed = paged(matching, 'itemList', arg, tostring(arg.c or '?'), function(entry)
 		local item
 		if arg.m == 'holders' then
 			item = command('item_' .. entry.name, { text = entry.label },
@@ -1303,45 +1370,52 @@ SCREENS.bag = function(target)
 	if bag.target == tostring(target) then
 		for _, entry in ipairs(bag.rows) do
 			held = held + 1
-			if matches(query, entry.label, entry.name, entry.slot) and #rows < MAX_LISTED then
-				local item = form(('slot_%d'):format(entry.slot), 'admin.menu.invRemove',
-					'itemRemove',
-					{ t = tostring(target), n = entry.name, l = entry.label, c = entry.count },
-					Command.INVENTORY_REMOVE)
-				item.label = ('%d  %s'):format(entry.slot, entry.label)
-				if not item.disabled then item.value = 'x' .. tostring(entry.count) end
-				item.description = entry.name
-				rows[#rows + 1] = icon(item, 'box')
-			end
+			if matches(query, entry.label, entry.name, entry.slot) then rows[#rows + 1] = entry end
 		end
 	end
-	local items = append(searchRows(#rows, held), rows)
+	local title, listed = paged(rows, 'bag', target, titleFor('admin.menu.invRemove', target),
+		function(entry)
+			local item = form(('slot_%d'):format(entry.slot), 'admin.menu.invRemove',
+				'itemRemove',
+				{ t = tostring(target), n = entry.name, l = entry.label, c = entry.count },
+				Command.INVENTORY_REMOVE)
+			item.label = ('%d  %s'):format(entry.slot, entry.label)
+			if not item.disabled then item.value = 'x' .. tostring(entry.count) end
+			item.description = entry.name
+			return icon(item, 'box')
+		end)
+	local items = append(searchRows(#rows, held), listed)
 	if #rows == 0 then
 		items[#items + 1] = query and empty('admin.menu.noMatch')
 			or placeholder(bag.target == tostring(target) and bag or { loaded = false },
 				'admin.menu.bagEmpty')
 	end
-	return titleFor('admin.menu.invRemove', target), items
+	return title, items
 end
 
 SCREENS.locations = function(target)
 	local query = filtering()
+	-- Through a local, for the reason the roster gives: a LOCATIONS answer can
+	-- replace the list while this walk is yielded.
+	local list = locations
 	local rows = {}
-	for index = 1, #locations do
-		local entry = locations[index]
-		if matches(query, entry.label, entry.name) and #rows < MAX_LISTED then
-			local item = icon(command('loc_' .. entry.name, { text = entry.label },
-				{ Command.PLAYER_SEND, tostring(target), entry.name }), 'location')
-			if not item.disabled and entry.runtime then item.value = locale('admin.menu.runtime') end
-			rows[#rows + 1] = item
-		end
-	end
-	local items = append(searchRows(#rows, #locations), rows)
-	if #rows == 0 then
-		items[#items + 1] = empty(query and 'admin.menu.noMatch' or 'admin.menu.noLocations')
+	for index = 1, #list do
+		local entry = list[index]
+		if matches(query, entry.label, entry.name) then rows[#rows + 1] = entry end
 	end
 	local title = target == 'me' and locale('admin.menu.teleport')
 		or ('%s: %s'):format(locale('admin.menu.send'), nameOf(target))
+	local listed
+	title, listed = paged(rows, 'locations', target, title, function(entry)
+		local item = icon(command('loc_' .. entry.name, { text = entry.label },
+			{ Command.PLAYER_SEND, tostring(target), entry.name }), 'location')
+		if not item.disabled and entry.runtime then item.value = locale('admin.menu.runtime') end
+		return item
+	end)
+	local items = append(searchRows(#rows, #list), listed)
+	if #rows == 0 then
+		items[#items + 1] = empty(query and 'admin.menu.noMatch' or 'admin.menu.noLocations')
+	end
 	return title, items
 end
 
@@ -1351,18 +1425,22 @@ SCREENS.saved = function()
 	for _, entry in ipairs(locations) do
 		if entry.runtime then
 			runtime = runtime + 1
-			if matches(query, entry.label, entry.name) and #rows < MAX_LISTED then
-				rows[#rows + 1] = icon(command('forget_' .. entry.name,
-					{ text = locale('admin.menu.forget', { label = entry.label }) },
-					{ Command.WORLD_LOC_REMOVE, entry.name }, 'locations'), 'trash')
-			end
+			if matches(query, entry.label, entry.name) then rows[#rows + 1] = entry end
 		end
 	end
-	local items = append(searchRows(#rows, runtime), rows)
+	-- CONFIRMED, like every other row that destroys something. A spot saved in
+	-- game exists nowhere else, and this list is twenty identical trash rows an
+	-- arrow key apart: one press used to forget it on the spot.
+	local title, listed = paged(rows, 'saved', nil, locale('admin.menu.saved'), function(entry)
+		return icon(guarded('forget_' .. entry.name,
+			{ text = locale('admin.menu.forget', { label = entry.label }) },
+			{ Command.WORLD_LOC_REMOVE, entry.name }, 'admin.confirm.forget', 'locations'), 'trash')
+	end)
+	local items = append(searchRows(#rows, runtime), listed)
 	if #rows == 0 then
 		items[#items + 1] = empty(query and 'admin.menu.noMatch' or 'admin.menu.noSaved')
 	end
-	return locale('admin.menu.saved'), items
+	return title, items
 end
 
 SCREENS.world = function()
@@ -1437,6 +1515,7 @@ end
 -- this menu under Self -> Position and on the eye's own row. It copies the
 -- position AND the facing the operator is standing at straight to the operating
 -- system clipboard, ready to paste into whichever `config/` file wants it. That
+-- command is the whole of the capture path and the config headers name it.
 
 -- ── the Dev screen ───────────────────────────────────────────────────────────
 --
@@ -1484,7 +1563,7 @@ SCREENS.dev = function()
 
 	return locale('admin.menu.dev'), items
 end
--- command is the whole of the capture path and the config headers name it.
+
 SCREENS.weather = function()
 	local link = links()
 	local items = {}
@@ -1492,7 +1571,11 @@ SCREENS.weather = function()
 		local presets = M.Settings.WEATHER_PRESETS
 		for _, preset in ipairs(type(presets) == 'table' and presets or {}) do
 			if type(preset) == 'string' and preset:match('^[%w_%-]+$') then
-				items[#items + 1] = icon(command('preset_' .. preset, { text = preset },
+				-- The preset's own words where the catalogue has them -- the eye's
+				-- weather rows already drew them -- and the config name otherwise.
+				local worded = 'admin.weather.' .. preset
+				local label = OPX.Locale.Exists(worded) and locale(worded) or preset
+				items[#items + 1] = icon(command('preset_' .. preset, { text = label },
 					{ link.WEATHER_SET, preset }), 'weather')
 			end
 		end
@@ -1567,7 +1650,12 @@ SCREENS.confirm = function(arg)
 	-- Cancel first, so the cursor starts on the harmless row.
 	return locale(arg.key), {
 		row('cancel', locale('admin.menu.cancel'), { back = true }, { icon = 'back' }),
-		row('confirm', locale('admin.menu.confirm'), { confirmed = true },
+		-- THE CONFIRM ROW SAYS THE ACTION. It read `Confirm` under a question,
+		-- which is one more thing to read before knowing what Enter does; the
+		-- row that asked for the confirmation carries its own words here, and
+		-- `Confirm` is only for a caller that names none.
+		row('confirm', type(arg.label) == 'string' and arg.label or locale('admin.menu.confirm'),
+			{ confirmed = true },
 			{ description = table.concat(arg.tokens, ' '), icon = 'warning' }),
 	}
 end
@@ -1637,6 +1725,25 @@ local function drawNow(inPlace)
 		end
 	end
 
+	-- THE CONTRACT GETS A RESUME OF ITS OWN. The menu module checks every row of
+	-- the spec -- id, text, the size of its data -- before it sends, and that is
+	-- several hundred instructions a row: on top of the builder's last stretch it
+	-- was the dearest single resume this menu made. So the redraw's thread
+	-- yields once between building and handing over.
+	--
+	-- AND THE SCREEN IS CHECKED AGAIN AFTER EVERY YIELD. A builder that breathes
+	-- hands the frame to everything else: F9 can close the menu, a form can put
+	-- it aside, the operator can step into another screen. A build that carried
+	-- on regardless reopened a menu over an empty stack -- every press on it
+	-- ignored -- or put a screen back up behind a form. What was built for a
+	-- screen that is no longer on top is dropped; whoever moved it has asked
+	-- for its own redraw.
+	if suspended or top() ~= current or not ownsDraw() then return end
+	if onDrawThread() then
+		Wait(0)
+		if suspended or top() ~= current or not ownsDraw() then return end
+	end
+
 	drawn = drawn + 1
 	local mine = drawn
 	local status = queuedStatus
@@ -1664,6 +1771,11 @@ local function drawNow(inPlace)
 	-- screen they were standing in.
 	local landing
 	if not inPlace then landing = current.cursor or firstBelowHead(items) end
+	-- ON THE DRAW THREAD THE CONTRACT CHECKS THE ROWS IN STEPS (`yield`), a few
+	-- rows a frame: the check was the dearest part of a redraw left in one
+	-- resume. A frame can then pass inside the call, so the screen is checked
+	-- again after it, exactly as after the builder's own breaths.
+	local paced = onDrawThread()
 	if handle ~= nil and not suspended then
 		local patched = contract.Update(handle, {
 			title = title,
@@ -1671,12 +1783,14 @@ local function drawNow(inPlace)
 			cursor = landing,
 			status = status and status.text or nil,
 			statusBad = status and status.ok == false or nil,
+			yield = paced or nil,
 		})
 		if patched.ok then return end
 		-- The live menu is no longer ours to patch (it was closed under us, or
 		-- another owner has the surface). Refuse rather than guess, and open a
-		-- fresh one below.
+		-- fresh one below -- unless the screen itself went while the call ran.
 		handle = nil
+		if suspended or top() ~= current or not ownsDraw() then return end
 	end
 
 	local opened = contract.Open({
@@ -1693,7 +1807,14 @@ local function drawNow(inPlace)
 		maxHeight = MAX_HEIGHT_VH,
 		items = items,
 		on = onAction,
+		yield = paced or nil,
 	})
+	-- Closed, put aside or replaced while the rows were being checked: the menu
+	-- that just opened belongs to a screen that is gone.
+	if opened.ok and (suspended or top() ~= current or not ownsDraw()) then
+		contract.Close(opened.value.handle, 'superseded')
+		return
+	end
 	if mine ~= drawn then return end
 	if not opened.ok then
 		handle = nil
@@ -1721,11 +1842,11 @@ end
 -- one frame -- a status line, a refresh, a filter -- become one redraw. It is
 -- in place only if every ask was.
 local drawQueued, drawQueuedInPlace = false, true
--- When the drawing thread started, nil while none runs. A thread the budget
--- killer unwound never clears it, so one older than `DRAW_STALE_MS` is
+-- `drawingSince` (declared by `breathe`, which refreshes it) is when the
+-- drawing thread last showed signs of life, nil while none runs. A thread the
+-- budget killer unwound never clears it, so one older than `DRAW_STALE_MS` is
 -- presumed dead and a new one takes over rather than the menu never drawing
--- again.
-local drawingSince = nil
+-- again -- on the next ask, or on the upkeep pass if no ask comes.
 local DRAW_STALE_MS = 2000
 
 local function draw(inPlace)
@@ -1739,20 +1860,46 @@ local function draw(inPlace)
 	-- between rows now, and two of them interleaved would share `onDrawThread`
 	-- and race each other to the contract.
 	CreateThread(function()
-		while drawQueued do
+		local me = coroutine.running()
+		drawThread = me
+		drawThreads[me] = true
+		local again = false
+		while drawQueued and drawThread == me do
+			-- A redraw asked for while the last was building starts on a fresh
+			-- resume: run straight on, it shared one with the contract call that
+			-- had just finished, and that pair was this thread's dearest resume.
+			if again then
+				Wait(0)
+				if not (drawQueued and drawThread == me) then break end
+			end
+			again = true
 			local place = drawQueuedInPlace
 			drawQueued, drawQueuedInPlace = false, true
 			drawingSince = Client.NowMs()
-			onDrawThread = true
 			local ran, failure = pcall(drawNow, place)
-			onDrawThread = false
+			-- LOGGED, AND THE LOOP GOES ON. This used to re-raise, which ended the
+			-- thread -- and with it any redraw asked for while the failed one was
+			-- building, which had only set `drawQueued` and was never drawn.
 			if not ran then
-				drawingSince = nil
-				error(failure, 0)
+				Open77.log.error(('[admin] menu redraw raised: %s'):format(tostring(failure)))
 			end
 		end
-		drawingSince = nil
+		drawThreads[me] = nil
+		-- A thread that was taken over leaves the take-over's state alone.
+		if drawThread == me then
+			drawThread = nil
+			drawingSince = nil
+		end
 	end)
+end
+
+-- The upkeep pass's half of the stale take-over: a redraw asked for while a
+-- dead thread still held `drawingSince` is drawn once that thread is presumed
+-- dead, instead of waiting for some later ask to notice.
+local function rescueDraw()
+	if drawQueued and drawingSince ~= nil and Client.NowMs() - drawingSince >= DRAW_STALE_MS then
+		draw(drawQueuedInPlace)
+	end
 end
 
 -- THE SERVER'S REFRESH FLOOR, mirrored. `ADMIN_RATE_REFRESH_MS` is 750 out of
@@ -1811,16 +1958,19 @@ local function askFor(topic, arg)
 	return true
 end
 
--- Pushes a screen, asks for its data again, and draws it.
-local function push(screen, arg)
+-- Pushes a screen, asks for its data again, and draws it. `page` is set only by
+-- a list's next-page row.
+local function push(screen, arg, page)
 	-- A FILTER SURVIVES A PAGE TURN. `more` pushes the SAME screen with `p + 1`,
 	-- which is a new stack entry -- and a new entry carries no filter, so page two
 	-- of a search came back unfiltered and showed the twenty rows the operator had
 	-- just filtered away. Only the same screen inherits: pushing from a list into
 	-- one of its rows is a different question and starts clean.
+	-- The roster's state filter is carried the same way, for the same reason.
 	local current = stack[#stack]
-	local carried = current and current.screen == screen and current.filter or nil
-	stack[#stack + 1] = { screen = screen, arg = arg, filter = carried }
+	local same = current ~= nil and current.screen == screen
+	stack[#stack + 1] = { screen = screen, arg = arg, filter = same and current.filter or nil,
+		state = same and current.state or nil, page = math.tointeger(page) }
 	-- Leaving the root is the moment to re-check what the ACL still grants.
 	if #stack == 2 then askFor('access') end
 	-- BEFORE the `^player` prefix test below, which this name also matches: that
@@ -2096,7 +2246,7 @@ function Menu.Filter(query)
 
 	current.filter = (typed ~= nil and typed ~= '') and typed or nil
 	current.cursor = nil
-	if type(current.arg) == 'table' then current.arg.p = 1 end
+	current.page = nil
 	draw()
 end
 
@@ -2104,12 +2254,16 @@ end
 -- @author dop42
 -- @param tokens table
 -- @param key string
-function Menu.Confirm(tokens, key, refresh, popAfter)
+-- @param refresh string|nil
+-- @param popAfter boolean|nil
+-- @param label string|nil what the confirm row says; `Confirm` when nil
+function Menu.Confirm(tokens, key, refresh, popAfter, label)
 	suspended = false
 	if #stack == 0 then return end
 	top().cursor = nil
 	stack[#stack + 1] = { screen = 'confirm',
-		arg = { tokens = tokens, key = key, refresh = refresh, back = popAfter == true } }
+		arg = { tokens = tokens, key = key, refresh = refresh, back = popAfter == true,
+			label = label } }
 	draw()
 end
 
@@ -2245,6 +2399,7 @@ onAction = function(payload)
 			if state == nil then return end
 			current.cursor = payload.itemId
 			current.state = state ~= 'all' and state or nil
+			current.page = nil
 			return draw()
 		end
 		-- A CLIENT FLIP is answered here and the list is redrawn AT ONCE, rather
@@ -2337,14 +2492,14 @@ onAction = function(payload)
 			copied and 'success' or 'error')
 		return
 	end
-	if type(data.go) == 'string' and SCREENS[data.go] then return push(data.go, data.arg) end
+	if type(data.go) == 'string' and SCREENS[data.go] then return push(data.go, data.arg, data.page) end
 	if type(data.run) == 'table' then
 		Menu.Run(data.run, data.refresh)
 		if data.closeAfter then Menu.Close() end
 		return
 	end
 	if type(data.confirm) == 'table' and type(data.key) == 'string' then
-		return Menu.Confirm(data.confirm, data.key, data.refresh, data.popAfter)
+		return Menu.Confirm(data.confirm, data.key, data.refresh, data.popAfter, data.label)
 	end
 	if type(data.form) == 'string' then return Forms.Open(data.form, data.arg) end
 end
@@ -2590,7 +2745,10 @@ function Menu.Start()
 
 	-- A poll, because a screen closes down several paths and none of them is an
 	-- event this module could listen to.
-	job = OPX.Scheduler.Every('admin.menu.upkeep', UPKEEP_MS, syncSuspend)
+	job = OPX.Scheduler.Every('admin.menu.upkeep', UPKEEP_MS, function()
+		syncSuspend()
+		rescueDraw()
+	end)
 
 	local downed = Client.Contract('downed')
 	if downed ~= nil then

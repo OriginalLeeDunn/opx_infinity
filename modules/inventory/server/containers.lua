@@ -45,8 +45,20 @@ local function identityOf(kind, owner)
 	return kind .. '\0' .. owner
 end
 
+--- Units of each item a container holds, by name.
+local function tallyOf(container)
+	local counts = {}
+	for _, entry in pairs(container.items or {}) do
+		counts[entry.name] = (counts[entry.name] or 0) + (entry.count or 0)
+	end
+	return counts
+end
+
 --- Records a container as loaded under its id and its identity.
+-- A bag is tallied as it arrives, so the first change to it can be announced as
+-- what moved rather than as everything it holds.
 local function register(container)
+	if container.kind == KIND.CHARACTER then container.tally = tallyOf(container) end
 	loaded[container.id] = container
 	byIdentity[identityOf(container.kind, container.owner)] = container.id
 	return container
@@ -89,8 +101,17 @@ function Containers.Load(kind, owner, slots, maxWeight)
 		if OPX.Now() >= deadline then return nil, 'load_timeout' end
 		Wait(50)
 		if pending.done then
-			if pending.container then return pending.container, nil end
-			return nil, pending.error or 'load_timeout'
+			local shared = pending.container
+			if shared == nil then return nil, pending.error or 'load_timeout' end
+			-- STILL REGISTERED, OR IT IS NOT THE CONTAINER ANY MORE. This caller
+			-- polls every 50 ms, and in that time the loader can finish, change
+			-- it, settle a borrowed bag and `Discard` it -- one write is a single
+			-- trip. Handing back the discarded table gave the waiter a container
+			-- nothing would ever write again: its change was marked dirty against
+			-- an id the sweep no longer knew, and dropped. A staff give to an
+			-- offline bag racing a contract call was the way in. The loop goes
+			-- round instead, and the next read finds it or loads it afresh.
+			if loaded[shared.id] == shared then return shared, nil end
 		end
 	end
 	id = byIdentity[identity]
@@ -159,6 +180,51 @@ end
 function Containers.All()
 	return loaded
 end
+
+-- ── slots held by a use in progress ──────────────────────────────────────────
+--
+-- A USE HANDLER YIELDS, and the units it is about to consume sat in a slot the
+-- player could still drag, split, swap, hand over or drop while it ran -- or
+-- use a second time. The handler applied its effect, the consume afterwards
+-- found the stack gone, and the effect was free. While a slot is held, nothing
+-- may MOVE its stack (`Move`, `Split`, `Sort`) and `Remove`, which takes by name
+-- from wherever it finds the item, never takes from a held slot. `TakeFromSlot`
+-- is still allowed: it names the slot itself, and a handler consuming its own
+-- stack (the currency deposit) is the one caller that has to.
+
+--- Holds one slot of a container for a use in progress. False when it is held.
+-- @author dop42
+-- @param container table
+-- @param slot integer
+-- @return boolean
+function Containers.Hold(container, slot)
+	container.held = container.held or {}
+	if container.held[slot] then return false end
+	container.held[slot] = true
+	return true
+end
+
+--- Releases a slot held by `Hold`.
+-- @author dop42
+-- @param container table
+-- @param slot integer
+function Containers.Release(container, slot)
+	if container.held == nil then return end
+	container.held[slot] = nil
+	if next(container.held) == nil then container.held = nil end
+end
+
+--- Whether a slot of a container is held by a use in progress.
+-- @author dop42
+-- @param container table|nil
+-- @param slot any
+-- @return boolean
+function Containers.IsHeld(container, slot)
+	return container ~= nil and container.held ~= nil and slot ~= nil and
+		container.held[slot] == true
+end
+
+local isHeld = Containers.IsHeld
 
 --- The grams a container holds.
 -- @author dop42
@@ -440,11 +506,35 @@ local function announce(container)
 		return
 	end
 	local isBag = container.kind == KIND.CHARACTER
-	OPX.Publish(M.Event.ON_CHANGED, isBag and M.Players.SourceOf(container.owner) or nil, {
+	local source = isBag and M.Players.SourceOf(container.owner) or nil
+	OPX.Publish(M.Event.ON_CHANGED, source, {
 		kind = container.kind,
 		owner = container.owner,
 		container = container.id,
 		citizenId = isBag and container.owner or nil,
+	})
+	if not isBag then return end
+
+	-- WHAT A BAG GAINED AND LOST, BY ITEM NAME, which is what a creator listening
+	-- for "the player now has a lockpick" needs and `ON_CHANGED` never says. The
+	-- bag is tallied against the tally of its last change, so a drag inside it is
+	-- nothing and a give, a pickup, a craft, a use or an export call is one entry
+	-- per item that moved. A walk over the bag's slots, on the server, per commit.
+	local before, after = container.tally or {}, tallyOf(container)
+	container.tally = after
+	local changes = {}
+	for name, count in pairs(after) do
+		local delta = count - (before[name] or 0)
+		if delta ~= 0 then changes[#changes + 1] = { name = name, delta = delta, count = count } end
+	end
+	for name, count in pairs(before) do
+		if after[name] == nil then changes[#changes + 1] = { name = name, delta = -count, count = 0 } end
+	end
+	if #changes == 0 then return end
+	table.sort(changes, function(a, b) return a.name < b.name end)
+	OPX.Publish(M.Event.ON_ITEMS, source, {
+		citizenId = container.owner,
+		changes = changes,
 	})
 end
 
@@ -560,7 +650,15 @@ function Containers.Remove(container, name, count, metadata)
 	if not container then return false, 'not_found' end
 	count = Common.Integer(count, 1, Options.MAX_STACK)
 	if not count then return false, 'bad_count' end
-	if Containers.CountIn(container, name, metadata) < count then return false, 'not_enough' end
+	-- Only units that are not held by a use in progress can be taken by name.
+	local available = 0
+	for slot, entry in pairs(container.items) do
+		if not isHeld(container, slot) and entry.name == name and
+			(metadata == nil or Common.SameMetadata(entry.metadata, metadata)) then
+			available = available + entry.count
+		end
+	end
+	if available < count then return false, 'not_enough' end
 
 	local remaining = count
 	-- A stack may sit beyond the current slot count -- a container that was
@@ -573,7 +671,7 @@ function Containers.Remove(container, name, count, metadata)
 	for slot = last, 1, -1 do
 		if remaining <= 0 then break end
 		local current = container.items[slot]
-		if current and current.name == name and
+		if current and not isHeld(container, slot) and current.name == name and
 			(metadata == nil or Common.SameMetadata(current.metadata, metadata)) then
 			local taken = math.min(current.count, remaining)
 			current.count = current.count - taken
@@ -656,6 +754,18 @@ function Containers.Move(from, fromSlot, to, toSlot, count)
 	if not from or not to then return false, 'not_found' end
 	local source = from.items[fromSlot]
 	if not source then return false, 'empty_slot' end
+	-- A stack a use is consuming stays where it is, and nothing is swapped or
+	-- stacked into its place (see `Hold`).
+	if isHeld(from, fromSlot) then return false, 'in_use' end
+	if toSlot ~= nil and isHeld(to, Common.Integer(toSlot, 1, to.slots)) then
+		return false, 'in_use'
+	end
+	-- A drawn weapon leaves the bag only once its rounds have been read back
+	-- (see `Weapons.BeforeLeave`).
+	if to.id ~= from.id then
+		local refusal = M.Weapons.BeforeLeave(from, source)
+		if refusal then return false, refusal end
+	end
 
 	-- WHAT MAY NOT BE LEFT ON THE FLOOR MAY NOT BE LEFT ANYWHERE THAT IS NEVER
 	-- WRITTEN, and until this line the rule only covered the floor. `DROP = false`
@@ -759,6 +869,7 @@ function Containers.Split(container, slot, count)
 	if not container then return false, 'not_found' end
 	local source = container.items[slot]
 	if not source then return false, 'empty_slot' end
+	if isHeld(container, slot) then return false, 'in_use' end
 	-- At most one less than the stack: splitting all of it is a move, and would
 	-- otherwise leave an empty stack behind.
 	count = Common.Integer(count, 1, source.count - 1)
@@ -784,6 +895,8 @@ end
 function Containers.Sort(container, mode)
 	if not container then return false, 'not_found' end
 	if mode ~= 'weight' and mode ~= 'name' then return false, 'bad_request' end
+	-- Sorting moves every stack, a held one with the rest.
+	if container.held ~= nil then return false, 'in_use' end
 	local entries = {}
 	for slot, entry in pairs(container.items) do
 		entries[#entries + 1] = {
@@ -903,8 +1016,9 @@ end
 -- A stash the creator exports reach is LOADED, NEVER OPENED (see
 -- `main.lua`, `withStash`), so nothing else would ever unload it, and a caller
 -- walking a thousand names would hold a thousand containers for the life of the
--- resource. One marked `external` and untouched for `idleMs` is written and
--- unloaded, unless somebody has it open; it loads again on the next call.
+-- resource. A stash a player opened (`World.Stash`) is marked the same way. One
+-- marked `external` and untouched for `idleMs` is written and unloaded, unless
+-- somebody has it open; it loads again on the next call.
 -- Yields: an unload writes first.
 -- @param idleMs integer
 -- @return integer how many were unloaded
@@ -914,6 +1028,8 @@ function Containers.SweepExternal(idleMs)
 	for _, view in pairs(viewing) do open[view.id] = true end
 	local due = {}
 	for id, container in pairs(loaded) do
+		-- An open one is in use, and its idle time starts again when it closes.
+		if container.external and open[id] then container.externalAt = now end
 		if container.external and not open[id]
 			and now - (container.externalAt or 0) >= idleMs then
 			due[#due + 1] = id

@@ -68,13 +68,13 @@ end
 
 -- Every string a view draws, read from the active catalogue when it reports ready.
 local TEXT_KEYS = {
-	'appearance.panel.title', 'appearance.panel.looks', 'appearance.panel.body',
-	'appearance.panel.outfits', 'appearance.panel.soon', 'appearance.panel.bodyType',
+	'appearance.panel.title', 'appearance.panel.looks', 'appearance.panel.openRoom',
+	'appearance.panel.bodyType',
 	'appearance.panel.savedLook', 'appearance.panel.worn', 'appearance.panel.stored',
 	'appearance.panel.none', 'appearance.panel.otherBuild', 'appearance.panel.noLook',
 	'appearance.panel.oneLook', 'appearance.panel.wear', 'appearance.panel.editFace',
 	'appearance.panel.editHair', 'appearance.panel.editNote', 'appearance.panel.bodyNote',
-	'appearance.panel.outfitsNote', 'appearance.panel.wearing', 'appearance.panel.wornNow',
+	'appearance.panel.wearing', 'appearance.panel.wornNow',
 	'appearance.panel.alreadyWorn', 'appearance.panel.busy',
 	'wardrobe.title', 'wardrobe.ui.heading', 'wardrobe.ui.eyebrow',
 	'wardrobe.ui.eyebrowCreation', 'wardrobe.ui.intro', 'wardrobe.ui.introCreation',
@@ -171,19 +171,15 @@ local function panelSpec()
 		items = {
 			{ id = 'looks', label = locale('appearance.panel.looks'), value = storedText(),
 				items = looksItems() },
-			{ id = 'body', label = locale('appearance.panel.body'), value = familyText(),
-				items = {
-					-- Stated and not offered: the body family belongs to the character.
-					{ separator = true, label = locale('appearance.panel.bodyNote') },
-					{ id = 'family', label = locale('appearance.panel.bodyType'), value = familyText(),
-						disabled = true },
-				} },
-			{ id = 'outfits', label = locale('appearance.panel.outfits'),
-				items = {
-					{ id = 'wardrobe', label = locale('appearance.panel.outfitsNote'),
-						value = roomBusy and locale('appearance.panel.busy') or nil,
-						disabled = roomBusy },
-				} },
+			-- ONE ROW EACH, NOT A LEVEL EACH. `Body` opened a level holding one
+			-- disabled row, and `Outfits` a level holding one row whose label was a
+			-- sentence: two presses to read a fact and two to open a room.
+			-- Stated and not offered: the body family belongs to the character.
+			{ id = 'family', label = locale('appearance.panel.bodyType'), value = familyText(),
+				description = locale('appearance.panel.bodyNote'), disabled = true },
+			{ id = 'wardrobe', label = locale('appearance.panel.openRoom'),
+				value = roomBusy and locale('appearance.panel.busy') or nil,
+				disabled = roomBusy },
 		},
 	}
 end
@@ -363,6 +359,16 @@ local TURN_DEGREES = 45
 -- Shipped WARDROBE.CREATION_WAIT_MS, for a configuration that lost it.
 local CREATION_WAIT_MS = 60000
 
+--- Whether the join's name form is up, read off the entry contract.
+-- Without the contract nobody is being asked for a name.
+local function joinIsNaming()
+	local entry = OPX.Api.Get('entry')
+	if entry == nil or type(entry.State) ~= 'function' then return false end
+	local read, answer = pcall(entry.State)
+	return read and type(answer) == 'table' and answer.ok == true
+		and type(answer.value) == 'table' and answer.value.naming == true
+end
+
 -- Refusals that mean 'not yet' while a created character settles.
 local RETRYABLE = {
 	clothing_not_ready = true,
@@ -469,6 +475,17 @@ local detached = false
 -- a strip and `shops` fills it: this half knows only that somebody has rows and
 -- wants to be told when one is pressed, and could not name an outfit if it tried.
 local groupsBy, groupRows = {}, {}
+
+-- WHAT THE ROOM COSTS SO FAR, asked of whoever prices it: `{ owner, fn }`, where
+-- `fn(slots, draft)` answers the sentence the status line shows (or nil for
+-- none). The room showed no price anywhere, so the first amount a player saw
+-- was "Paid X". Dropped with the room, like the strip.
+local pricer = nil
+local priceLine
+
+-- When the server was last told the room is still up, and how often it is.
+local ROOM_ALIVE_MS = 120000
+local roomAliveAtMs = -math.huge
 
 -- Creation handoff generation, so an older wait stops, and the kept outfit whose
 -- save is listened for.
@@ -715,6 +732,20 @@ local function changed()
 	if outfitCleared then return true end
 	return #changedSlots() > 0
 end
+
+--- The status line's price, from the room's pricer, or nil.
+-- Asked on every state the room publishes, which is a change, not a frame.
+priceLine = function()
+	if pricer == nil or draft == nil then return nil end
+	local ran, text = pcall(pricer.fn, changedSlots(), draft)
+	if not ran then
+		Runtime.Note(('the %s pricer raised: %s'):format(pricer.owner, tostring(text)))
+		return nil
+	end
+	if type(text) ~= 'string' or text == '' then return nil end
+	return { text = OPX.Text.Bytes(text, 120), kind = 'info' }
+end
+
 
 --- States the nine slots on the puppet, turning a covering outfit off first.
 local function putOn(slots)
@@ -1044,6 +1075,25 @@ function Wardrobe.OfferGroups(owner, groups)
 	return true
 end
 
+--- Lets one module price the open room: its line is drawn as the room's status.
+-- @author dop42
+-- @param owner string
+-- @param fn function|nil `fn(slots, draft)` answering a sentence; nil removes it
+-- @return boolean, string|nil
+function Wardrobe.PriceWith(owner, fn)
+	if type(owner) ~= 'string' or owner == '' then return false, 'invalid_caller' end
+	if fn ~= nil and type(fn) ~= 'function' then return false, 'invalid_pricer' end
+	if fn == nil then
+		if pricer ~= nil and pricer.owner == owner then pricer = nil end
+	else
+		pricer = { owner = owner, fn = fn }
+	end
+	-- Drawn on the room's next state rather than republished here: a caller
+	-- prices the room as it opens, when the room is about to publish anyway,
+	-- and a second full state for one line is a resume's budget spent twice.
+	return true
+end
+
 -- How many boxes one window of the grid carries. It is `panel`'s own `MAX_TILES`
 -- and it has to be: that module refuses a longer window whole, and a room that
 -- sent 61 would have its grid silently refused rather than half drawn. Written
@@ -1054,6 +1104,17 @@ local TILE_CHUNK = 60
 
 -- Cold garment lookups one frame may make. See `warmTiles`.
 local TILE_LOOKUPS = 20
+
+-- Boxes one PUBLICATION carries, each on a resume of its own. A window is still
+-- `TILE_CHUNK` boxes -- what is warmed, and what one scroll is answered with --
+-- but it goes to the page in slices, because the page's contract checks every
+-- box it is handed: `panel` cleans each name, caption and picture, and a
+-- sixty-box window cost ~16,000 VM instructions in the one resume that
+-- published it (the meter's 22,900 for `sendTiles`) against a budget of
+-- ~10,000 that unwinds the thread without a word. A slice of ten is ~2,300.
+-- The page appends a slice that starts where its grid ends, so the grid it
+-- draws is the same sixty boxes.
+local TILE_SLICE = 10
 
 --- Works out the caption and picture of one window's boxes, TILE_LOOKUPS a frame,
 --- so `tileWindow` finds them all warm. Answers false when `breathe` says the
@@ -1104,7 +1165,8 @@ local tilesBuild = 0
 -- frames of its own: `readCatalogue` warms each category's first window while
 -- the room is opening, and `sendTiles` warms the next one before it sends it.
 -- @param from integer the 1-based index the window starts at
-local function tileWindow(from)
+-- @param count integer how many boxes, `TILE_SLICE` at most; see there
+local function tileWindow(from, count)
 	if category == nil then return false end
 	local names = pieces[category]
 	if type(names) ~= 'table' or #names == 0 then return false end
@@ -1112,7 +1174,7 @@ local function tileWindow(from)
 	if from > #names then return false end
 
 	local entries, labels, images = {}, {}, {}
-	local last = math.min(from + TILE_CHUNK - 1, #names)
+	local last = math.min(from + count - 1, #names)
 	for index = from, last do
 		local record = names[index]
 		local at = #entries + 1
@@ -1168,7 +1230,7 @@ local function roomState()
 		-- arrives after the room has already drawn. A `groups` that rode only on
 		-- `roomSpec` would mean the categories appeared on the SECOND fitting.
 		groups = groupRows,
-		status = statusText and { text = statusText, kind = 'error' } or false,
+		status = statusText and { text = statusText, kind = 'error' } or priceLine() or false,
 	}
 end
 
@@ -1190,10 +1252,12 @@ end
 -- page asks for the next one, and the page appends what it is sent; nothing else
 -- touches the grid.
 --
--- ON A THREAD OF ITS OWN, because `warmTiles` yields between lookups. Every
--- window started bumps `tilesBuild`, so one still being built for a category
--- the player has already left -- or a room that has closed -- stops instead of
--- arriving late and being filed under the wrong tab.
+-- ON A THREAD OF ITS OWN, because `warmTiles` yields between lookups and every
+-- slice goes out on a resume of its own (see `TILE_SLICE`). Every window
+-- started bumps `tilesBuild`, so one still being built for a category the
+-- player has already left -- or a room that has closed, or a scroll that asked
+-- again -- stops instead of arriving late and being filed under the wrong tab.
+-- @param from integer where the window starts
 local function sendTiles(from)
 	if phase ~= 'open' or category == nil then return end
 	tilesBuild = tilesBuild + 1
@@ -1205,9 +1269,15 @@ local function sendTiles(from)
 	CreateThread(function()
 		local names = pieces[slot]
 		if type(names) ~= 'table' or not warmTiles(names, from, breathe) then return end
-		local window = tileWindow(from)
-		if window == false then return end
-		publish('roomTiles', { tiles = window })
+		local last = math.min(from + TILE_CHUNK - 1, #names)
+		local at = from
+		while at <= last do
+			if not breathe() then return end
+			local window = tileWindow(at, math.min(TILE_SLICE, last - at + 1))
+			if window == false then return end
+			publish('roomTiles', { tiles = window })
+			at = at + TILE_SLICE
+		end
 	end)
 end
 
@@ -1341,11 +1411,14 @@ local function roomSpec()
 		{ id = 'save', label = locale(creating and 'wardrobe.ui.saveCreation' or 'wardrobe.ui.save'),
 			primary = true },
 	}
-	-- THE GRID'S FIRST WINDOW RIDES ON THE FIRST FRAME. A room that opened with an
-	-- empty grid and filled it a tick later would show the player an empty shop
-	-- for exactly as long as one round trip takes, for no reason: the catalogue is
-	-- already read by the time this is built.
-	opened.tiles = tileWindow(1)
+	-- THE GRID'S FIRST WINDOW FOLLOWS THE FIRST FRAME, PUSHED AND NOT ASKED FOR.
+	-- It used to ride on the frame itself, so the room never showed an empty
+	-- grid for a round trip; it is still never a round trip -- `begin` starts
+	-- `sendTiles` the moment the frame is out, already warm, a slice a frame --
+	-- but the boxes no longer share the frame's resume. The panel checks every
+	-- box it is handed, and the open with its first boxes in it was the dearest
+	-- resume left in the room (the meter's 7,000).
+	opened.tiles = false
 	if canTurn() then
 		-- THE TURN BUTTONS CARRY GLYPHS, AND THAT IS THE FIX. They were four text
 		-- buttons in a row, two of which -- `left` and `right` -- were not even
@@ -1424,6 +1497,12 @@ local function begin(owner, creation, expected)
 	openingStage = 'borrowing the puppet'
 	local answer, reason = Clothing.BeginPreview(owner)
 	if answer == nil then return give(reason) end
+	-- THE BORROW, THE DRESSING AND THE FIRST FRAME EACH GET A RESUME OF THEIR
+	-- OWN. They all ran in the resume of the last catalogue breath -- the meter's
+	-- 29,200 for this thread, against a budget of ~10,000 that unwinds it
+	-- silently with the puppet out on loan and the room never drawn. The
+	-- re-check below covers this frame too.
+	Wait(0)
 
 	-- Everything is re-checked after the borrow: the read above took frames and
 	-- the borrow can take more.
@@ -1461,16 +1540,42 @@ local function begin(owner, creation, expected)
 		if #pieces[SLOTS[index]] > 0 then category = SLOTS[index] break end
 	end
 
+	-- BUILT HERE AND HANDED OVER ON THE NEXT FRAME: the spec is ours to build,
+	-- the panel's check of it costs as much again, and the two together were
+	-- the dearest resume left in the room.
+	local first = roomSpec()
+	Wait(0)
+	if mine ~= generation or phase ~= 'opening' or not playable() then
+		local superseded = mine ~= generation or phase ~= 'opening'
+		Clothing.EndPreview(owner, false)
+		baseline, draft, citizen, creating, roomOwner = nil, nil, nil, false, nil
+		category, tileTo = nil, 0
+		return give(superseded and 'superseded' or 'player_unavailable')
+	end
+
 	phase = 'open'
 	openingUntilMs = 0
 	openingStage = nil
+	local opener = family
+	publish('room', first)
+	sendTiles(1)
+	-- THE CAMERA, THE NOTE AND THE ANNOUNCEMENT FOLLOW ON FRESH RESUMES. The
+	-- camera is a handful of natives, a note is a net event, and the
+	-- announcement's listeners draw: `shops` answers it by offering its category
+	-- strip, which republishes the room's state into the panel. Behind the first
+	-- frame's open, in one resume, that was ~12,000.
+	Wait(0)
+	if mine == generation and phase == 'open' then holdCamera() end
 	-- One line per room, and it is the whole of the evidence now: a room that
 	-- opened on nothing and a room that never opened are different failures, and
-	-- there is no stream left to tell them apart afterwards.
+	-- there is no stream left to tell them apart afterwards. Said once the room
+	-- is drawn, whatever happens to it next.
 	Runtime.Note(('the fitting room opened for %s on %d record(s) over %d slot(s)')
-		:format(tostring(family), total, #SLOTS))
-	publish('room', roomSpec())
-	holdCamera()
+		:format(tostring(opener), total, #SLOTS))
+	Wait(0)
+	-- A room taken down in these two frames has already said `wardrobeClosed`,
+	-- and announcing it open after that would cover the HUD for a room gone.
+	if mine ~= generation or phase ~= 'open' then return true end
 	Runtime.Publish({ ok = true, event = 'wardrobeOpened', creation = creating,
 		citizenId = citizen })
 	return true
@@ -1485,7 +1590,11 @@ local function release(keep, reason)
 		return
 	end
 	if phase ~= 'open' then return end
-	-- Keeping what was never changed is not a save.
+	-- Keeping what was never changed is not a save. Whether the player ASKED to
+	-- keep is published as well: "saved with nothing changed" and "cancelled"
+	-- both arrive as `kept = false`, and a caller holding work for the room's
+	-- end (`shops`' queued outfit save) has to tell them apart.
+	local asked = keep == true
 	keep = keep and changed()
 	phase = 'closed'
 	generation = generation + 1
@@ -1508,6 +1617,7 @@ local function release(keep, reason)
 	-- them into the next room would put a uniform category on a fitting the
 	-- player opened from their own appearance panel, miles from the shop.
 	groupsBy, groupRows = {}, {}
+	pricer = nil
 
 	publish('roomClosed', { reason = reason, kept = keep })
 	-- The registry reads pieces back as TweakDB ids: the names go with them so the
@@ -1520,7 +1630,7 @@ local function release(keep, reason)
 	end
 
 	Runtime.Publish({ ok = true, event = 'wardrobeClosed', reason = reason, kept = keep,
-		creation = wasCreation, citizenId = mine, slots = moved })
+		asked = asked, creation = wasCreation, citizenId = mine, slots = moved })
 	-- WHATEVER TOOK IT DOWN, THE JOIN IS NO LONGER WAITING. A room the player
 	-- saved, cancelled, was pulled out of by a body reload or lost to a stopped
 	-- owner is a room that has been had: holding the claim open past any of those
@@ -1914,6 +2024,14 @@ runRetry = function(live)
 		-- gives the player 45s and this window is 60s, so without this a room
 		-- could be withdrawn for a delay that was somebody else's by design.
 		if reason == 'spawn_up' then live.deadline = Runtime.NowMs() + creationWaitMs() end
+		-- NOR WHILE THE NAME FORM IS. It holds the keyboard, so the room answers
+		-- `input_captured` for as long as the player is typing, and a new player
+		-- who took more than a minute over a name (the window starts before the
+		-- form appears, so loading spends from it too) lost the clothes step with
+		-- no word: name form, then straight to the spawn menu.
+		if reason == 'input_captured' and joinIsNaming() then
+			live.deadline = Runtime.NowMs() + creationWaitMs()
+		end
 
 		if ok or reason == 'wardrobe_busy' then
 			if not ok then
@@ -2129,6 +2247,20 @@ end
 --- Runs one pass over both views.
 -- @author dop42
 function M.Wardrobe.Check()
+	-- THE ROOM IS STILL UP, said to the server now and then. Its save grant is
+	-- ten minutes from the ask, and a long browse outlived it: the save that
+	-- left the room was refused "not saved" with the clothes still on. The
+	-- server keeps the grant alive while it hears this, to a hard cap.
+	if phase == 'open' then
+		local now = Runtime.NowMs()
+		if now - roomAliveAtMs >= ROOM_ALIVE_MS then
+			roomAliveAtMs = now
+			TriggerServerEvent(M.Event.ROOM_ALIVE)
+		end
+	else
+		roomAliveAtMs = -math.huge
+	end
+
 	local ok, failure = pcall(panelTick)
 	if not ok then Open77.log.error('[appearance] panel: ' .. tostring(failure)) end
 

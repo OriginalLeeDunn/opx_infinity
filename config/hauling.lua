@@ -201,9 +201,12 @@ OPX.Config.MODULES.hauling = {
 	-- item". The crate used to be bolted into the bed as a prop, which needed a
 	-- measured bed per vehicle and never had one.
 	--
-	-- A delivery sells every crate of the site in the trunk of the vehicle parked
-	-- at one of its DROPOFFS, in one bar. A crate moved into a bag cannot be sold
-	-- until it is put back in a trunk.
+	-- A delivery sells every crate of the site at one of its DROPOFFS, in one
+	-- bar: the ones in the seller's BAG, and the ones in the trunk of every
+	-- vehicle parked inside the drop-off that the seller owns or holds the key
+	-- to (an unowned truck somebody else drove there is not theirs to sell from).
+	-- Bag sales are deliberate -- `adult_shop_clouds.sale` below is up a building
+	-- where no vehicle can park, and sells out of the bag only.
 	ITEM = 'hauling_crate',
 
 	-- primary reads the worked job; any counts every membership for the grade but

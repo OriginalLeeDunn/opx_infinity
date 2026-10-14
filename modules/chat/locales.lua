@@ -11,7 +11,13 @@ OPX.Locale.Register('en', {
 	['chat.commandExpected'] = "Enter a command after '/'.",
 
 	['chat.commandNotSent'] = 'The command could not be sent.',
+	-- The keycaps on the input line: the words printed on the player's own keyboard.
+	['chat.key.tab'] = 'Tab',
+	['chat.key.enter'] = 'Enter',
+	['chat.key.escape'] = 'Esc',
 	['chat.messageNotSent'] = 'The message could not be sent.',
+	['chat.tooFast'] = 'That message was not sent: wait a moment between two.',
+	['chat.notLoaded'] = 'That message was not sent: you speak once your character is in the city.',
 
 	['chat.command.unknown'] = '/{command} is not a command on this server.',
 	['chat.command.denied'] = 'You are not allowed to run /{command}.',
@@ -20,7 +26,9 @@ OPX.Locale.Register('en', {
 
 	['chat.author.command'] = 'COMMAND',
 	['chat.author.network'] = 'NETWORK',
-	['chat.author.unknown'] = 'player {id}',
+	-- A player's line is signed with their server id, never a name: never a name
+	-- to a stranger.
+	['chat.author.player'] = 'Player #{id}',
 
 	['chat.placeholder'] = 'Say something, or type / for a command',
 
@@ -42,7 +50,12 @@ OPX.Locale.Register('fr', {
 	['chat.commandExpected'] = "Saisissez une commande après le '/'.",
 
 	['chat.commandNotSent'] = "La commande n'a pas pu être envoyée.",
+	['chat.key.tab'] = 'Tab',
+	['chat.key.enter'] = 'Entrée',
+	['chat.key.escape'] = 'Échap',
 	['chat.messageNotSent'] = "Le message n'a pas pu être envoyé.",
+	['chat.tooFast'] = "Ce message n'a pas été envoyé : attendez un instant entre deux.",
+	['chat.notLoaded'] = "Ce message n'a pas été envoyé : vous parlez une fois votre personnage en ville.",
 
 	['chat.command.unknown'] = "/{command} n'est pas une commande de ce serveur.",
 	['chat.command.denied'] = "Vous n'avez pas le droit de lancer /{command}.",
@@ -51,7 +64,7 @@ OPX.Locale.Register('fr', {
 
 	['chat.author.command'] = 'COMMANDE',
 	['chat.author.network'] = 'RÉSEAU',
-	['chat.author.unknown'] = 'joueur {id}',
+	['chat.author.player'] = 'Joueur #{id}',
 
 	['chat.placeholder'] = 'Dites quelque chose, ou tapez / pour une commande',
 

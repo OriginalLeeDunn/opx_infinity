@@ -52,7 +52,9 @@
 -- `progress`, `inventory` and `animations` are optional for ordinary reasons:
 -- without the first the bars are invisible and the server still holds the clock,
 -- without the second nothing asks whether a player has room, and without the
--- third nobody mimes carrying anything.
+-- third nobody mimes carrying anything. `vehicles` and `vehiclekeys` are what
+-- prove a truck at a drop-off is the seller's own or keyed to them; without
+-- both, the inventory's TRUNK_OWNER_ONLY rule is the only gate on a sale.
 
 local M = OPX.Modules.Declare{
 	id = 'hauling',
@@ -61,7 +63,7 @@ local M = OPX.Modules.Declare{
 	-- this runtime reads from it.
 	fatal = false,
 	requires = { 'character' },
-	optional = { 'target', 'progress', 'inventory', 'animations' },
+	optional = { 'target', 'progress', 'inventory', 'animations', 'vehicles', 'vehiclekeys' },
 }
 
 local NET, LOCAL = OPX.Channel.NET, OPX.Channel.LOCAL
@@ -95,7 +97,7 @@ M.Event = {
 
 	-- The public SERVER bus, for other resources: a delivery was sold and paid.
 	-- Raised by the server only, `(player, { ... })`; see
-	-- `core/server/publish.lua` and README.md "For creators".
+	-- `core/server/publish.lua` and docs/MANUAL.md "For creators".
 	ON_SOLD = OPX.Event(LOCAL, 'hauling', 'sold'),
 }
 

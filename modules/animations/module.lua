@@ -8,6 +8,13 @@
 -- catalogue as config leaves it, a per-player rate and a readiness gate. It
 -- provides no animation of its own and writes nothing to the database.
 --
+-- The catalogue it offers is the rows written in shared/catalogue.lua AND the
+-- platform's own catalogue, read at runtime from `Open77.animations.list`; and
+-- an emote with a nearby player -- the coordinator's own carry, escort, give
+-- and heal from either side, or any two offered profiles, one per body -- goes
+-- through the platform's two-player coordinator, `Open77.playerInteractions`,
+-- after this module has asked the other player and they have accepted.
+--
 -- `downed`, `menu`, `form` and `prompts` are optional. Without `menu` there is no
 -- picker and the commands and the contract still work; without `form` the picker
 -- keeps every screen and loses only its search box; without `prompts` the
@@ -26,7 +33,9 @@ local M = OPX.Modules.Declare{
 	-- client, `OPX.Api.Get('target')` answered nil in `Walk.Start`, and the pace
 	-- rows were never registered at all -- reported from the game the same hour
 	-- they shipped.
-	optional = { 'downed', 'menu', 'form', 'prompts', 'target' },
+	-- `character` names the two players of an emote with a nearby player by
+	-- their characters rather than their accounts; without it, the account name.
+	optional = { 'downed', 'menu', 'form', 'prompts', 'target', 'character' },
 }
 
 local NET = OPX.Channel.NET
@@ -42,12 +51,19 @@ M.Event = {
 	PLAY = OPX.Event(NET, 'animations', 'play'),
 	STOP = OPX.Event(NET, 'animations', 'stop'),
 	HELLO = OPX.Event(NET, 'animations', 'hello'),
+	-- An emote with a nearby player: the ask, then the invited player's answer.
+	DUO = OPX.Event(NET, 'animations', 'duo'),
+	REPLY = OPX.Event(NET, 'animations', 'reply'),
 
-	-- Server to client.
+	-- Server to client. The offer arrives in parts: the whole catalogue in one
+	-- event is past the client's 1,024-value decoder.
 	OFFER = OPX.Event(NET, 'animations', 'offer'),
 	ANSWER = OPX.Event(NET, 'animations', 'answer'),
 	CANCEL = OPX.Event(NET, 'animations', 'cancel'),
 	PICKER = OPX.Event(NET, 'animations', 'picker'),
+	INVITE = OPX.Event(NET, 'animations', 'invite'),
+	UNINVITE = OPX.Event(NET, 'animations', 'uninvite'),
+	NOTICE = OPX.Event(NET, 'animations', 'notice'),
 
 	-- The client's own bus. Public: a bare AddEventHandler reaches these.
 	ON_RESULT = OPX.Event(LOCAL, 'animations', 'result'),

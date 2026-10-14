@@ -90,9 +90,12 @@ OPX.Config.MODULES.hud = {
 		HIDE_OPEN_VOICE = true,
 	},
 
-	-- The speed dial. PASSENGER false draws it for the driver only.
+	-- The speed dial. PASSENGER false draws it for the driver only. FUEL false
+	-- leaves the tank off it; it is drawn only for a vehicle whose tank has been
+	-- filled (`modules/fuel`), toned at TONE_WARN and TONE_BAD like integrity.
 	VEHICLE = {
 		PASSENGER = true,
+		FUEL = true,
 	},
 
 	-- Components of the game's own HUD, which this one replaces. `false` hides

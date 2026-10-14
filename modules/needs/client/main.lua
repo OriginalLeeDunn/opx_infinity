@@ -1,22 +1,23 @@
---- Client half: the effect registry, the needs the client owns, and the contract.
+--- Client half: the effect registry, the needs as the server last sent them, and
+--- the contract.
 -- @author dop42
 --
--- The client holds the needs during play and the server stores what it was last
--- pushed. Effects live here only: a chip is added by whoever wants one drawn,
--- and this half orders them, expires them and publishes the strip a view draws.
+-- THE SERVER OWNS THE NEEDS (the owner's ruling, 2026-10; see the header of
+-- server/main.lua). This half decays nothing and sends nothing back: it asks for
+-- the values once, adopts every `values` the server sends, and publishes them
+-- for a view. Effects live here only: a chip is added by whoever wants one
+-- drawn, and this half orders them, expires them and publishes the strip.
 
 local M = OPX.Modules.Get('needs')
 local Bounds = M.Bounds
 
 local Result = OPX.Result
 
--- Server to client: the answer to a pull, and the acknowledgement of a push.
+-- Server to client: the values, on a pull and every time they move.
 local EVENT_VALUES = OPX.Event(OPX.Channel.NET, 'needs', 'values')
-local EVENT_PUSHED = OPX.Event(OPX.Channel.NET, 'needs', 'pushed')
 
--- Client to server.
+-- Client to server: "send me the values". The only thing this half says.
 local EVENT_PULL = OPX.Event(OPX.Channel.NET, 'needs', 'pull')
-local EVENT_PUSH = OPX.Event(OPX.Channel.NET, 'needs', 'push')
 
 -- The client local bus, which is what a view and any third party listen on.
 -- These must stay on the LOCAL channel: the host dispatcher matches on the name
@@ -57,9 +58,6 @@ local OWNER_SWEEP_MS = 1000
 -- Milliseconds before asking again for a character with no values.
 local PULL_RETRY_MS = 10000
 
--- Most pushes kept waiting for an acknowledgement.
-local MAX_UNACKED = 8
-
 -- The tones an effect may carry: a presentation role, or one of 2077's damage
 -- types.
 local TONES = {
@@ -79,11 +77,8 @@ local drawn = nil
 -- When the next owner sweep is due, on the monotonic clock.
 local nextOwnerSweepMs = 0
 
--- When decay, the last push and the last pull last ran.
-local lastDecayAtMs, lastPushAtMs, lastPullAtMs = 0, 0, 0
-
--- How often the needs loop runs, settled in `Init`.
-local cadenceMs = 1000
+-- When the last pull went.
+local lastPullAtMs = 0
 
 -- Whether a value is a short name of word characters and punctuation.
 local function validName(value, maximum)
@@ -378,44 +373,6 @@ local function tick()
 	if expiredCount > 0 or swept > 0 then draw() end
 end
 
--- Forgets every waiting push without moving `pushed`.
-local function forgetSent()
-	Needs.sent = {}
-	Needs.sentCount = 0
-	Needs.ackedCount = 0
-end
-
---- Notes a push snapshot on its way to the server.
--- @author dop42
---
--- A push that leaves is not a push that was kept: `TriggerServerEvent` answering
--- true says the event went, not that the server held it, and a push past the
--- rate limit is dropped there in silence. Past MAX_UNACKED the oldest is
--- forgotten without moving `pushed`: at worst one redundant push, never a lost
--- value.
--- @param values table
-function M.Needs.Sending(values)
-	Needs.sentCount = Needs.sentCount + 1
-	Needs.sent[Needs.sentCount] = values
-	Needs.sent[Needs.sentCount - MAX_UNACKED] = nil
-end
-
---- Settles the oldest waiting push and answers whether one moved `pushed`.
--- @author dop42
---
--- The acknowledgement names no push, so the nth settles the nth and never a
--- later one: the drift carried by a lost push is sent again rather than lost.
--- @return boolean
-function M.Needs.Acknowledge()
-	if Needs.ackedCount >= Needs.sentCount then return false end
-	Needs.ackedCount = Needs.ackedCount + 1
-	local values = Needs.sent[Needs.ackedCount]
-	Needs.sent[Needs.ackedCount] = nil
-	if values == nil then return false end
-	Needs.pushed = values
-	return true
-end
-
 --- A shallow copy of the held values.
 -- @author dop42
 -- @return table
@@ -425,28 +382,30 @@ function M.Needs.Snapshot()
 	return copy
 end
 
---- Starts over on a character at the defaults until the server answers.
+--- Starts over on a character, with nothing to show until the server answers.
 -- @author dop42
 -- @param citizenId string
 function M.Needs.Begin(citizenId)
 	Needs.citizenId = citizenId
 	Needs.ready = false
 	Needs.values = Bounds.Defaults()
-	Needs.pushed = nil
-	forgetSent()
 end
 
---- Adopts the server's values, defaults filling the gaps, as the last push.
+--- Adopts what the server sent, defaults filling the gaps, and answers the keys
+--- that moved.
 -- @author dop42
---
--- What the server has just said IS the last push: there is nothing to send back
--- yet.
 -- @param raw any
+-- @return table
 function M.Needs.Receive(raw)
-	Needs.values = Bounds.Read(raw)
+	local values = Bounds.Read(raw)
+	local changed = {}
+	for key, value in pairs(values) do
+		if not Needs.ready or Needs.values[key] ~= value then changed[#changed + 1] = key end
+	end
+	table.sort(changed)
+	Needs.values = values
 	Needs.ready = true
-	Needs.pushed = Needs.Snapshot()
-	forgetSent()
+	return changed
 end
 
 --- Drops the character and everything held for it.
@@ -455,75 +414,6 @@ function M.Needs.Forget()
 	Needs.citizenId = nil
 	Needs.ready = false
 	Needs.values = {}
-	Needs.pushed = nil
-	forgetSent()
-end
-
---- Applies an absolute or relative patch and answers the keys that moved.
--- @author dop42
--- @param patch table
--- @param relative boolean add to the held value
--- @return table|nil, string|nil
-function M.Needs.Apply(patch, relative)
-	if type(patch) ~= 'table' then return nil, 'spec_must_be_a_table' end
-
-	local wanted, changedCount = {}, 0
-	for key, raw in pairs(patch) do
-		if not Bounds.IsField(key) then return nil, 'unknown_need' end
-		local value = tonumber(raw)
-		if not OPX.Math.IsFinite(value) then return nil, 'invalid_need_value' end
-		local target = value
-		if relative then target = Needs.values[key] + value end
-		wanted[key] = Bounds.Clamp(key, target)
-		changedCount = changedCount + 1
-	end
-	if changedCount == 0 then return nil, 'empty_patch' end
-
-	local changed = {}
-	for key, value in pairs(wanted) do
-		if Needs.values[key] ~= value then
-			Needs.values[key] = value
-			changed[#changed + 1] = key
-		end
-	end
-	-- Sorted, because the order of `pairs` would reshuffle the list between two
-	-- identical patches.
-	table.sort(changed)
-	return changed
-end
-
---- Charges DECAY_PER_MINUTE against every need that declares one.
--- @author dop42
--- @param elapsedMs integer
--- @return table
-function M.Needs.Decay(elapsedMs)
-	local minutes = elapsedMs / 60000
-	local patch = {}
-	for key, field in pairs(M.Fields) do
-		local rate = field.DECAY_PER_MINUTE
-		-- Finiteness, not `~= nil`: a NaN or an infinity in the configuration
-		-- would pass a plain `> 0`.
-		if OPX.Math.IsFinite(rate) and rate > 0 then
-			patch[key] = -(rate * minutes)
-		end
-	end
-	return Needs.Apply(patch, true) or {}
-end
-
---- The largest move on any need since the acknowledged push.
--- @author dop42
---
--- Infinite for a character with no push behind it: it has everything to say.
--- @return number
-function M.Needs.Drift()
-	local pushed = Needs.pushed
-	if pushed == nil then return math.huge end
-	local worst = 0
-	for key, value in pairs(Needs.values) do
-		local difference = math.abs(value - (pushed[key] or 0))
-		if difference > worst then worst = difference end
-	end
-	return worst
 end
 
 -- Raises the needs event a view redraws from.
@@ -537,35 +427,13 @@ local function publishNeeds(origin, changed)
 	})
 end
 
--- Asks the server half for this character's stored values.
+-- Asks the server half for this character's values.
 local function pull(atMs)
 	lastPullAtMs = atMs
 	local accepted, reason = TriggerServerEvent(EVENT_PULL, Needs.citizenId)
 	if not accepted then
-		Open77.log.warn(('needs not requested: %s'):format(tostring(reason)))
+		Open77.log.debug(('needs not requested: %s'):format(tostring(reason)))
 	end
-end
-
--- Sends the held values when due, drifted enough, or forced. The throttled push
--- during play is what makes the stored value fresh: a disconnect is the one
--- moment this client can no longer speak.
-local function push(atMs, force)
-	if not Needs.ready or Needs.citizenId == nil then return false end
-	local drift = Needs.Drift()
-	if drift <= 0 and not force then return false end
-	if not force and drift < M.Settings.PUSH_DELTA and atMs - lastPushAtMs < M.Settings.PUSH_MS then
-		return false
-	end
-
-	local values = Needs.Snapshot()
-	local accepted, reason = TriggerServerEvent(EVENT_PUSH, Needs.citizenId, values)
-	if not accepted then
-		Open77.log.warn(('needs not pushed: %s'):format(tostring(reason)))
-		return false
-	end
-	Needs.Sending(values)
-	lastPushAtMs = atMs
-	return true
 end
 
 -- Adopts a character and asks for its values, once per id.
@@ -573,67 +441,33 @@ local function bindCharacter(citizenId)
 	if type(citizenId) ~= 'string' or citizenId == '' then return end
 	if Needs.citizenId == citizenId then return end
 	Needs.Begin(citizenId)
-	local atMs = OPX.Now()
-	lastDecayAtMs, lastPushAtMs = atMs, atMs
-	pull(atMs)
+	pull(OPX.Now())
 end
 
--- Pushes the values a last time, forgets the character and publishes empty needs.
+-- Forgets the character and publishes empty needs. Nothing is sent: the server
+-- holds the values and saves them itself.
 local function unloadCharacter()
 	if Needs.citizenId == nil then return end
-	push(OPX.Now(), true)
 	Needs.Forget()
 	publishNeeds('unloaded', {})
 end
 
--- Applies a patch, then publishes and pushes what moved.
-local function patchNeeds(patch, relative, origin)
-	local changed, reason = Needs.Apply(patch, relative)
-	if changed == nil then return nil, reason end
-	if #changed > 0 then
-		publishNeeds(origin, changed)
-		push(OPX.Now(), false)
-	end
-	return changed
-end
-
--- Runs decay and the throttled push, or retries an unanswered pull.
+-- Retries an unanswered pull.
 local function needsTick()
+	if Needs.citizenId == nil or Needs.ready then return end
 	local atMs = OPX.Now()
-
-	if Needs.citizenId == nil then return end
-	if not Needs.ready then
-		if atMs - lastPullAtMs >= PULL_RETRY_MS then pull(atMs) end
-		return
-	end
-
-	local elapsed = atMs - lastDecayAtMs
-	if elapsed >= M.Settings.DECAY_MS then
-		lastDecayAtMs = atMs
-		local changed = Needs.Decay(elapsed)
-		if #changed > 0 then publishNeeds('decay', changed) end
-	end
-
-	push(atMs, false)
+	if atMs - lastPullAtMs >= PULL_RETRY_MS then pull(atMs) end
 end
 
--- Adopts the server's answer to a pull for the bound character. A late answer
--- for a character already replaced is ignored.
-local function onValues(citizenId, values)
+-- Adopts the server's values for the bound character. A late answer for a
+-- character already replaced is ignored. The reason travels with them: `loaded`,
+-- `decay`, `use`, `staff`, or whatever a creator export named.
+local function onValues(citizenId, values, reason)
 	if citizenId ~= Needs.citizenId then return end
-	Needs.Receive(values)
-	local atMs = OPX.Now()
-	lastDecayAtMs, lastPushAtMs = atMs, atMs
-	local changed = {}
-	for key in pairs(Needs.values) do changed[#changed + 1] = key end
-	table.sort(changed)
-	publishNeeds('loaded', changed)
-end
-
--- Settles the oldest waiting push for the bound character.
-local function onPushed(citizenId)
-	if citizenId ~= Needs.citizenId then return end
-	Needs.Acknowledge()
+	local first = not Needs.ready
+	local changed = Needs.Receive(values)
+	if #changed == 0 and not first then return end
+	publishNeeds(first and 'loaded' or (type(reason) == 'string' and reason or 'server'), changed)
 end
 
 -- Drops the effects of another resource that stopped, at once rather than on the
@@ -742,7 +576,7 @@ local function clearEffects(owner)
 	return Result.Ok({ removed = removed })
 end
 
---- The character's needs as this client holds them.
+--- The character's needs as the server last sent them.
 -- @author dop42
 -- @return Result
 local function getNeeds()
@@ -753,30 +587,6 @@ local function getNeeds()
 		citizenId = Needs.citizenId,
 		ready = true,
 	})
-end
-
--- Applies a set or an add patch, both bounded.
-local function writeNeeds(patch, relative, origin)
-	if not Needs.ready then return Result.Err('not_loaded') end
-	local changed, reason = patchNeeds(patch, relative, origin)
-	if changed == nil then return Result.Err(reason) end
-	return Result.Ok({ values = Needs.Snapshot(), changed = changed })
-end
-
---- Sets one or more needs outright, clamped to their bounds.
--- @author dop42
--- @param patch table
--- @return Result
-local function setNeeds(patch)
-	return writeNeeds(patch, false, 'set')
-end
-
---- Moves one or more needs by a delta, clamped to their bounds.
--- @author dop42
--- @param patch table
--- @return Result
-local function addNeeds(patch)
-	return writeNeeds(patch, true, 'add')
 end
 
 --- Builds the registry and the held needs.
@@ -792,24 +602,16 @@ function M.Init()
 	Needs.citizenId = nil
 	Needs.ready = false
 	Needs.values = {}
-	Needs.pushed = nil
-	Needs.sent = {}
-	Needs.sentCount = 0
-	Needs.ackedCount = 0
-
-	-- The needs loop runs at least as often as the finest of the three durations
-	-- it serves, so that each keeps its meaning.
-	cadenceMs = math.max(1000,
-		math.min(M.Settings.DECAY_MS, M.Settings.PUSH_MS, PULL_RETRY_MS))
 end
 
 --- Publishes the effects and the needs.
 -- @author dop42
 function M.Api()
 	OPX.Api.Provide('needs', 1, {
+		-- Read only. A need moves on the SERVER (its `needs` contract, a staff
+		-- command or a creator export); `SetNeeds` and `AddNeeds` were here and
+		-- wrote the values a client then pushed, which is what the owner ruled out.
 		GetNeeds = getNeeds,
-		SetNeeds = setNeeds,
-		AddNeeds = addNeeds,
 		AddEffect = addEffect,
 		UpdateEffect = updateEffect,
 		RemoveEffect = removeEffect,
@@ -821,7 +623,6 @@ end
 -- @author dop42
 function M.Start()
 	RegisterNetEvent(EVENT_VALUES, onValues)
-	RegisterNetEvent(EVENT_PUSHED, onPushed)
 
 	AddEventHandler(EVENT_CHARACTER_LOADED, function(payload)
 		if type(payload) ~= 'table' then return end
@@ -838,18 +639,16 @@ function M.Start()
 	end
 
 	OPX.Scheduler.Every('needs:effects', TICK_MS, tick)
-	OPX.Scheduler.Every('needs:tick', cadenceMs, needsTick)
+	OPX.Scheduler.Every('needs:tick', PULL_RETRY_MS, needsTick)
 end
 
---- Sends the values one last time and takes the strip down.
+--- Takes the strip down.
 -- @author dop42
 --
--- A reload is the only stop this client survives, so the values leave first.
--- Then the strip is emptied and republished by force: no later publication would
+-- The strip is emptied and republished by force: no later publication would
 -- correct an abandoned one. No `emit` here -- an owner's handler could call back
--- into a VM that is half stopped.
+-- into a VM that is half stopped. Nothing is sent: the server holds the needs.
 function M.Stop()
-	push(OPX.Now(), true)
 	Effects.byOwner = {}
 	Effects.generations = {}
 	draw(true)

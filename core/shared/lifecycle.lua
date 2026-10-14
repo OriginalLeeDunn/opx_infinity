@@ -102,6 +102,18 @@ function OPX.Modules.Resolve()
 		visit(module, seen, out, trail)
 	end
 
+	-- A FRESH RESUME FOR THE REST, when the stack may yield. The walk above and
+	-- the rebind, the `enabled` pass and the settle below come to ~5,700 VM
+	-- instructions over sixty-odd modules, and on the client they ran in the
+	-- boot thread's first resume behind the surface build -- the budget meter's
+	-- 10,800 against ~10,000, the one resume the whole client half hangs on.
+	-- Under pcall for the reason `runPhase` gives; and a caller that finished the
+	-- order while this one was parked has already answered it.
+	if type(Wait) == 'function' then
+		pcall(Wait, 0)
+		if resolved then return resolved end
+	end
+
 	-- Every script has run and no phase has, which is the one moment a module may be
 	-- told what its config says -- `config/vehicles.lua` and its two siblings are
 	-- `server_script`s and had not run when their modules declared themselves. See
@@ -378,8 +390,24 @@ function OPX.Modules.Run(between)
 end
 
 --- Stops every started module, newest dependency first.
+---
+--- `yielding` GIVES EACH `Stop` A FRESH BUDGET, for the reason `runPhase` gives
+--- each `Start` one. The client stop path ran every module's `Stop` in ONE
+--- resume, so thirty of them shared one instruction budget -- the lottery the
+--- head of `runPhase` describes, where the module holding the parcel when the
+--- pot runs out is cut off and everything after it never runs. On the client
+--- that includes `OPX.UI.Teardown`, which comes after this, so a player could be
+--- left with a cursor and no controls. `core/client/boot.lua` now gives the focus
+--- back BEFORE this is called, so the overrun no longer costs that; yielding
+--- here is what keeps it from costing the modules after the cut their `Stop`.
+---
+--- Under `pcall`, like the yields in `runPhase`: a caller that is not on a
+--- thread just shares one frame, as every stop did before. The server passes
+--- nothing -- it has no per-resume budget to reset.
 -- @author dop42
-function OPX.Modules.Stop()
+-- @param yielding boolean|nil yield between modules when the stack can
+function OPX.Modules.Stop(yielding)
+	local canYield = yielding == true and type(Wait) == 'function'
 	local running = OPX.Modules.Resolve()
 	for index = #running, 1, -1 do
 		local module = running[index]
@@ -392,11 +420,16 @@ function OPX.Modules.Stop()
 		-- and its hooks went on voting. A `Stop` already has to tolerate a
 		-- partial start, because that is exactly the state it is called in.
 		if module.State == 'started' or module.State == 'failed' then
+			-- BEFORE the `Stop`, now that a stop can yield: a second stop arriving
+			-- while this one is parked between two modules must not call the same
+			-- `Stop` twice.
+			module.State = 'stopped'
 			if type(module.Module.Stop) == 'function' then
 				local ok, failure = pcall(module.Module.Stop)
 				if not ok then
 					Open77.log.error(('[%s] stop failed: %s'):format(module.Id, tostring(failure)))
 				end
+				if canYield then pcall(Wait, 0) end
 			end
 			-- MARKED STOPPED WHETHER OR NOT IT HAD A `Stop`, and this write was
 			-- INSIDE the `type(...) == 'function'` guard. A module with no `Stop`
@@ -404,8 +437,8 @@ function OPX.Modules.Stop()
 			-- running after the resource had gone and a second `Stop` would call
 			-- every `Stop` again. `core/client/boot.lua` runs this from
 			-- `onClientResourceStop`, where the VM can outlive the resource and
-			-- that state is all anything has left to read.
-			module.State = 'stopped'
+			-- that state is all anything has left to read. (Written above, before
+			-- the call, so a yielded stop cannot be re-entered.)
 		end
 	end
 end

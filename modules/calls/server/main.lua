@@ -74,6 +74,19 @@ local eyesRenewedAt = {}
 -- The metadata key a character's contact list is filed under.
 local CONTACTS_KEY = 'callContacts'
 
+-- When each player last offered their contact to each other player, by target
+-- id: `contactOffers[from][to] = atMs`. See `onInvite`.
+local contactOffers = {}
+
+-- The references the last contact list each player was sent stands for, by
+-- player: `ref -> citizen id`. A delete names a reference, never a citizen.
+local rosterRefs = {}
+
+-- The floor between two contact offers from one player to the SAME player. A
+-- stranger may still ask to be added -- that is the only door to a call now --
+-- but asking the same person again and again is a doorbell, not a request.
+local CONTACT_REPEAT_MS = 30000
+
 -- Whether the holocall natives exist on this host, resolved on first use. The
 -- pair arrived in 2.31.13+op77.63 and this resource ships against op77.75, so
 -- they are expected -- but the same promise was made about `players.teleport`
@@ -125,27 +138,26 @@ local function loadedIn(playerId)
 	return loaded, data
 end
 
--- The name a card shows: the CHARACTER'S, never the account's.
+-- The CHARACTER'S name, never the account's, or nil.
 --
 -- `Open77.players.name` answers the displayName the Master vouches for -- the
--- account gamertag -- and the manifest's `ui.nameplates` block records what
--- that cost the last time a surface drew it: a player who had just named their
--- character walked around under their account name. A holocall card is the same
--- mistake waiting to happen, so the character's own name is what is read and
--- the account name is the fallback for a slot with no character yet.
+-- account gamertag -- and it used to be the fallback for a slot with no
+-- character yet. It is out-of-character, and the account is nobody's contact:
+-- there is no fallback now. Who may READ this name is `labelFor`'s question.
 local function nameOf(playerId)
 	local _, data = loadedIn(playerId)
 	local info = type(data) == 'table' and type(data.charInfo) == 'table' and data.charInfo or nil
-	if info ~= nil then
-		local first = type(info.firstName) == 'string' and info.firstName or ''
-		local last = type(info.lastName) == 'string' and info.lastName or ''
-		local full = (first .. ' ' .. last):gsub('^%s+', ''):gsub('%s+$', '')
-		if full ~= '' then return (full:gsub('%c', ' ')):sub(1, 32) end
-	end
-	local read, name = pcall(Open77.players.name, playerId)
-	if not read or type(name) ~= 'string' then return nil end
-	return (name:gsub('%c', ' ')):sub(1, 32)
+	if info == nil then return nil end
+	local first = type(info.firstName) == 'string' and info.firstName or ''
+	local last = type(info.lastName) == 'string' and info.lastName or ''
+	local full = (first .. ' ' .. last):gsub('^%s+', ''):gsub('%s+$', '')
+	if full == '' then return nil end
+	return OPX.Text.Clean(full, 32)
 end
+
+-- What one player's screen calls another: see `labelFor` below. Declared here
+-- because `stateFor` reads it, and defined after the contact helpers it needs.
+local labelFor
 
 --- Whether a player may take part in a call at all, and why not.
 ---
@@ -371,7 +383,7 @@ local function stateFor(playerId)
 		participants = {}
 		for index = 1, #call.order do
 			local id = call.order[index]
-			participants[index] = { id = id, name = nameOf(id) or '?', self = id == playerId }
+			participants[index] = { id = id, name = labelFor(playerId, id), self = id == playerId }
 		end
 	end
 
@@ -386,14 +398,19 @@ local function stateFor(playerId)
 			id = invite.id,
 			kind = invite.kind,
 			from = invite.from,
-			fromName = nameOf(invite.from) or '?',
+			-- A CONTACT OFFER NAMES ITS SENDER: handing over your contact is the
+			-- sender choosing to be known. Anything else is caller id.
+			fromName = invite.kind == 'contact' and (nameOf(invite.from) or '?')
+				or labelFor(playerId, invite.from),
 			expiresInMs = math.max(0, invite.expiresAtMs - atMs),
 		} or nil,
 		outgoing = outgoing ~= nil and {
 			id = outgoing.id,
 			kind = outgoing.kind,
 			to = outgoing.to,
-			toName = nameOf(outgoing.to) or '?',
+			-- NEVER the name of the person a contact was offered to: they have not
+			-- agreed to anything yet. It used to be sent the moment the offer left.
+			toName = labelFor(playerId, outgoing.to),
 			expiresInMs = math.max(0, outgoing.expiresAtMs - atMs),
 		} or nil,
 	}
@@ -451,13 +468,37 @@ local function remember(playerId, citizenId, name)
 			return character.SetMetadata(playerId, CONTACTS_KEY, held) == true
 		end
 	end
-	-- BOUNDED, and the oldest row goes. The list is written into the character's
+	-- BOUNDED, and a full list REFUSES. The list is written into the character's
 	-- metadata blob and that blob is read on every load, so an unbounded one is
-	-- a row that grows for the life of a character and is paid for on every
-	-- connection they ever make.
-	if #held >= maxContacts then table.remove(held, 1) end
+	-- a row that grows for the life of a character. It used to make room by
+	-- dropping the oldest contact without a word; the lead's decision is that
+	-- the player deletes one themselves, so a full list answers `contactsFull`.
+	if #held >= maxContacts then return false, 'contactsFull' end
 	held[#held + 1] = { citizenId = citizenId, name = name }
 	return character.SetMetadata(playerId, CONTACTS_KEY, held) == true
+end
+
+--- Whether a player's list has no room for this citizen (and does not hold it).
+local function contactsFull(playerId, citizenId)
+	local held = contactsOf(playerId)
+	if #held < maxContacts then return false end
+	for index = 1, #held do
+		if held[index].citizenId == citizenId then return false end
+	end
+	return true
+end
+
+--- Deletes one contact from a character's list. Answers whether one went.
+local function forget(playerId, citizenId)
+	if character == nil or type(character.SetMetadata) ~= 'function' then return false end
+	local held = contactsOf(playerId)
+	for index = 1, #held do
+		if held[index].citizenId == citizenId then
+			table.remove(held, index)
+			return character.SetMetadata(playerId, CONTACTS_KEY, held) == true
+		end
+	end
+	return false
 end
 
 -- ── what happened to the calls that did not happen ───────────────────────────
@@ -514,6 +555,37 @@ local function citizenOf(playerId)
 	return data.citizenId
 end
 
+-- What `viewer`'s screen calls `subject`: their name when the viewer has them as
+-- a contact (or is them), and "unknown caller" otherwise.
+--
+-- NEVER A NAME TO A STRANGER, the owner's decision (#91). Every line and every
+-- card here used to carry the character's name to whoever was on the other end:
+-- a third person added to a call learnt the names of everybody on it, everybody
+-- on it learnt theirs, a contact offer told the SENDER the name of the person
+-- they offered it to before that person had said anything, and "X hung up" named
+-- X to people who had never exchanged anything with them. A name is known here
+-- because the two people exchanged contacts -- by citizen id, which is what a
+-- contact row holds -- and for no other reason.
+labelFor = function(viewer, subject)
+	if viewer == subject then return nameOf(subject) or '?' end
+	local wanted = citizenOf(subject)
+	if wanted ~= nil then
+		for _, row in ipairs(contactsOf(viewer)) do
+			if row.citizenId == wanted then return nameOf(subject) or row.name end
+		end
+	end
+	return locale('calls.unknown')
+end
+
+-- Tells each of `ids` but `except` that `subject` did something, each in the
+-- words their own contact list allows.
+local function tellEach(ids, except, key, subject)
+	for index = 1, #ids do
+		local id = ids[index]
+		if id ~= except then tell(id, key, { name = labelFor(id, subject) }) end
+	end
+end
+
 -- ── the verbs, as the wire asks for them ─────────────────────────────────────
 
 -- Applies the eye-glow to everyone on a call and pushes them all their state.
@@ -551,7 +623,7 @@ local function callEnded(outcome)
 				local withdrawn = registry.Cancel(id)
 				if withdrawn ~= nil then
 					audit('calls.cancel', id, true, 'join: the sender left the call')
-					fileRecent(withdrawn.to, 'missed', nameOf(id), citizenOf(id))
+					fileRecent(withdrawn.to, 'missed', labelFor(withdrawn.to, id), citizenOf(id))
 					push(withdrawn.to)
 				end
 			end
@@ -562,6 +634,18 @@ local function callEnded(outcome)
 	-- dropping the channel there would silence a call that is still going.
 	if callId ~= nil and #registry.Participants(callId) == 0 then dropChannel(callId) end
 	pushAll(outcome.were)
+end
+
+--- Whether the character on `target` is in the contacts of the one on `playerId`.
+-- By citizen id, which is what a contact row holds: a server id is a seat, and
+-- whoever sits in it next is not the person who agreed to be reachable.
+local function isContact(playerId, target)
+	local wanted = citizenOf(target)
+	if wanted == nil then return false end
+	for _, row in ipairs(contactsOf(playerId)) do
+		if row.citizenId == wanted then return true end
+	end
+	return false
 end
 
 local function onInvite(rawTarget, rawKind)
@@ -580,18 +664,72 @@ local function onInvite(rawTarget, rawKind)
 	local kind = rawKind == 'contact' and 'contact' or nil
 	if target == nil then return refuse(playerId, 'badRequest', M.Operation.INVITE) end
 
+	-- A CALL GOES TO A CONTACT, AND TO NOBODY ELSE. The owner's decision: any
+	-- server id used to be ringable, and the answer said who was behind it
+	-- (`calls.placed {name}`) and what they were doing (in a call, down, not
+	-- loaded) -- a modified client walking ids 1..N read every character's name
+	-- and state, and alternating invite and withdraw rang a stranger's phone
+	-- every second and a half. A stranger now goes through the contact hand-over
+	-- first. The refusal is the same whoever the id names -- online or not, busy
+	-- or not -- so it says nothing about them. Checked before the model judges
+	-- anything, because the model's refusals are exactly what would leak.
+	if kind ~= 'contact' and target ~= playerId and not isContact(playerId, target) then
+		return refuse(playerId, 'notContact', M.Operation.INVITE)
+	end
+
+	-- A contact offer from a full list, refused before anybody is asked: the
+	-- exchange is both ways, and this half of it could not be written.
+	if kind == 'contact' and contactsFull(playerId, citizenOf(target)) then
+		return refuse(playerId, 'contactsFull', M.Operation.INVITE)
+	end
+
+	-- A contact offer to the same person, again, inside the floor.
+	if kind == 'contact' then
+		local mine = contactOffers[playerId]
+		local last = mine ~= nil and mine[target] or nil
+		if last ~= nil and OPX.Now() - last < CONTACT_REPEAT_MS then
+			return refuse(playerId, 'contactTooSoon', M.Operation.INVITE)
+		end
+	end
+
 	local invite, reason = registry.Invite(playerId, target, kind)
 	if invite == nil then return refuse(playerId, reason, M.Operation.INVITE) end
 
+	if invite.kind == 'contact' then
+		contactOffers[playerId] = contactOffers[playerId] or {}
+		contactOffers[playerId][target] = OPX.Now()
+	end
 	audit('calls.invite', playerId, true, ('%s -> %d (%s)'):format(invite.id, target, invite.kind))
 	push(playerId)
 	push(target)
 	if invite.kind == 'contact' then
+		-- The sender's own name: offering a contact is choosing to be known.
 		tell(target, 'calls.contact.offered', { name = nameOf(playerId) or '?' })
-	else
-		tell(target, 'calls.ringing', { name = nameOf(playerId) or '?' })
-		tell(playerId, 'calls.placed', { name = nameOf(target) or '?' })
+		-- The offerer is told too, without the other's name: pressing the eye row
+		-- did nothing visible, and a stranger's name is not theirs to read yet.
+		tell(playerId, 'calls.contact.sent')
 	end
+	-- NO "X IS CALLING YOU" / "CALLING X..." TOAST. The sphere pops on both
+	-- screens with exactly those words; the toast said them a second time.
+	-- The outcomes (answered, declined, rang out) are still toasts.
+end
+
+--- Says that an invite rang out, to both sides, and files it on both.
+-- The sweep's words, kept in one place because an answer that arrives in the
+-- gap between the invite expiring and the next sweep rings it out too.
+local function rangOut(invite)
+	if invite.kind == 'contact' then
+		tell(invite.from, 'calls.contact.unanswered')
+		return
+	end
+	tell(invite.from, 'calls.expired', { name = labelFor(invite.from, invite.to) })
+	-- BOTH SIDES, AND NOT THE SAME ROW. `unanswered` is what the caller
+	-- reads; `missed` is what the person who never looked at their screen
+	-- reads, and it is the one that makes the feature worth having.
+	fileRecent(invite.from, 'unanswered', labelFor(invite.from, invite.to), citizenOf(invite.to))
+	fileRecent(invite.to, 'missed', labelFor(invite.to, invite.from), citizenOf(invite.from))
+	audit('calls.unanswered', invite.from, true,
+		('%s did not pick up'):format(tostring(nameOf(invite.to) or invite.to)))
 end
 
 local function onAccept(rawInvite)
@@ -606,6 +744,13 @@ local function onAccept(rawInvite)
 		return refuse(playerId, 'tooFast', M.Operation.ANSWER)
 	end
 
+	local pending = registry.IncomingOf(playerId)
+	-- A CONTACT OFFER ACCEPTED INTO A FULL LIST is refused, and the offer left
+	-- standing: the player can delete a contact and answer it again.
+	if pending ~= nil and pending.kind == 'contact' and contactsFull(playerId, citizenOf(pending.from)) then
+		push(playerId)
+		return refuse(playerId, 'contactsFull', M.Operation.ANSWER)
+	end
 	local outcome, reason = registry.Accept(playerId, rawInvite)
 	if outcome == nil then
 		-- The state goes back with the refusal: an invite refused because it
@@ -613,6 +758,14 @@ local function onAccept(rawInvite)
 		-- "that already rang out" while the card sits there is being told the
 		-- screen is lying.
 		push(playerId)
+		-- AND TO THE CALLER, WHEN THE REFUSAL DROPPED THE INVITE. Expired in the
+		-- gap before the sweep, or a caller who went down while ringing: the
+		-- model drops the invite and the sweep can no longer find it, so the
+		-- caller's sphere said "Calling..." with no end and nothing filed.
+		if pending ~= nil and registry.OutgoingOf(pending.from) == nil then
+			push(pending.from)
+			if reason == 'expired' then rangOut(pending) end
+		end
 		return refuse(playerId, reason, M.Operation.ANSWER)
 	end
 
@@ -624,12 +777,16 @@ local function onAccept(rawInvite)
 		-- contact SHARED, with consent, not a number handed one way. Each write
 		-- is checked separately: a metadata write can fail on its own, and half
 		-- an exchange is worth a line in the journal.
-		local savedA = remember(a, citizenB, nameB)
-		local savedB = remember(b, citizenA, nameA)
+		local savedA, whyA = remember(a, citizenB, nameB)
+		local savedB, whyB = remember(b, citizenA, nameA)
 		audit('calls.contact', a, savedA and savedB,
 			('%s <-> %s'):format(tostring(citizenA), tostring(citizenB)))
-		tell(a, 'calls.contact.saved', { name = nameB })
-		tell(b, 'calls.contact.saved', { name = nameA })
+		-- A list that filled up between the offer and the answer is said to
+		-- its owner, never solved by dropping somebody else.
+		if whyA == 'contactsFull' then refuse(a, 'contactsFull', M.Operation.ANSWER)
+		else tell(a, 'calls.contact.saved', { name = nameB }) end
+		if whyB == 'contactsFull' then refuse(b, 'contactsFull', M.Operation.ANSWER)
+		else tell(b, 'calls.contact.saved', { name = nameA }) end
 		push(a)
 		push(b)
 		return
@@ -638,11 +795,7 @@ local function onAccept(rawInvite)
 	audit('calls.accept', playerId, true, ('%s (%s)'):format(outcome.callId, outcome.kind))
 	callChanged(outcome.callId)
 	local key = outcome.kind == 'join' and 'calls.joined' or 'calls.answered'
-	local joinedName = nameOf(outcome.joined) or '?'
-	for index = 1, #outcome.participants do
-		local id = outcome.participants[index]
-		if id ~= outcome.joined then tell(id, key, { name = joinedName }) end
-	end
+	tellEach(outcome.participants, outcome.joined, key, outcome.joined)
 end
 
 local function onDecline(rawInvite)
@@ -666,13 +819,14 @@ local function onDecline(rawInvite)
 	audit('calls.decline', playerId, true, tostring(outcome.kind))
 	push(playerId)
 	push(outcome.from)
+	if outcome.kind == 'contact' then tell(outcome.from, 'calls.contact.declined') end
 	if outcome.kind ~= 'contact' then
-		tell(outcome.from, 'calls.declined', { name = nameOf(playerId) or '?' })
+		tell(outcome.from, 'calls.declined', { name = labelFor(outcome.from, playerId) })
 		-- The refusal, on both sides and named honestly on each: the caller was
 		-- refused, and the person who refused turned one down. Neither is a
 		-- missed call and calling them one would be a small lie repeated daily.
-		fileRecent(outcome.from, 'declined', nameOf(playerId), citizenOf(playerId))
-		fileRecent(playerId, 'refused', nameOf(outcome.from), citizenOf(outcome.from))
+		fileRecent(outcome.from, 'declined', labelFor(outcome.from, playerId), citizenOf(playerId))
+		fileRecent(playerId, 'refused', labelFor(playerId, outcome.from), citizenOf(outcome.from))
 	end
 end
 
@@ -686,7 +840,7 @@ local function withdraw(playerId)
 	push(withdrawn.to)
 	audit('calls.cancel', playerId, true, tostring(withdrawn.kind))
 	if withdrawn.kind ~= 'contact' then
-		fileRecent(withdrawn.to, 'missed', nameOf(playerId), citizenOf(playerId))
+		fileRecent(withdrawn.to, 'missed', labelFor(withdrawn.to, playerId), citizenOf(playerId))
 	end
 end
 
@@ -730,13 +884,7 @@ local function onHangUp()
 	audit('calls.hangUp', playerId, true, ('%s ended=%s'):format(outcome.callId,
 		tostring(outcome.ended)))
 	callEnded(outcome)
-	local leaverName = nameOf(playerId) or '?'
-	for index = 1, #outcome.were do
-		local id = outcome.were[index]
-		if id ~= playerId then
-			tell(id, outcome.ended and 'calls.ended' or 'calls.left', { name = leaverName })
-		end
-	end
+	tellEach(outcome.were, playerId, outcome.ended and 'calls.ended' or 'calls.left', playerId)
 end
 
 -- Answers the caller their own contact list, with each row's reachability
@@ -755,13 +903,19 @@ end
 -- would be a presence tracker; one that reported who was CALLABLE is the
 -- feature, and the difference is that an offline contact is simply absent
 -- rather than listed as unavailable.
-local function onRoster()
-	local playerId = tonumber(source) or 0
-	if playerId <= 0 then return end
-	if OPX.Cooling(playerId, 'calls:roster', 1000) then return end
-
+--- Sends one player their contact list and their recent calls.
+local function sendRoster(playerId)
+	-- EVERY CONTACT IS LISTED NOW, the ones not connected too, greyed as
+	-- `offline`: a contact can be deleted, and a row nobody can see is a row
+	-- nobody can delete. Each row carries a REFERENCE, minted for this answer
+	-- and kept here, rather than the citizen id it stands for: the page names a
+	-- row to delete, and the server alone knows whose it is.
+	local refs = {}
+	rosterRefs[playerId] = refs
 	local rows = {}
-	for _, contact in ipairs(contactsOf(playerId)) do
+	for index, contact in ipairs(contactsOf(playerId)) do
+		local ref = 'k' .. tostring(index)
+		refs[ref] = contact.citizenId
 		local loaded = character ~= nil and type(character.GetPlayerByCitizenId) == 'function'
 			and character.GetPlayerByCitizenId(contact.citizenId) or nil
 		local data = loaded and loaded.PlayerData or nil
@@ -770,6 +924,7 @@ local function onRoster()
 			local kind, reason = registry.Consider(playerId, id, nil)
 			rows[#rows + 1] = {
 				id = id,
+				ref = ref,
 				-- The name as it is NOW rather than as it was written into the
 				-- contact row: a character named after the hand-over would
 				-- otherwise be listed under whatever they were called then.
@@ -777,6 +932,8 @@ local function onRoster()
 				kind = kind,
 				refusal = reason,
 			}
+		else
+			rows[#rows + 1] = { id = 0, ref = ref, name = contact.name, refusal = 'offline' }
 		end
 	end
 	table.sort(rows, function(left, right)
@@ -806,6 +963,31 @@ local function onRoster()
 	})
 end
 
+local function onRoster()
+	local playerId = tonumber(source) or 0
+	if playerId <= 0 then return end
+	if OPX.Cooling(playerId, 'calls:roster', 1000) then return end
+	sendRoster(playerId)
+end
+
+-- Deletes the contact a row of this player's last list stands for, and answers
+-- with the list as it is now.
+local function onForget(ref)
+	local playerId = tonumber(source) or 0
+	if playerId <= 0 then return end
+	if OPX.Cooling(playerId, 'calls:forget', requestMs) then
+		return refuse(playerId, 'tooFast', M.Operation.FORGET)
+	end
+	local refs = rosterRefs[playerId]
+	local citizenId = type(ref) == 'string' and #ref <= 8 and refs ~= nil and refs[ref] or nil
+	if citizenId == nil or not forget(playerId, citizenId) then
+		return refuse(playerId, 'badRequest', M.Operation.FORGET)
+	end
+	audit('calls.forget', playerId, true, tostring(citizenId))
+	tell(playerId, 'calls.contact.forgotten')
+	sendRoster(playerId)
+end
+
 -- Pushes the caller their state again. The module starting and the page
 -- mounting are the same request: "tell me what is happening to me".
 local function onReady()
@@ -821,10 +1003,27 @@ end
 local function departed(rawPlayerId)
 	local playerId = Model.PlayerId(rawPlayerId)
 	if playerId == nil then return end
+	-- Read before the registry forgets the slot: the row filed below names them,
+	-- to a viewer who has them as a contact and to nobody else (`labelFor`'s
+	-- rule, applied by hand because the leaver may be unloading already).
+	local leaverName, leaverCitizen = nameOf(playerId), citizenOf(playerId)
+	local function leaverLabel(viewer)
+		if leaverCitizen ~= nil then
+			for _, row in ipairs(contactsOf(viewer)) do
+				if row.citizenId == leaverCitizen then return leaverName or row.name end
+			end
+		end
+		return locale('calls.unknown')
+	end
 	local left, dropped = registry.Forget(playerId)
+	-- Both directions: what this player offered, and what was offered to the
+	-- slot, which the next holder of the id must not inherit.
+	contactOffers[playerId] = nil
+	for _, offered in pairs(contactOffers) do offered[playerId] = nil end
+	rosterRefs[playerId] = nil
 	-- The platform clears a lease on disconnect by itself; the local record is
 	-- cleared so a recycled slot does not inherit a lease nobody holds.
-	eyesHeld[playerId] = nil
+	eyesHeld[playerId], eyesRenewedAt[playerId] = nil, nil
 	-- The cooldown windows are NOT cleared here. `core/server/answer.lua` owns
 	-- them and purges them from its own handler on the same event, and the
 	-- comment there says why it must be the one place: a window left behind
@@ -833,12 +1032,22 @@ local function departed(rawPlayerId)
 		local invite = dropped[index]
 		local other = invite.from == playerId and invite.to or invite.from
 		push(other)
+		-- A RING CUT BY A DISCONNECT IS SAID, AND FILED. The other screen just
+		-- went quiet: a caller who quit left no missed call, and a callee who
+		-- quit left the caller's dial tone stopping with no word.
+		if invite.kind ~= 'contact' and invite.from == playerId then
+			fileRecent(invite.to, 'missed', leaverLabel(invite.to), leaverCitizen)
+		elseif invite.kind ~= 'contact' then
+			tell(invite.from, 'calls.cutOff')
+			fileRecent(invite.from, 'unanswered', leaverLabel(invite.from), leaverCitizen)
+		end
 	end
 	if left ~= nil then
 		callEnded(left)
-		for index = 1, #left.were do
-			if left.were[index] ~= playerId then tell(left.were[index], 'calls.ended') end
-		end
+		-- What `onHangUp` says, because a disconnect is a hang-up nobody pressed:
+		-- in a call of three the other two are still talking, and telling them
+		-- "the call ended" was wrong.
+		tellEach(left.were, playerId, left.ended and 'calls.ended' or 'calls.left', playerId)
 	end
 end
 
@@ -848,16 +1057,7 @@ local function scan()
 	for _, invite in ipairs(registry.Expire()) do
 		push(invite.from)
 		push(invite.to)
-		if invite.kind ~= 'contact' then
-			tell(invite.from, 'calls.expired', { name = nameOf(invite.to) or '?' })
-			-- BOTH SIDES, AND NOT THE SAME ROW. `unanswered` is what the caller
-			-- reads; `missed` is what the person who never looked at their screen
-			-- reads, and it is the one that makes the feature worth having.
-			fileRecent(invite.from, 'unanswered', nameOf(invite.to), citizenOf(invite.to))
-			fileRecent(invite.to, 'missed', nameOf(invite.from), citizenOf(invite.from))
-			audit('calls.unanswered', invite.from, true,
-				('%s did not pick up'):format(tostring(nameOf(invite.to) or invite.to)))
-		end
+		rangOut(invite)
 	end
 
 	-- A PARTICIPANT WHO CAN NO LONGER TAKE A CALL IS TAKEN OFF IT, and this is
@@ -865,10 +1065,16 @@ local function scan()
 	-- that matters: the platform drops the eye-glow lease on death by itself,
 	-- so without this the call would carry on with a corpse on it whose eyes
 	-- had gone dark -- a state no screen could explain.
+	--
+	-- `unreadable` IS NOT ONE OF THOSE. It means the host could not be asked --
+	-- a raise from `getLifeState` or the readiness gate -- and `judge` keeps it
+	-- apart from a refusal naming the player for exactly this: one bad second of
+	-- the host used to hang up every live call on the server.
 	local ending = {}
 	for _, callId in ipairs(registry.CallIds()) do
 		for _, id in ipairs(registry.Participants(callId)) do
-			if not judge(id) then ending[#ending + 1] = id end
+			local reachable, why = judge(id)
+			if not reachable and why ~= 'unreadable' then ending[#ending + 1] = id end
 		end
 	end
 	for index = 1, #ending do
@@ -876,12 +1082,8 @@ local function scan()
 		if outcome ~= nil then
 			audit('calls.hangUp', ending[index], true, 'dropped: no longer reachable')
 			callEnded(outcome)
-			for at = 1, #outcome.were do
-				if outcome.were[at] ~= ending[index] then
-					tell(outcome.were[at], outcome.ended and 'calls.ended' or 'calls.left',
-						{ name = nameOf(ending[index]) or '?' })
-				end
-			end
+			tellEach(outcome.were, ending[index], outcome.ended and 'calls.ended' or 'calls.left',
+				ending[index])
 		end
 	end
 
@@ -897,7 +1099,7 @@ local function scan()
 				if on == false then
 					Open77.log.warn(('[calls] the eye-glow lease for %d was dropped; re-taking it')
 						:format(id))
-					eyesHeld[id] = nil
+					eyesHeld[id], eyesRenewedAt[id] = nil, nil
 				end
 			end
 			-- RENEWED EVERY RENEW_MS, NOT EVERY PASS. `EYES.RENEW_MS` was in the
@@ -1024,6 +1226,7 @@ end
 --- Builds the registry and settles every bound out of the config.
 -- @author dop42
 function M.Init()
+	contactOffers = {}
 	local settings = M.Settings
 	local clamp = OPX.Math.Clamp
 	-- Named for what it RETURNS, and the suite holds every file to it. The header
@@ -1087,6 +1290,7 @@ function M.Start()
 	RegisterNetEvent(M.Event.DECLINE, onDecline)
 	RegisterNetEvent(M.Event.HANG_UP, onHangUp)
 	RegisterNetEvent(M.Event.WITHDRAW, onWithdraw)
+	RegisterNetEvent(M.Event.FORGET, onForget)
 	AddEventHandler(OPX.Host.PLAYER_DISCONNECTED, departed)
 
 	-- The fast path off a death, so a flatlined participant is off the call in

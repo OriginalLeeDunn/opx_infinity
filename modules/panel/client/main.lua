@@ -77,16 +77,11 @@ local pendingOpen = false
 -- Wiring the channels builds the surface, so it waits for the first open.
 local wired = false
 
-local down = false
-local downHeard = 0
-
 -- ── parsing a spec ──────────────────────────────────────────────────────────
 
 --- Whether a value is an identifier: non-empty text without control characters.
-local function validId(value, maximum)
-	return type(value) == 'string' and #value > 0 and #value <= maximum
-		and not value:find('%c')
-end
+-- `OPX.Modal`'s, shared with `menu` and `form`, aliased rather than wrapped.
+local validId = OPX.Modal.ValidId
 
 --- Display text with control characters blanked, cut to a character count.
 local function clean(value, maximum)
@@ -102,33 +97,17 @@ local function isList(value, maximum)
 	return count <= maximum and count == #value
 end
 
---- Counts a payload's value nodes the way the host counts them: the value
---- itself, and both halves of every pair under a table.
--- The rule is `modules/menu`'s `fitsInPayload` and the two must not drift. It
--- stops at the ceiling, so a runaway table costs a bounded walk.
-local function countNodes(value, budget)
-	budget.nodes = budget.nodes + 1
-	if budget.nodes > budget.ceiling then return false end
-	if type(value) ~= 'table' then return true end
-	for key, nested in pairs(value) do
-		if not countNodes(key, budget) then return false end
-		if not countNodes(nested, budget) then return false end
-	end
-	return true
-end
-
 --- Whether a payload fits the host's bound, and the nodes counted getting there.
+-- The count is the value itself and both halves of every pair under a table,
+-- the way the host counts them: `OPX.Modal.Fits`, the one rule `menu` and
+-- `form` hold their data to as well. It stops at the ceiling, so a runaway
+-- table costs a bounded walk.
 local function fits(payload)
-	local budget = { nodes = 0, ceiling = MAX_PAYLOAD_NODES }
-	return countNodes(payload, budget), budget.nodes
+	return OPX.Modal.Fits(payload, MAX_PAYLOAD_NODES)
 end
 
 --- What one value costs, counted whole.
-local function nodeCost(value)
-	local budget = { nodes = 0, ceiling = math.huge }
-	countNodes(value, budget)
-	return budget.nodes
-end
+local nodeCost = OPX.Modal.Nodes
 
 --- Text that may be absent, answering the text or a refusal code.
 local function optionalText(value, maximum, field)
@@ -563,12 +542,23 @@ end
 -- do anything about: the host refuses an oversized payload whole and
 -- `OPX.Surface.Send` still answers that it sent it. Everything this module puts
 -- on the wire goes through here, so this is the one place that can be sure.
+--
+-- A PATCH IS NOT COUNTED, on the argument `Open` makes for the spec: every
+-- field of a patch comes out of a parser in `PARSERS` that bounds it, so the
+-- largest patch is the largest spec, under five hundred nodes -- a check that
+-- cannot fire. It was not free: the walk is ~17 VM instructions a node, 3,600
+-- of the 5,600 a fitting-room state cost and ~6,500 of a sixty-box window, in
+-- the caller's resume, against a client budget of ~10,000 a resume that
+-- unwinds the coroutine silently. `panel:items` is the one payload its parser
+-- does not bound, and it is still counted.
+-- @param bounded boolean|nil true for a payload built only by `PARSERS`
 -- @return boolean
 -- @return string|nil the refusal
-local function push(channel, payload)
+local function push(channel, payload, bounded)
 	if record == nil then return false, 'no_panel_open' end
 
-	local within, nodes = fits(payload)
+	local within, nodes = true, 0
+	if not bounded then within, nodes = fits(payload) end
 	if not within then
 		Open77.log.error(('[panel] %s: %s came to %d+ value nodes against a host bound of %d; ' ..
 			'not sent'):format(record.owner, channel, nodes, MAX_PAYLOAD_NODES))
@@ -583,8 +573,13 @@ local function push(channel, payload)
 		-- way anybody would find out -- the symptom on the page is a surface that
 		-- simply never changes.
 		if refused then
-			Open77.log.error(('[panel] %s: the host refused %s although it counted %d nodes; ' ..
-				'MAX_PAYLOAD_NODES is wrong'):format(record.owner, channel, nodes))
+			if bounded then
+				Open77.log.error(('[panel] %s: the host refused %s, a patch every parser ' ..
+					'bounds; MAX_PAYLOAD_NODES is wrong'):format(record.owner, channel))
+			else
+				Open77.log.error(('[panel] %s: the host refused %s although it counted %d nodes; ' ..
+					'MAX_PAYLOAD_NODES is wrong'):format(record.owner, channel, nodes))
+			end
 			return false, 'payload_refused'
 		end
 		if not sent then return false, 'page_not_ready' end
@@ -658,11 +653,36 @@ local function closeNow(handle, reason)
 	return true
 end
 
---- Whether an owner's panel opens, and stays open, while the player is down.
-local function allowedWhileDown(owner)
-	local allowed = M.Settings.WHILE_DOWN
-	return type(allowed) == 'table' and allowed[owner] == true
-end
+-- THE DOWN STATE, THE OWNER SWEEP, ESCAPE AND THE UPKEEP PASS are `OPX.Modal`'s,
+-- one implementation for `menu`, `form` and `panel`.
+--
+-- Escape on the pause key rather than on `panel:dismiss` is the pause menu, AND
+-- IT ASKS WHERE ESCAPE WOULD HAVE ASKED. This closed every panel outright,
+-- including one whose owner declared `dismiss = 'ask'` -- the editor with
+-- unsaved changes -- so the same key that is consulted on the page was not
+-- consulted here, and the menu already honours its own `closable` on this
+-- path. A dialog up owns Escape, as it does on `panel:dismiss`, and a panel
+-- with a dialog up still takes the press when it is on top.
+local life = OPX.Modal.New({
+	name = 'panel',
+	current = function() return record end,
+	close = function(reason) closeNow(record.handle, reason) end,
+	settings = function() return M.Settings end,
+	pauseKey = M.Host.PAUSE_KEY,
+	pause = function(panel)
+		if panel.dialog ~= nil then return end
+		if panel.view.dismiss == 'ask' then
+			raise(panel, 'dismiss')
+			return
+		end
+		closeNow(panel.handle, 'pause')
+	end,
+	job = 'panel:sweep',
+	everyMs = SWEEP_MS,
+	-- The open is re-sent until the page reports ready: a surface built on first
+	-- use is not ready when the first panel opens on it.
+	upkeep = function() flush() end,
+})
 
 --- Opens a panel, replacing the caller's own or, with `steal`, another's.
 -- @author dop42
@@ -680,7 +700,7 @@ local function Open(spec)
 	-- Nothing to draw on, and there never will be at this start.
 	if OPX.UI.Interactive() == nil then return Result.Err('no_surface') end
 
-	if down and not allowedWhileDown(owner) then return Result.Err('player_down') end
+	if life.Blocked(owner) then return Result.Err('player_down') end
 	if record ~= nil and record.owner ~= owner and spec.steal ~= true then
 		return Result.Err('panel_busy')
 	end
@@ -703,13 +723,13 @@ local function Open(spec)
 	-- `panel:items` is unbounded by its parser, and that is where the counting
 	-- is: see `push` and `chunkItems`.
 
-	if record ~= nil then
-		closeNow(record.handle, record.owner == owner and 'reopened' or 'superseded')
-	end
+	-- What a close callback opens in turn is closed too (see `Supersede`).
+	if record ~= nil then life.Supersede(record.owner == owner and 'reopened' or 'superseded') end
 
 	nextHandle = nextHandle + 1
 	record = {
 		handle = nextHandle,
+		openedAtMs = OPX.Now(),
 		owner = owner,
 		on = spec.on,
 		view = view,
@@ -775,7 +795,7 @@ local function Update(handle, patch)
 	end
 
 	parsed.handle = panel.handle
-	local sent, refused = push('panel:update', parsed)
+	local sent, refused = push('panel:update', parsed, true)
 	if not sent then return Result.Err(refused or 'page_not_ready') end
 	return Result.Ok(true)
 end
@@ -875,11 +895,7 @@ end
 -- ── what the player did ─────────────────────────────────────────────────────
 
 --- The open panel when a page payload names it, or nil for a stale one.
-local function fromPage(payload)
-	if record == nil or type(payload) ~= 'table' then return nil end
-	if payload.handle ~= record.handle then return nil end
-	return record
-end
+local fromPage = life.FromPage
 
 --- Whether a button id is one this panel currently draws.
 local function isButton(panel, id)
@@ -1027,34 +1043,9 @@ local function onDismiss(payload)
 	closeNow(panel.handle, 'dismissed')
 end
 
--- Answers the surface-wide focus broadcast for this module's own owners.
---
--- THE BROADCAST NAMES THE WHOLE STACK'S TOP, NOT JUST "EMPTY OR NOT", and
--- reading only the empty case was the incomplete half of this idiom.
--- `ui/src/bridge/focus.ts` announces on EVERY change to the page's focus stack,
--- carrying the one owner now on top -- so a top that moved from one of OURS to
--- somebody else's arrives here as `focus = true` with an owner this module does
--- not know, and the old shape did nothing at all with that. The stale Lua entry
--- then sat above the module actually on screen and `applyFocus` applied ITS
--- wants: the chat line's `cursor = false` over the inventory's `cursor = true`,
--- with the inventory drawn and the cursor gone.
---
--- The answer is the same in all six copies: release every owner of mine that is
--- NOT the announced one, then acquire the announced one if it is mine. `form`,
--- `menu` and `panel` are saved from the worst of it by an explicit
--- `ReleaseFocus` on their close paths; `chat` and `downed` have none, so for
--- those two this handler is the only release there is.
-local function onFocus(payload)
-	if type(payload) ~= 'table' then return end
-	local owner = payload.owner
-	local held = (payload.focus == true and type(owner) == 'string') and owner or nil
-	for name in pairs(FOCUS) do
-		if name ~= held then OPX.UI.ReleaseFocus(name) end
-	end
-	local wants = held ~= nil and FOCUS[held] or nil
-	if wants == nil then return end
-	OPX.UI.AcquireFocus(held, wants)
-end
+-- Answers the surface-wide focus broadcast for this module's own owners, the
+-- panel and its dialog: see `OPX.Modal.FocusResponder`.
+local onFocus = OPX.Modal.FocusResponder(FOCUS)
 
 --- Wires the page channels once, on the first open.
 wire = function()
@@ -1072,43 +1063,6 @@ wire = function()
 	OPX.UI.On(SURFACE, 'focus:set', onFocus)
 end
 
--- ── upkeep and the player being down ────────────────────────────────────────
-
---- Closes a panel whose owner is a module that has stopped.
--- Only a declared module is swept: an owner this runtime knows nothing about
--- is left alone rather than guessed at.
-local function sweepOwner()
-	if record == nil then return end
-	local owner = OPX.Modules.Record(record.owner)
-	if owner ~= nil and owner.State ~= 'started' then
-		closeNow(record.handle, 'owner_stopped')
-	end
-end
-
---- Holds the down flag and closes a panel not allowed to stay up.
-local function setDown(value)
-	down = value == true
-	if down and record ~= nil and not allowedWhileDown(record.owner) then
-		closeNow(record.handle, 'player_down')
-	end
-end
-
---- Catches up once with a player who went down before this module started.
--- A state heard while the read was in flight is newer than the read, and wins.
-local function adoptDownState()
-	local downed = OPX.Api.Get('downed')
-	if downed == nil then return end
-	local heard = downHeard
-	local answer = downed.IsDown()
-	if not answer.ok then
-		Open77.log.warn(('[panel] the downed contract did not answer: %s')
-			:format(tostring(answer.error)))
-		return
-	end
-	if downHeard ~= heard then return end
-	setDown(answer.value.down == true)
-end
-
 -- ── lifecycle ───────────────────────────────────────────────────────────────
 
 --- Builds the held state.
@@ -1118,8 +1072,7 @@ function M.Init()
 	nextHandle = 0
 	pendingOpen = false
 	wired = false
-	down = false
-	downHeard = 0
+	life.Reset()
 end
 
 --- Publishes the panel contract.
@@ -1138,27 +1091,7 @@ end
 --- Wires the down state, the pause key and the owner sweep.
 -- @author dop42
 function M.Start()
-	AddEventHandler(OPX.Event(OPX.Channel.LOCAL, 'downed', 'changed'), function(payload)
-		if type(payload) ~= 'table' then return end
-		downHeard = downHeard + 1
-		setDown(payload.down == true)
-	end)
-
-	-- Escape is swallowed by the plugin before any surface sees it; when it
-	-- arrives here rather than on `panel:dismiss`, the reason is the pause menu.
-	AddEventHandler(M.Host.PAUSE_KEY, function()
-		if record ~= nil then closeNow(record.handle, 'pause') end
-	end)
-
-	OPX.Scheduler.Every('panel:sweep', SWEEP_MS, function()
-		if record == nil then return end
-		-- The open is re-sent until the page reports ready: a surface built on
-		-- first use is not ready when the first panel opens on it.
-		flush()
-		sweepOwner()
-	end)
-
-	adoptDownState()
+	life.Start()
 end
 
 --- Closes whatever is open and hands the cursor back.

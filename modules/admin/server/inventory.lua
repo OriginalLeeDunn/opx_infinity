@@ -210,10 +210,15 @@ end
 -- @return integer|string|nil
 -- @return string|nil
 -- @return integer|nil
-function Inventory.Resolve(source, raw, token)
+-- @param harm string|nil the audit event of an action that hurts the holder: a
+-- connected holder who is protected is refused (see `Server.Protected`)
+function Inventory.Resolve(source, raw, token, harm)
 	local target, who, playerId, code = Inventory.Target(source, token)
 	if target == nil then
 		refuse(source, raw, code)
+		return nil
+	end
+	if harm ~= nil and playerId ~= nil and Server.Shielded(source, raw, playerId, harm) then
 		return nil
 	end
 	if not Inventory.Running() then
@@ -262,6 +267,37 @@ function Inventory.Bag(target)
 		weight = Text.Integer(bag.weight) or 0,
 		items = items,
 	}, nil, nil
+end
+
+-- WHICH WEAPON GRANT A BAG ACTION ALSO NEEDS. The bag commands move whatever
+-- the catalogue holds, and the catalogue holds the weapons and their rounds:
+-- `inventory.give pistol` handed out a gun to an operator refused
+-- `weapon.give`, and `inventory.clear` disarmed a player for one refused
+-- `weapon.remove`. A weapon or ammunition item now needs the weapon command
+-- that does the same thing, on top of the bag command.
+local WEAPON_GRANTS = {
+	give = { weapon = 'WEAPON_GIVE', ammo = 'WEAPON_GIVEAMMO' },
+	take = { weapon = 'WEAPON_REMOVE', ammo = 'WEAPON_AMMO' },
+}
+
+--- Whether the operator holds the weapon grant a bag action on this item also
+--- needs, refusing and auditing when not. A plain item needs none.
+-- @author dop42
+-- @param source Source
+-- @param raw string
+-- @param event string
+-- @param playerId Source|nil
+-- @param item table|nil a catalogue entry
+-- @param action string 'give' or 'take'
+-- @return boolean
+function Inventory.WeaponGrant(source, raw, event, playerId, item, action)
+	if type(item) ~= 'table' or (not item.weapon and not item.ammo) then return true end
+	local name = Command[WEAPON_GRANTS[action][item.weapon and 'weapon' or 'ammo']]
+	if Server.Permitted(source, name) == true then return true end
+	audit(source, event, false, playerId, ('%s needs %s'):format(tostring(item.name), name))
+	refuse(source, raw, 'weapon_not_granted',
+		{ item = tostring(item.label or item.name), command = name })
+	return false
 end
 
 --- Audits a refused bag action and answers the refusal.
@@ -382,7 +418,7 @@ function Inventory.Register()
 		handler = function(source, args, raw)
 			local target, who, playerId = Inventory.Resolve(source, raw, args[1])
 			if target == nil then return end
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				local bag, code, reason = Inventory.Bag(target)
 				if not bag then
 					return Inventory.Fail(source, raw, 'admin.inventory.view', playerId, who, code, reason)
@@ -418,7 +454,7 @@ function Inventory.Register()
 			wanted = wanted or 1
 			local target, who, playerId = Inventory.Resolve(source, raw, args[1])
 			if target == nil then return end
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				local event = 'admin.inventory.give'
 				local index, code = Inventory.Catalog()
 				if not index then return Inventory.Fail(source, raw, event, playerId, who, code) end
@@ -427,6 +463,7 @@ function Inventory.Register()
 					return Inventory.Fail(source, raw, event, playerId, who, 'unknown_item',
 						M.Trimmed(args[2], 48), { item = M.Trimmed(args[2], 48) })
 				end
+				if not Inventory.WeaponGrant(source, raw, event, playerId, item, 'give') then return end
 				if not Inventory.Give(source, raw, event, target, who, playerId, item.name, wanted, nil,
 					item.label) then
 					return
@@ -452,11 +489,14 @@ function Inventory.Register()
 				return refuse(source, raw, 'bad_count', { max = Inventory.MaxCount() })
 			end
 			wanted = wanted or 1
-			local target, who, playerId = Inventory.Resolve(source, raw, args[1])
+			local target, who, playerId = Inventory.Resolve(source, raw, args[1], 'admin.inventory.remove')
 			if target == nil then return end
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				local event = 'admin.inventory.remove'
-				local label = Inventory.LabelOf(Inventory.Catalog(), name)
+				local index = Inventory.Catalog()
+				local item = index and Inventory.Item(index, name) or nil
+				if not Inventory.WeaponGrant(source, raw, event, playerId, item, 'take') then return end
+				local label = Inventory.LabelOf(index, name)
 				local removed, code, reason = Inventory.Take(target, name, wanted)
 				if not removed then
 					return Inventory.Fail(source, raw, event, playerId, who, code, reason,
@@ -474,10 +514,22 @@ function Inventory.Register()
 	Server.Command(Command.INVENTORY_CLEAR, {
 		help = 'admin.help.invClear', params = { TARGET },
 		handler = function(source, args, raw)
-			local target, who, playerId = Inventory.Resolve(source, raw, args[1])
+			local target, who, playerId = Inventory.Resolve(source, raw, args[1], 'admin.inventory.clear')
 			if target == nil then return end
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				local event = 'admin.inventory.clear'
+				-- A clear takes everything, so every weapon and round in the bag is
+				-- checked against its grant first. A bag that cannot be read is not
+				-- cleared: what it holds is exactly what this cannot vouch for.
+				local bag, readCode, readReason = Inventory.Bag(target)
+				if bag == nil then
+					return Inventory.Fail(source, raw, event, playerId, who, readCode, readReason)
+				end
+				local index = Inventory.Catalog()
+				for _, stack in ipairs(bag.items) do
+					local item = index and Inventory.Item(index, stack.name) or nil
+					if not Inventory.WeaponGrant(source, raw, event, playerId, item, 'take') then return end
+				end
 				local contract = Server.Contract('inventory')
 				local cleared, code, reason = Inventory.Read(contract.ClearInventory(target))
 				if cleared == nil then

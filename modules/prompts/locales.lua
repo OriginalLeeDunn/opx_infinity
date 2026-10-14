@@ -35,22 +35,30 @@ OPX.Locale.Register('en', {
 	['prompts.key.RMB'] = 'RMB',
 	['prompts.key.MMB'] = 'MMB',
 	['prompts.key.SCROLL'] = 'SCROLL',
+
+	-- What the contract answers a calling resource; never a toast of ours.
+	['prompts.invalidOwner'] = 'That owner name is not valid.',
+	['prompts.invalidId'] = 'That prompt id is not valid.',
+	['prompts.invalidPlayer'] = 'There is no such player.',
+	['prompts.limit'] = 'The key strip is full.',
+	['prompts.ownerLimit'] = 'This resource already has as many prompt groups as it may.',
+	['prompts.notFound'] = 'There is no such prompt group.',
 })
 
 OPX.Locale.Register('fr', {
 	['prompts.hold'] = 'MAINTENIR',
 
 	['prompts.key.SPACE'] = 'ESPACE',
-	['prompts.key.ENTER'] = 'ENTREE',
-	['prompts.key.RETURN'] = 'ENTREE',
-	['prompts.key.ESC'] = 'ECHAP',
-	['prompts.key.ESCAPE'] = 'ECHAP',
-	['prompts.key.BACKSPACE'] = 'RET ARR',
+	['prompts.key.ENTER'] = 'ENTRÉE',
+	['prompts.key.RETURN'] = 'ENTRÉE',
+	['prompts.key.ESC'] = 'ÉCHAP',
+	['prompts.key.ESCAPE'] = 'ÉCHAP',
+	['prompts.key.BACKSPACE'] = 'RETOUR',
 	['prompts.key.DELETE'] = 'SUPPR',
 	['prompts.key.INSERT'] = 'INSER',
 	['prompts.key.HOME'] = 'ORIGINE',
 	['prompts.key.END'] = 'FIN',
-	['prompts.key.PAGEUP'] = 'PG PREC',
+	['prompts.key.PAGEUP'] = 'PG PRÉC',
 	['prompts.key.PAGEDOWN'] = 'PG SUIV',
 	['prompts.key.CAPSLOCK'] = 'MAJ',
 	['prompts.key.TAB'] = 'TAB',
@@ -63,4 +71,11 @@ OPX.Locale.Register('fr', {
 	['prompts.key.RMB'] = 'CLIC D',
 	['prompts.key.MMB'] = 'CLIC M',
 	['prompts.key.SCROLL'] = 'MOLETTE',
+
+	['prompts.invalidOwner'] = "Ce nom de propriétaire n'est pas valide.",
+	['prompts.invalidId'] = "Cet identifiant d'invite n'est pas valide.",
+	['prompts.invalidPlayer'] = "Ce joueur n'existe pas.",
+	['prompts.limit'] = 'La barre des touches est pleine.',
+	['prompts.ownerLimit'] = "Cette ressource a déjà autant de groupes d'invites qu'elle peut.",
+	['prompts.notFound'] = "Ce groupe d'invites n'existe pas.",
 })

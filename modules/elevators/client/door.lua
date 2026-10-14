@@ -42,18 +42,15 @@ local function keySettings()
 	return declared or { ID = 'opx.elevators.use', NAME = 'elevators.key.use', DEFAULT = 'E' }
 end
 
--- Whether another surface holds the keyboard.
-local function captured()
-	local input = Open77.input
-	if type(input) ~= 'table' or type(input.isCaptured) ~= 'function' then return false end
-	local read, answer = pcall(input.isCaptured)
-	return read and answer == true
-end
+-- Whether another surface holds the keyboard; see `lib/client/spots.lua`.
+local captured = OPX.Spots.Captured
 
 -- Brings the strip in line with the lift the player is standing at.
 local function syncPrompt()
 	local key = nil
-	if keyRegistered and not captured() then key = Runtime.Nearest() end
+	-- The claim on the shared key is filed every pass, row or no row.
+	local wins = OPX.Spots.Key.Shows(keySettings().ID)
+	if keyRegistered and not captured() and wins then key = Runtime.Nearest() end
 	if key == shown then return end
 
 	local api = OPX.Api.Get('prompts')
@@ -85,7 +82,7 @@ end
 local function say(failure)
 	local raised = OPX.Toast.Show({
 		id = 'opx.elevators.answer',
-		kind = 'error',
+		kind = OPX.Result.Kind(failure, 'error'),
 		title = locale('elevators.title'),
 		message = locale(Door.REFUSAL[failure] or 'elevators.refused'),
 		durationMs = 5000,
@@ -99,7 +96,7 @@ Door.REFUSAL = {
 	no_such_elevator = 'elevators.noSuchElevator',
 	no_floors_available = 'elevators.noFloors',
 	menu_not_running = 'elevators.noPanel',
-	player_down = 'elevators.refused',
+	player_down = 'elevators.downed',
 }
 
 --- Opens the floor list at the lift the player is standing at.
@@ -107,25 +104,44 @@ Door.REFUSAL = {
 -- @param origin string|nil the key, or a caller's name
 -- @return table
 function Door.Open(origin)
-	local opened = Panel.Open(nil)
+	local fromKey = origin == nil or origin == 'key'
 	-- NOT A WORD WHEN THE KEY FINDS NO LIFT. E is shared: clothing, garages,
-	-- dealership and teleports declare it too, and they already stay silent away
-	-- from their spots. This one answered every press anywhere on the map with
-	-- "you are not standing at an elevator", which is the owner's report. Only a
-	-- press AT a lift, or a caller that named itself, is told why it failed.
-	local quiet = (origin == nil or origin == 'key') and opened.error == 'no_elevator_nearby'
+	-- dealership, teleports and doors declare it too, and they already stay
+	-- silent away from their spots. This one answered every press anywhere on
+	-- the map with "you are not standing at an elevator", which is the owner's
+	-- report. Only a press AT a lift, or a caller that named itself, is told why
+	-- it failed.
+	--
+	-- ASKED BEFORE THE PANEL IS, for the key. `Panel.Open` checks the down state
+	-- and the menu before it looks for a lift, so a player who pressed E while
+	-- down -- for anything, anywhere -- was told "not while downed" by a lift
+	-- that was not there.
+	if fromKey and Runtime.Nearest() == nil then
+		return { ok = false, error = 'no_elevator_nearby', source = 'key' }
+	end
+	local opened = Panel.Open(nil)
+	local quiet = fromKey and opened.error == 'no_elevator_nearby'
 	if opened.ok ~= true and not quiet then say(opened.error) end
 	opened.source = origin or 'key'
 	return opened
+end
+
+-- How far the player is from the lift the key would open, for the contest on a
+-- shared key: the sighting's own reach, as `State.Nearest` ranks it.
+local function wants()
+	local key = Runtime.Nearest()
+	if key == nil then return nil end
+	local lift = M.State and M.State.seen and M.State.seen[key] or nil
+	local reach = type(lift) == 'table' and (lift.reach or lift.distance) or nil
+	return OPX.Spots.Key.Rank('SPOT'), type(reach) == 'number' and reach or nil
 end
 
 --- What the door holds, for a diagnostic or a test.
 -- @author dop42
 -- @return table
 function Door.Report()
-	local declared = keySettings()
 	return {
-		key = keyRegistered and (OPX.Lib.Input.KeyFor(declared.ID) or declared.DEFAULT) or nil,
+		key = OPX.Spots.Key.Label(keyRegistered, keySettings()),
 		shown = shown,
 	}
 end
@@ -139,31 +155,18 @@ end
 --- Declares the key and starts the row's sync.
 -- @author dop42
 function Door.Start()
-	local declared = keySettings()
-	if declared.DEFAULT ~= false then
-		local called, ok, answer = pcall(RegisterKeyMapping, declared.ID, locale(declared.NAME),
-			declared.DEFAULT, function()
-				if captured() then return end
-				local ran, failure = pcall(Door.Open, 'key')
-				if not ran then
-					Open77.log.error(('[elevators] key %s: %s'):format(declared.ID, tostring(failure)))
-				end
-			end)
-		-- The card documents `true, key`; an effective key alone is accepted as
-		-- well, as the other place modules do.
-		local effective = called and (
-			(type(ok) == 'string' and ok ~= '' and ok) or
-			(ok == true and type(answer) == 'string' and answer ~= '' and answer)) or nil
-		if not called or (ok ~= true and not effective) then
-			Open77.log.warn(('[elevators] key mapping %s (%s) not registered: %s')
-				:format(declared.ID, tostring(declared.DEFAULT), tostring(called and answer or ok)))
-		else
-			keyRegistered = true
-		end
-	end
+	-- The key, and the silent press, the way every spot module declares it: see
+	-- `OPX.Spots.Key.Register`. What a press away from a lift says is
+	-- `Door.Open`'s own rule (nothing).
+	keyRegistered = OPX.Spots.Key.Register({
+		tag = 'elevators',
+		declared = keySettings(),
+		onPress = Door.Open,
+		wants = wants,
+	})
 
 	-- The row follows the scan's own sightings, so it runs at the scan's pace.
-	local every = M.Access.SCAN_MS > 0 and M.Access.SCAN_MS or 2000
+	local every = M.Access.SCAN_MS > 0 and M.Access.SCAN_MS or 500
 	syncJob = OPX.Scheduler.Every('elevators:door', every, syncPrompt)
 end
 

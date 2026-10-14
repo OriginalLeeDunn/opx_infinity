@@ -156,7 +156,7 @@ function Weapons.Register()
 			end
 			local target, who, playerId = Inventory.Resolve(source, raw, args[1])
 			if target == nil then return end
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				local event = 'admin.weapon.give'
 				local index, code = Inventory.Catalog()
 				if not index then return Inventory.Fail(source, raw, event, playerId, who, code) end
@@ -213,7 +213,7 @@ function Weapons.Register()
 			end
 			local target, who, playerId = Inventory.Resolve(source, raw, args[1])
 			if target == nil then return end
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				local event = 'admin.weapon.giveammo'
 				local index, code = Inventory.Catalog()
 				if not index then return Inventory.Fail(source, raw, event, playerId, who, code) end
@@ -247,9 +247,9 @@ function Weapons.Register()
 			if typed == false then
 				return refuse(source, raw, 'bad_count', { max = Inventory.MaxCount() })
 			end
-			local target, who, playerId = Inventory.Resolve(source, raw, args[1])
+			local target, who, playerId = Inventory.Resolve(source, raw, args[1], 'admin.weapon.ammo')
 			if target == nil then return end
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				local event = 'admin.weapon.ammo'
 				local index, code = Inventory.Catalog()
 				if not index then return Inventory.Fail(source, raw, event, playerId, who, code) end
@@ -317,9 +317,9 @@ function Weapons.Register()
 		handler = function(source, args, raw)
 			if M.Trimmed(args[2], 48) == nil then return refuse(source, raw, 'unknown_weapon') end
 			local all = tostring(args[2]):lower() == 'all'
-			local target, who, playerId = Inventory.Resolve(source, raw, args[1])
+			local target, who, playerId = Inventory.Resolve(source, raw, args[1], 'admin.weapon.remove')
 			if target == nil then return end
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				local event = 'admin.weapon.remove'
 				local index, only, bag = weaponsInBag(source, raw, event, target, who, playerId,
 					not all and args[2] or nil)
@@ -345,8 +345,11 @@ function Weapons.Register()
 						failure = { code = takeCode, reason = takeReason }
 					end
 				end
+				-- `failure` is nil when nothing was even tried -- every stack counted
+				-- zero -- and indexing it raised on this bare thread: no answer at all.
 				if removed == 0 then
-					return Inventory.Fail(source, raw, event, playerId, who, failure.code, failure.reason)
+					return Inventory.Fail(source, raw, event, playerId, who,
+						failure and failure.code or 'failed', failure and failure.reason or 'nothing taken')
 				end
 				audit(source, event, true, playerId, ('%d weapon(s) from %s%s'):format(removed, who,
 					failure and (', then ' .. tostring(failure.reason)) or ''))
@@ -360,7 +363,7 @@ function Weapons.Register()
 		help = 'admin.help.holster',
 		params = { { name = 'playerId|me', help = 'admin.help.playerOrMe' } },
 		handler = function(source, args, raw)
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.weapon.holster')
 			if playerId == nil then return end
 			-- THROUGH THE CONTRACT, never the engine slot directly: taking the slot
 			-- behind the inventory's back would leave it believing the player is
@@ -378,7 +381,8 @@ function Weapons.Register()
 				return refuse(source, raw, code == 'not_armed' and 'not_armed'
 					or 'holster_unavailable', { id = playerId })
 			end
-			audit(source, 'admin.weapon.holster', true, playerId, tostring(put.value.name))
+			audit(source, 'admin.weapon.holster', true, playerId,
+				tostring(type(put.value) == 'table' and put.value.name or '?'))
 			answer(source, raw, true, 'admin.done.holstered', { id = playerId })
 		end,
 	})
@@ -388,7 +392,7 @@ function Weapons.Register()
 		handler = function(source, args, raw)
 			local target, who, playerId = Inventory.Resolve(source, raw, args[1])
 			if target == nil then return end
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				local index, _, bag = weaponsInBag(source, raw, 'admin.weapon.read', target, who, playerId)
 				if not bag then return end
 				local drawn

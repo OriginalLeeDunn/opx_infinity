@@ -141,6 +141,7 @@ function M.Init()
 	Presenter.Init()
 	Runtime.Init()
 	Picker.Init()
+	M.Invite.Init()
 	Prompt.Init()
 end
 
@@ -166,6 +167,7 @@ function M.Start()
 	Runtime.Start()
 	Keys.Start()
 	Picker.Start()
+	M.Invite.Start()
 	M.Walk.Start()
 end
 
@@ -173,6 +175,7 @@ end
 -- @author dop42
 function M.Stop()
 	Picker.Shutdown()
+	M.Invite.Shutdown()
 	Prompt.Shutdown()
 	Runtime.Shutdown()
 	Presenter.Shutdown()

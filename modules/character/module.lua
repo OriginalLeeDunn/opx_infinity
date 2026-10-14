@@ -62,6 +62,10 @@ M.Event = {
 	ON_MONEY = OPX.Event(LOCAL, 'character', 'money'),
 	ON_JOB = OPX.Event(LOCAL, 'character', 'job'),
 	ON_GANG = OPX.Event(LOCAL, 'character', 'gang'),
+	-- Server only, public. A character row made, and one deleted (soft): the
+	-- creator surface's announcement of both, `(source, { citizenId, userId, ... })`.
+	ON_CREATED = OPX.Event(LOCAL, 'character', 'created'),
+	ON_DELETED = OPX.Event(LOCAL, 'character', 'deleted'),
 
 	-- Between modules inside one VM. Never crosses the wire.
 	IN_LOADED = OPX.Event(INTERNAL, 'character', 'loaded'),
@@ -117,13 +121,67 @@ M.NAME_PATTERN = ("^[%s][%s '%%-]*$"):format(LETTER, LETTER)
 -- @author dop42
 -- @param value any
 -- @return Result
+-- CODE POINTS THAT DRAW NOTHING OR TURN THE TEXT AROUND, as inclusive ranges.
+-- `LETTER` admits any two- or three-byte sequence, which let a name be two
+-- zero-width spaces (a character nobody can read or report), carry a
+-- right-to-left override that reverses whatever is drawn after it, or hold a
+-- line separator or a C1 control. None of them is a letter in anybody's name.
+local INVISIBLE = {
+	{ 0x0000, 0x001F }, { 0x007F, 0x009F }, -- C0, DEL and C1 controls
+	{ 0x00A0, 0x00A0 }, { 0x00AD, 0x00AD }, -- no-break space, soft hyphen
+	{ 0x034F, 0x034F }, { 0x061C, 0x061C }, -- grapheme joiner, Arabic letter mark
+	{ 0x115F, 0x1160 }, { 0x17B4, 0x17B5 }, -- Hangul fillers, Khmer inherent vowels
+	{ 0x180B, 0x180F }, -- Mongolian variation selectors and vowel separator
+	{ 0x2000, 0x200F }, -- the typographic spaces, zero-width, LRM and RLM
+	{ 0x2028, 0x202F }, -- line and paragraph separators, LRE..RLO, narrow nbsp
+	{ 0x205F, 0x206F }, -- math space, word joiner, invisible operators, LRI..PDI
+	{ 0x3000, 0x3000 }, { 0x3164, 0x3164 }, -- ideographic space, Hangul filler
+	{ 0xFE00, 0xFE0F }, { 0xFEFF, 0xFEFF }, -- variation selectors, BOM
+	{ 0xFFA0, 0xFFA0 }, { 0xFFF0, 0xFFFB }, -- halfwidth filler, specials
+}
+
+--- Whether a valid UTF-8 text holds a code point from `INVISIBLE`.
+local function hidesSomething(text)
+	local codes = utf8 and utf8.codes
+	if codes == nil then return false end
+	for _, code in codes(text) do
+		-- Printable ASCII is the pattern's to decide.
+		if code < 0x20 or code >= 0x7F then
+			for index = 1, #INVISIBLE do
+				local range = INVISIBLE[index]
+				if code >= range[1] and code <= range[2] then return true end
+			end
+		end
+	end
+	return false
+end
+
 function M.ValidateName(value)
 	local bounds = M.Settings.CHARACTERS.NAME
-	return OPX.Validate.Text(value, {
+	local checked = OPX.Validate.Text(value, {
 		min = bounds.MIN,
 		max = bounds.MAX,
 		pattern = M.NAME_PATTERN,
 	})
+	if checked.ok and hidesSomething(checked.value) then return OPX.Result.Err('invisible') end
+	return checked
+end
+
+--- The sentence for a name `ValidateName` refused, and the bounds it names.
+-- A name that was too short read "Use letters only (spaces, hyphens and
+-- apostrophes allowed)." -- wrong, for a name of letters -- and nothing on the
+-- form says how short is too short. Length and spelling are told apart.
+-- @author dop42
+-- @param checked table the Result `ValidateName` answered
+-- @return string the locale key
+-- @return table the `{min}` and `{max}` the length sentence names
+function M.NameRefusal(checked)
+	local bounds = M.Settings.CHARACTERS.NAME
+	local reason = type(checked) == 'table' and checked.error or nil
+	local key = (reason == 'too-short' or reason == 'too-long') and 'character.nameLength'
+		or reason == 'invisible' and 'character.nameInvisible'
+		or 'character.badName'
+	return key, { min = tonumber(bounds.MIN) or 1, max = tonumber(bounds.MAX) or 1 }
 end
 
 --- The two ways `opx.select` can move an account onto another character.

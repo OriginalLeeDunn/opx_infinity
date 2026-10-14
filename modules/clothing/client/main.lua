@@ -13,11 +13,9 @@
 -- captured marker at all, and would draw one in a bucket it is not in.
 --
 -- Markers are engine primitives, so nothing is redrawn per frame: one is created
--- when a store comes into range and removed when it leaves. `reconcile` owns
--- that set for as long as the module is running, and `clearMarkers` empties it
--- on the way down; nothing else writes it. Creation is guarded -- the
--- `world.markers` API may not be installed at all, and a raise here would take
--- the scan down with it.
+-- when a store comes into range and removed when it leaves. The set is
+-- `OPX.Spots.Markers` (`lib/client/spots.lua`), which every spot module shares:
+-- creation is guarded, capped per pass, and a raise cannot take the scan down.
 
 local M = OPX.Modules.Get('clothing')
 local Access = M.Access
@@ -31,10 +29,16 @@ local GROUP = 'store'
 
 -- The store list as the server last sent it, and the markers drawn for it.
 local spots = {}
-local markers = {}
+local markers = OPX.Spots.Markers.New({
+	tag = 'clothing',
+	look = function() return Access.Marker() end,
+	maxDistance = function() return Access.MaxDistance() end,
+})
 
 -- The store the player is standing on, and whether its row is up.
 local nearest, shown = nil, false
+-- The squared distance to `nearest` the last scan measured, for the key's claim.
+local nearestSq = nil
 
 -- Whether the key mapping answered.
 local keyRegistered = false
@@ -42,7 +46,7 @@ local keyRegistered = false
 -- Whether each of the two failures was already logged: a marker that cannot be
 -- drawn and a row that cannot be posted are different problems and a player
 -- reading the log wants to know which one they have.
-local reportedMarkers, reportedStrip = false, false
+local reportedStrip = false
 
 -- Scheduler handles, so Stop can cancel them.
 local scanJob, askJob = nil, nil
@@ -54,112 +58,9 @@ local function keySettings()
 	return declared or { ID = 'opx.clothing.use', NAME = 'clothing.key.use', DEFAULT = 'E' }
 end
 
--- The player's own ground position, or nil before there is a world to read.
-local function playerXY()
-	local character = Open77.character
-	if type(character) ~= 'table' or type(character.position) ~= 'function' then
-		return nil, nil
-	end
-	local read, x, y = pcall(character.position)
-	if not read or type(x) ~= 'number' or type(y) ~= 'number' or x ~= x or y ~= y then
-		return nil, nil
-	end
-	return x, y
-end
-
--- Whether another surface holds the keyboard. Kept module-local rather than
--- folded into `OPX.Keys.IsCaptured`, which answers captured when the read itself
--- raises where this answers free.
-local function captured()
-	local input = Open77.input
-	if type(input) ~= 'table' or type(input.isCaptured) ~= 'function' then return false end
-	local read, answer = pcall(input.isCaptured)
-	return read and answer == true
-end
-
--- ── the markers ─────────────────────────────────────────────────────────────
-
--- Creates one marker, or answers why it could not be. Never raises.
-local function createMarker(store)
-	local api = Open77.markers
-	if type(api) ~= 'table' or type(api.create) ~= 'function' then
-		return nil, 'world.markers is unavailable'
-	end
-	local look = Access.Marker()
-	local read, id, reason = pcall(api.create, {
-		-- The store's declared height plus the look's own lift: a marker left at
-		-- floor height is co-planar with the floor and draws nothing at all.
-		position = { x = store.x, y = store.y, z = store.z + look.lift },
-		shape = look.shape,
-		style = look.style,
-		radius = look.radius,
-		maxDistance = Access.MaxDistance(),
-	})
-	if not read then return nil, tostring(id) end
-	if id == nil then return nil, tostring(reason or 'refused') end
-	return id, nil
-end
-
--- Removes one marker without raising.
-local function removeMarker(id)
-	local api = Open77.markers
-	if type(api) ~= 'table' or type(api.remove) ~= 'function' then return end
-	pcall(api.remove, id)
-end
-
--- Brings the drawn set in line with what is in range: a store within
--- MAX_DISTANCE has a marker, one beyond it does not. Touches nothing when the
--- set would not change.
---
--- THE POSITION IS THREADED THROUGH, NOT READ AGAIN. `scan()` -- the only caller
--- -- has just read it for `Access.Nearest`, and reading it a second time here
--- made this module cost TWO host position reads per pass at SCAN_MS. Across
--- `clothing`, `dealership` and `garages` that was twelve host reads a second for
--- six distinct answers. `modules/teleports/client/main.lua` already threads it
--- (`reconcile(at)`); these three were never updated with it.
--- @param x number|nil the player's position, or nil where it could not be read
--- @param y number|nil
-local function reconcile(x, y)
-	local limit = Access.MaxDistance()
-	local reach = limit * limit
-
-	for key, store in pairs(spots) do
-		local flat = nil
-		if x ~= nil then flat = Access.FlatDistanceSquared(store, x, y) end
-		local wanted = flat ~= nil and flat <= reach
-		if wanted and markers[key] == nil then
-			local id, failure = createMarker(store)
-			if id == nil then
-				if not reportedMarkers then
-					reportedMarkers = true
-					Open77.log.warn(('[clothing] no marker is drawn: %s'):format(tostring(failure)))
-				end
-			else
-				markers[key] = id
-			end
-		elseif not wanted and markers[key] ~= nil then
-			removeMarker(markers[key])
-			markers[key] = nil
-		end
-	end
-
-	-- A store the server no longer names loses its marker here rather than being
-	-- left behind: it may have been removed while it was in range.
-	for key, id in pairs(markers) do
-		if spots[key] == nil then
-			removeMarker(id)
-			markers[key] = nil
-		end
-	end
-end
-
--- Drops every marker this module drew.
-local function clearMarkers()
-	for key, id in pairs(markers) do
-		removeMarker(id)
-		markers[key] = nil
-	end
-end
+-- The player's ground position, and whether another surface holds the
+-- keyboard: the readings every spot module makes, in `lib/client/spots.lua`.
+local playerXY, captured = OPX.Spots.PlayerXY, OPX.Spots.Captured
 
 -- ── the strip ───────────────────────────────────────────────────────────────
 
@@ -167,14 +68,15 @@ end
 -- row with no key to name says nothing, which is why `RegisterKeyMapping`'s
 -- answer is kept rather than assumed.
 local function keyLabel()
-	if not keyRegistered then return nil end
-	local declared = keySettings()
-	return OPX.Lib.Input.KeyFor(declared.ID) or declared.DEFAULT
+	return OPX.Spots.Key.Label(keyRegistered, keySettings())
 end
 
 -- Brings the strip in line with where the player is standing.
 local function syncPrompt()
-	local want = nearest ~= nil and keyLabel() ~= nil and not captured()
+	-- The claim on the shared key is filed every scan, row or no row, and the
+	-- row is drawn only when no other feature on that key would take the press.
+	local wins = OPX.Spots.Key.Shows(keySettings().ID)
+	local want = nearest ~= nil and keyLabel() ~= nil and not captured() and wins
 	if want == shown then return end
 
 	local api = OPX.Api.Get('prompts')
@@ -312,7 +214,7 @@ end
 -- @return table
 function Runtime.Report()
 	local count = OPX.Table.Count(spots)
-	local drawn = OPX.Table.Count(markers)
+	local drawn = markers.Count()
 	return {
 		spots = count,
 		markers = drawn,
@@ -334,9 +236,9 @@ local function scan()
 		syncPrompt()
 		return
 	end
-	nearest = Access.Nearest(spots, x, y)
+	nearest, nearestSq = Access.Nearest(spots, x, y)
 	syncPrompt()
-	reconcile(x, y)
+	markers.Reconcile(spots, x, y)
 end
 
 -- ── the phases ──────────────────────────────────────────────────────────────
@@ -344,43 +246,26 @@ end
 --- Clears everything this half holds. Never yields.
 -- @author XEROX710
 function Runtime.Init()
-	spots, markers = {}, {}
+	spots = {}
+	markers.Reset()
 	nearest, shown, keyRegistered = nil, false, false
-	reportedMarkers, reportedStrip = false, false
+	reportedStrip = false
 	scanJob, askJob = nil, nil
 end
 
 --- Declares the key and wires the one server event.
 -- @author XEROX710
 function Runtime.Start()
-	-- The mapping's name is translated at registration and its id is stable,
-	-- because a player's rebind is stored under the id.
-	local declared = keySettings()
-	if declared.DEFAULT ~= false then
-		local called, ok, answer = pcall(RegisterKeyMapping, declared.ID, locale(declared.NAME),
-			declared.DEFAULT, function()
-				if captured() then return end
-				local ran, failure = pcall(Runtime.Open, 'key')
-				if not ran then
-					Open77.log.error(('[clothing] key %s: %s'):format(declared.ID, tostring(failure)))
-				end
-			end)
-		-- Two answer shapes are documented for the host call: the effective key,
-		-- or `true, key`. Reading only the second logged a working mapping as
-		-- refused.
-		local effective = nil
-		if called then
-			effective = type(ok) == 'string' and ok ~= '' and ok
-				or (ok == true and type(answer) == 'string' and answer ~= '' and answer) or nil
-		end
-		if not called or (ok ~= true and effective == nil) then
-			Open77.log.warn(('[clothing] key mapping %s (%s) not registered: %s')
-				:format(declared.ID, tostring(declared.DEFAULT),
-					tostring(called and answer or ok)))
-		else
-			keyRegistered = true
-		end
-	end
+	-- The key, and the silent press: see `OPX.Spots.Key.Register`.
+	keyRegistered = OPX.Spots.Key.Register({
+		tag = 'clothing',
+		declared = keySettings(),
+		onPress = Runtime.Open,
+		wants = function(x, y)
+			if nearest == nil then return nil end
+			return OPX.Spots.Key.Rank('SPOT'), OPX.Spots.Key.Reach(nearest, x, y, nearestSq)
+		end,
+	})
 
 	-- The strip redraws a rebound key itself; this only re-reads whether the row
 	-- should be up at all.
@@ -445,7 +330,7 @@ function Runtime.Shutdown()
 		OPX.Scheduler.Cancel(askJob)
 		askJob = nil
 	end
-	clearMarkers()
+	markers.Clear()
 	local api = OPX.Api.Get('prompts')
 	if shown and api ~= nil and type(api.Hide) == 'function' then
 		pcall(api.Hide, OWNER, GROUP)

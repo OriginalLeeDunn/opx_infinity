@@ -20,6 +20,38 @@ local RESULT = OPX.Event(OPX.Channel.NET, 'runtime', 'commandResult')
 local lastAnswer = {}
 local cooldowns = {}
 
+-- What `open77_notifications` accepts, from its definition reference: a title of
+-- at most 96 UTF-8 bytes, a message of at most 384, and seven positions spelt
+-- with an UNDERSCORE. A field past its bound is refused rather than cut, so the
+-- cut is made here, on a character boundary.
+local MAX_TITLE_BYTES = 96
+local MAX_MESSAGE_BYTES = 384
+local POSITIONS = {
+	middle_left = true, top_left = true, top_center = true, top_right = true,
+	bottom_left = true, bottom_center = true, bottom_right = true,
+}
+
+--- The configured toast position as the package spells it, or nil for its default.
+---
+--- THE SHIPPED VALUE WAS `top-right`, WITH A HYPHEN, and the package knows only
+--- `top_right`: every server toast was sent with a position the package does not
+--- have. A hyphen is accepted and turned round because it is the spelling the
+--- rest of this resource's anchors use (`lib/shared/anchors.lua`), so an operator
+--- writing it is writing what they see everywhere else; anything else is
+--- dropped, which leaves the package's own default, and is said once.
+local warnedPosition = false
+local function positionOf(value)
+	if type(value) ~= 'string' then return nil end
+	local spelt = value:lower():gsub('%-', '_')
+	if POSITIONS[spelt] then return spelt end
+	if not warnedPosition then
+		warnedPosition = true
+		Open77.log.warn(('[answer] NOTIFY_POSITION %q is not a notification position; ' ..
+			'the package default is used'):format(value))
+	end
+	return nil
+end
+
 --- Whether this exact text just went to this player.
 local function repeated(source, text)
 	local bucket = lastAnswer[source]
@@ -93,13 +125,22 @@ function OPX.Notify(source, message, kind, durationMs)
 	-- server-side toast is dropped -- and with no read and no log line the only
 	-- symptom is players who are never told anything, which reads as the refusals
 	-- themselves not firing.
-	local id, refused = Open77.notifications.send(source, {
+	-- READ AT CALL TIME AND TYPE-CHECKED: an index of a missing
+	-- `Open77.notifications` raised inside whichever net handler was refusing
+	-- somebody, and took the rest of that handler with it.
+	local api = Open77.notifications
+	if type(api) ~= 'table' or type(api.send) ~= 'function' then
+		return false, 'no_notifications'
+	end
+
+	local called, id, refused = pcall(api.send, source, {
 		type = kind or 'info',
-		title = OPX.Config.SHARED.SERVER_NAME,
-		message = message,
+		title = OPX.Text.Bytes(tostring(OPX.Config.SHARED.SERVER_NAME or ''), MAX_TITLE_BYTES),
+		message = OPX.Text.Bytes(tostring(message), MAX_MESSAGE_BYTES),
 		durationMs = durationMs or 5000,
-		position = OPX.Config.SHARED.NOTIFY_POSITION,
+		position = positionOf(OPX.Config.SHARED.NOTIFY_POSITION),
 	})
+	if not called then id, refused = nil, id end
 
 	if id == nil or id == false then
 		Open77.log.warn(('[answer] the toast for %d was not delivered (%s): %s')
@@ -119,6 +160,27 @@ end
 -- @author dop42
 -- @param code any
 -- @return string
+--- The params a refusal may carry: plain strings and numbers under plain keys,
+--- bounded, so a refusal still carries no internals by accident -- a table, a
+--- function or a 4 KB exception string is dropped rather than shown.
+-- @author dop42
+-- @param params any
+-- @return table|nil
+local function refusalParams(params)
+	if type(params) ~= 'table' then return nil end
+	local out, kept = {}, 0
+	for key, value in pairs(params) do
+		if type(key) == 'string' and key:match('^[%w_]+$') and kept < 8 then
+			if type(value) == 'number' and value == value then
+				out[key], kept = value, kept + 1
+			elseif type(value) == 'string' then
+				out[key], kept = OPX.Text.Bytes(value, 64), kept + 1
+			end
+		end
+	end
+	return kept > 0 and out or nil
+end
+
 function OPX.RefusalKey(code)
 	if type(code) == 'string' and OPX.Locale.Exists(code) then return code end
 	Open77.log.warn(('[answer] %q has no catalogue entry; answering error.unavailable')
@@ -135,6 +197,9 @@ end
 -- @return boolean whether the host took it
 -- @return string|nil why it did not
 function OPX.NotifyLocale(source, key, params, kind)
+	-- An error or a warning takes the kind its situation calls for (too fast and
+	-- busy warn, too far and not allowed are errors): see `OPX.Result.Kind`.
+	if kind == 'error' or kind == 'warning' then kind = OPX.Result.Kind(key, kind) end
 	-- Relayed rather than swallowed: this is the door 45 of the 47 call sites use,
 	-- so dropping the answer here would put the read back where it was.
 	return OPX.Notify(source, locale(OPX.RefusalKey(key), params), kind)
@@ -176,18 +241,13 @@ local function dumpText(message)
 	local text = tostring(message or '')
 	if #text <= MAX_COMMAND_DUMP then return text end
 
-	local cut = MAX_COMMAND_DUMP
-	-- Back off the continuation bytes of a character this would split. At most
-	-- three: UTF-8 is never wider than four bytes.
-	for _ = 1, 3 do
-		local byte = text:byte(cut + 1)
-		if byte == nil or byte < 0x80 or byte >= 0xC0 then break end
-		cut = cut - 1
-	end
+	-- `OPX.Text.Bytes` is the boundary-safe byte cut; this was a second copy of
+	-- its loop.
+	local kept = OPX.Text.Bytes(text, MAX_COMMAND_DUMP)
 
 	Open77.log.warn(('[answer] a command answer of %d bytes was cut to %d')
-		:format(#text, cut))
-	return text:sub(1, cut) .. '...'
+		:format(#text, #kept))
+	return kept .. '...'
 end
 
 --- Bounds and strips a single line on its way into a toast.
@@ -304,18 +364,29 @@ end
 -- @param code string a locale key
 -- @param operation string|nil
 -- @param icon string|nil a glyph name from `OPX.Toast.ICONS`
-function OPX.Refuse(source, code, operation, icon)
+-- @param params table|nil the sentence's `{placeholders}`: strings and numbers only
+function OPX.Refuse(source, code, operation, icon, params)
 	source = tonumber(source)
 	if not source or source <= 0 then return end
 	TriggerClientEvent(NOTIFY, source, {
-		kind = 'error',
+		-- A refusal is an error, unless its situation is one the owner made a
+		-- warning (too fast, busy): see `OPX.Result.Kind`.
+		kind = OPX.Result.Kind(code, 'error'),
 		code = OPX.RefusalKey(code),
+		-- PARAMS, SO ONE DOOR IS ENOUGH. A refusal could not carry them, so a
+		-- module whose sentence names something (`Every exit at {garage} is
+		-- blocked`) followed this with `OPX.NotifyLocale` -- and the player read
+		-- the sentence twice, once with the placeholder left in it.
+		params = refusalParams(params),
 		operation = type(operation) == 'string' and operation or 'unknown',
 		-- A refusal is the one toast a player MUST read, so the glyph is the part
 		-- of it that is allowed to go missing: the client validates the name
 		-- against its closed set and drops one it cannot draw, and the words go up
-		-- either way. Type-checked here only, for the reason `CommandNotice` gives.
-		icon = type(icon) == 'string' and icon or nil,
+		-- either way. Checked against `OPX.Glyphs` here too, as `CommandNotice`
+		-- does: this said "type-checked only, for the reason `CommandNotice`
+		-- gives", and that reason had been withdrawn there -- the set is a shared
+		-- script and the server holds the same list the page draws from.
+		icon = type(icon) == 'string' and OPX.Glyphs[icon] and icon or nil,
 	})
 end
 

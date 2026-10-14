@@ -44,6 +44,11 @@ local ERRORS = {
 	gate_unreadable = 'admin.error.gateUnreadable',
 	no_position = 'admin.error.noPosition',
 	kill_refused = 'admin.error.killRefused',
+	kill_not_granted = 'admin.error.killNotGranted',
+	target_protected = 'admin.error.targetProtected',
+	weapon_not_granted = 'admin.error.weaponNotGranted',
+	busy = 'admin.error.busy',
+	vehicle_out_of_reach = 'admin.error.vehicleOutOfReach',
 	respawn_refused = 'admin.error.respawnRefused',
 	refused = 'admin.error.refused',
 	bad_coordinates = 'admin.error.badCoordinates',
@@ -72,9 +77,6 @@ local ERRORS = {
 	unknown_item = 'admin.error.unknownItem',
 	bad_count = 'admin.error.badCount',
 	not_enough = 'admin.error.notEnough',
-	bad_amount = 'admin.error.badAmount',
-	bad_type = 'admin.error.badType',
-	vetoed = 'admin.error.vetoed',
 	bag_no_room = 'admin.error.bagNoRoom',
 	bag_too_heavy = 'admin.error.bagTooHeavy',
 	unknown_location = 'admin.error.unknownLocation',
@@ -83,7 +85,6 @@ local ERRORS = {
 	bad_door = 'admin.error.badDoor',
 	door_limit = 'admin.error.doorLimit',
 	doors_networked = 'admin.error.doorsNetworked',
-	doors_unavailable = 'admin.error.doorsUnavailable',
 	combat_unavailable = 'admin.error.combatUnavailable',
 	unknown_ped = 'admin.error.unknownPed',
 	models_unavailable = 'admin.error.modelsUnavailable',
@@ -101,7 +102,6 @@ local TYPED = {
 	unknown_location = true, bad_location_name = true, bad_holder = true, unknown_citizen = true,
 	unknown_item = true, bad_count = true, not_enough = true, unknown_ammo = true,
 	bad_door = true, unknown_ped = true, bad_name = true, search_short = true,
-	bad_amount = true, bad_type = true,
 }
 
 -- The catalogue key a multi-line report is answered with.
@@ -255,35 +255,25 @@ function Server.UserOf(playerId)
 	return M.Trimmed(identifier, 64)
 end
 
---- One string key off a player's replicated bag, or nil.
--- Reading a bag costs no permission and no round trip; a host that does not
--- replicate them answers nil for everything, which is the same answer as a slot
--- with no character on it.
--- @author dop42
--- @param playerId Source
--- @param key string
--- @return any
-local function bagKey(playerId, key)
-	local state = Open77.state
-	if type(state) ~= 'table' or type(state.player) ~= 'function' then return nil end
+-- The PlayerData of the character loaded on a slot, through the `character`
+-- contract, or nil for a slot at the selection screen or a runtime without the
+-- module.
+local function loadedData(playerId)
+	local character = OPX.Api.Get('character')
+	if character == nil or type(character.GetPlayer) ~= 'function' then return nil end
 	if (tonumber(playerId) or 0) <= 0 then return nil end
-	local read, bag = pcall(state.player, playerId)
-	if not read or type(bag) ~= 'table' then return nil end
-	-- `bag:get(key)` and not `bag.key`: five key names are shadowed by the handle's
-	-- own methods, and a reader that used the sugar would answer a function for a
-	-- key called `name` on a platform that ever added one.
-	local got, value = pcall(bag.get, bag, key)
-	if not got then return nil end
-	return value
+	local read, player = pcall(character.GetPlayer, playerId)
+	if not read or type(player) ~= 'table' or type(player.PlayerData) ~= 'table' then return nil end
+	return player.PlayerData
 end
 
 --- The name of the CHARACTER a player is playing, or nil.
 --
--- Read off the replicated state bag and not through the `character` contract, and
--- that is the point rather than a shortcut: this module then says nothing at all
--- about who publishes the key. A runtime whose characters come from somewhere
--- else writes the same `name` and every staff line here follows it; a runtime
--- with no character module at all loses a name and keeps working.
+-- Through the `character` contract, on the server. It was read off the player's
+-- replicated state bag, and the bag no longer carries it: a bag goes to every
+-- client in the bucket, and never a name to a stranger is the owner's decision
+-- (`modules/character/server/state.lua`). Staff still see it -- on their own
+-- lines and on the staff name-tag list, both behind the ACL.
 --
 -- Nil is an ordinary answer twice over: for somebody still at the selection
 -- screen, and for a character that has not been named yet -- a character is a row
@@ -292,17 +282,25 @@ end
 -- @param playerId Source
 -- @return string|nil
 function Server.CharacterOf(playerId)
-	return M.Trimmed(bagKey(playerId, 'name'), 64)
+	local data = loadedData(playerId)
+	local info = data ~= nil and type(data.charInfo) == 'table' and data.charInfo or nil
+	if info == nil then return nil end
+	local first = type(info.firstName) == 'string' and info.firstName or ''
+	local last = type(info.lastName) == 'string' and info.lastName or ''
+	local full = OPX.String.Trim(first .. ' ' .. last)
+	if full == '' then return nil end
+	return M.Trimmed(full, 64)
 end
 
---- The public id of the character a player is playing, off the same bag.
+--- The public id of the character a player is playing, through the contract.
 -- Seven symbols in a three-dash-four group, and the one thing on a staff line
 -- that survives a rename. Nil before a character is loaded.
 -- @author dop42
 -- @param playerId Source
 -- @return string|nil
 function Server.CitizenBagOf(playerId)
-	return M.Trimmed(bagKey(playerId, 'citizenId'), 32)
+	local data = loadedData(playerId)
+	return data ~= nil and M.Trimmed(data.citizenId, 32) or nil
 end
 
 --- What a staff line calls a player: the character, and the account behind it.
@@ -364,15 +362,74 @@ local function targetOf(source, token)
 	return playerId, nil
 end
 
---- Resolves a typed target to a connected player, or answers why not.
+--- One raw ACL right -- not a `command.` one -- true or false, or nil when the
+--- ACL cannot be read. The console holds every right.
+-- @author dop42
+-- @param playerId Source
+-- @param right string
+-- @return boolean|nil
+function Server.Holds(playerId, right)
+	if (tonumber(playerId) or 0) <= 0 then return true end
+	local acl = Open77.acl
+	if type(acl) ~= 'table' or type(acl.isAllowed) ~= 'function' then return nil end
+	local read, allowed = pcall(acl.isAllowed, playerId, right)
+	if not read then return nil end
+	return allowed == true
+end
+local holds = Server.Holds
+
+--- Whether a target is shielded from what an actor is about to do to them.
+-- @author dop42
+--
+-- STAFF IMMUNITY. Nothing used to stop an operator kicking, banning, killing,
+-- freezing, stripping or deleting a higher-ranked one: every grant applied to
+-- every player alike. A player holding `M.IMMUNE` (`opx.admin.immune`, a raw
+-- ACL right and not a command) is now shielded from every harmful staff action,
+-- unless the actor holds `M.OVERRIDE` (`opx.admin.override`). The console is
+-- the server and is never stopped; an operator acting on themselves never is
+-- either. An immunity the ACL cannot answer is read as HELD: an action this
+-- check cannot clear is one it refuses.
+-- @param actor Source
+-- @param target Source
+-- @return boolean
+function Server.Protected(actor, target)
+	actor, target = tonumber(actor) or 0, tonumber(target)
+	if actor <= 0 or target == nil or target <= 0 or actor == target then return false end
+	if holds(target, M.IMMUNE) == false then return false end
+	return holds(actor, M.OVERRIDE) ~= true
+end
+
+--- `Protected`, refused to the operator as `target_protected` and audited.
+-- @author dop42
+-- @param source Source
+-- @param raw string
+-- @param target Source
+-- @param event string the audit event of the action refused
+-- @return boolean true when the action is to stop
+function Server.Shielded(source, raw, target, event)
+	if not Server.Protected(source, target) then return false end
+	Server.Refuse(source, raw, 'target_protected',
+		{ id = target, name = Server.LabelOf(target) or '?' })
+	Server.Audit(source, event or 'admin.protected', false, target, 'target protected')
+	return true
+end
+
+--- Resolves a typed target to a connected player, or answers why not. With
+--- `harm` -- the audit event of an action that hurts the target -- a protected
+--- target is refused as well (see `Server.Protected`).
 -- @author dop42
 -- @param source Source
 -- @param raw string
 -- @param token any
+-- @param harm string|nil
 -- @return integer|nil
-function Server.Target(source, raw, token)
+function Server.Target(source, raw, token, harm)
 	local playerId, code = targetOf(source, token)
-	if playerId == nil then Server.Refuse(source, raw, code) end
+	if playerId == nil then
+		Server.Refuse(source, raw, code)
+		return nil
+	end
+	if harm ~= nil and Server.Shielded(source, raw, playerId, harm) then return nil end
 	return playerId
 end
 
@@ -615,6 +672,79 @@ local byName = {}
 function Server.Cooled(player, key, intervalMs)
 	if (tonumber(player) or 0) <= 0 then return false end
 	return OPX.Cooling(player, 'admin:' .. key, intervalMs)
+end
+
+-- ── one heavy request in flight per operator ─────────────────────────────────
+--
+-- THE SERVER'S TASK QUOTA IS 1,024, and every bag, weapon and character command
+-- -- and every list the menu asks for -- runs on a thread of its own because the
+-- contract read yields. The floors are per command and per topic, so one
+-- operator walking through different commands could start twenty or forty
+-- threads a second, and against a slow database they piled up. Now each
+-- operator has at most ONE such thread: a typed command that arrives while it
+-- runs is refused as `busy`, and a menu list (which has a key) waits its turn
+-- in that same thread -- the newest ask per key, so a screen asked for three
+-- times is read once.
+local workers = {}
+
+-- A worker this old is presumed stuck -- a read that never answered -- and no
+-- longer holds the operator's slot.
+local HEAVY_STALE_MS = 30000
+
+--- Runs one heavy request on the operator's single worker thread.
+-- @author dop42
+-- @param source Source
+-- @param raw string|nil the command line, for a refusal; nil for a menu list
+-- @param fn function the request; may yield
+-- @param key string|nil a menu list's topic: queued behind a running request
+-- instead of refused
+-- @return boolean whether it was taken
+function Server.Heavy(source, raw, fn, key)
+	local player = tonumber(source) or 0
+	if player <= 0 then
+		CreateThread(fn)
+		return true
+	end
+	local worker = workers[player]
+	if worker ~= nil and Server.NowMs() - worker.since > HEAVY_STALE_MS then
+		workers[player], worker = nil, nil
+	end
+	if worker ~= nil then
+		if key ~= nil then
+			if worker.keys[key] == nil then worker.queue[#worker.queue + 1] = key end
+			worker.keys[key] = fn
+			return true
+		end
+		Server.Refuse(player, raw or '', 'busy')
+		return false
+	end
+	worker = { queue = {}, keys = {}, since = Server.NowMs() }
+	workers[player] = worker
+	CreateThread(function()
+		local run = fn
+		while run ~= nil and workers[player] == worker do
+			worker.since = Server.NowMs()
+			local ran, failure = pcall(run)
+			if not ran then
+				Open77.log.error(('[admin] a staff request raised: %s'):format(tostring(failure)))
+			end
+			run = nil
+			local nextKey = table.remove(worker.queue, 1)
+			if nextKey ~= nil then
+				run = worker.keys[nextKey]
+				worker.keys[nextKey] = nil
+			end
+		end
+		if workers[player] == worker then workers[player] = nil end
+	end)
+	return true
+end
+
+--- Forgets a departing operator's worker; a running request ends on its own.
+-- @author dop42
+-- @param playerId Source
+function Server.ForgetHeavy(playerId)
+	workers[tonumber(playerId) or 0] = nil
 end
 
 --- Registers one restricted staff command with its floor and its raise guard.

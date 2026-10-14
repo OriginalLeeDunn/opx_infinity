@@ -152,13 +152,41 @@ const drag = reactive({
 const menu = reactive({ container: 0, slot: 0, x: 0, y: 0, open: false })
 
 /** The split step: how many units of the chosen stack to take out. */
-const split = reactive({ container: 0, slot: 0, count: 1, max: 1, open: false })
+/* The count dialog. `mode` says what its confirm does: split a stack, give part
+   of it to `target`, or drop part of it. Give and drop moved the WHOLE stack in
+   one click -- "give one of twenty" meant splitting first -- so a stack of more
+   than one now asks how many, and that question is also the confirm step. */
+const split = reactive({
+  container: 0,
+  slot: 0,
+  count: 1,
+  max: 1,
+  open: false,
+  mode: 'split' as 'split' | 'give' | 'drop',
+  target: 0
+})
 
 let release: (() => void) | undefined
 let pointerBound = false
 
+/** One empty list for the secondary grid's props. An inline `[]` is a NEW array on
+    every render of this view -- every cell the pointer crosses mid-drag -- and a new
+    prop identity re-renders the whole secondary grid each time. */
+const NONE: string[] = []
+
+/** A label Lua sent, or the fallback -- never the key. A container kind with no
+    word of its own (`character`, a searched bag) used to print as the raw kind in
+    the eyebrow. */
 function label(key: string, fallback = ''): string {
-  return config.value.labels[key] || fallback || key
+  return config.value.labels[key] || fallback
+}
+
+/** Escape closes the innermost thing open: the split dialog, then the slot card,
+    and only then the inventory. It closed everything from inside a dialog. */
+function onEscape(): void {
+  if (split.open) split.open = false
+  else if (menu.open) closeMenu()
+  else close()
 }
 
 function mine(payload: Payload): boolean {
@@ -186,12 +214,18 @@ async function ask(action: string, payload: Payload = {}): Promise<Payload | nul
       { timeoutMs: TIMEOUT_MS }
     )
   } catch (error) {
-    // Every refusal the SERVER makes is already a toast Lua raised, so the page
+    // Every refusal the SERVER makes is a toast Lua raised, so the page
     // does not render one: it only says that the round trip failed or never came
     // back, in words the open spec carried in the player's language. A raw code
     // is never put on screen.
-    const timedOut = error instanceof BridgeError && error.localeKey === 'error.rpc_timeout'
-    status.value = label(timedOut ? 'timeout' : 'failed')
+    // AN ANSWERED REFUSAL IS NOT ONE OF THOSE. It carries the server's own code,
+    // and the server has toasted its sentence: drawing "That did not work." under
+    // it as well was the same refusal said twice, the second time with no reason,
+    // and it stayed on screen through every action that succeeded after it.
+    const key = error instanceof BridgeError ? error.localeKey : ''
+    const timedOut = key === 'error.rpc_timeout' || key === 'timeout'
+    const unanswered = key === '' || key === 'error.rpc_failed'
+    if (timedOut || unanswered) status.value = label(timedOut ? 'timeout' : 'failed')
     return null
   } finally {
     busy.value = false
@@ -425,6 +459,7 @@ function onPointerUp(event: PointerEvent): void {
   const from = { container: drag.container, slot: drag.slot }
   const fromBag = primary.value !== null && from.container === primary.value.id
   endDrag()
+  unbindPointer()
 
   // The ground takes a stack out of the bag and nothing else -- a trunk cannot
   // be emptied onto the floor from across the street. It is the SAME `drop`
@@ -448,11 +483,22 @@ function onPointerUp(event: PointerEvent): void {
   })
 }
 
+/** A drag whose release never reached this page -- the game took focus, the window
+    lost it, the engine cancelled the pointer -- is DROPPED, not left armed. Armed, the
+    next `pointerup` anywhere on the screen sent a `move` (or a `drop`, over the
+    ground) from the stale source slot. */
+function cancelDrag(): void {
+  endDrag()
+  unbindPointer()
+}
+
 function bindPointer(): void {
   if (pointerBound) return
   pointerBound = true
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('pointerup', onPointerUp)
+  window.addEventListener('pointercancel', cancelDrag)
+  window.addEventListener('blur', cancelDrag)
 }
 
 function unbindPointer(): void {
@@ -460,10 +506,14 @@ function unbindPointer(): void {
   pointerBound = false
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', onPointerUp)
+  window.removeEventListener('pointercancel', cancelDrag)
+  window.removeEventListener('blur', cancelDrag)
 }
 
 function onGrab(containerId: number, slot: number, native: PointerEvent): void {
-  if (busy.value) return
+  // The primary button only: a right- or middle-button drag from one cell to another
+  // used to send a `move` like a left one.
+  if (busy.value || native.button !== 0) return
   closeMenu()
   drag.active = true
   drag.container = containerId
@@ -473,7 +523,6 @@ function onGrab(containerId: number, slot: number, native: PointerEvent): void {
   bindPointer()
   // A capture on the cell would be lost the moment the grid re-renders the
   // window under the pointer, so the listeners live on the window instead.
-  void native
 }
 
 function onHover(containerId: number, slot: number | null, native?: MouseEvent): void {
@@ -495,6 +544,12 @@ function openMenu(containerId: number, slot: number, native: MouseEvent): void {
   menu.x = native.clientX
   menu.y = native.clientY
   menu.open = true
+  // THE GIVE LIST IS ASKED FOR AGAIN EVERY TIME THE CARD OPENS. It was asked
+  // once, when the inventory opened: somebody who walked up afterwards was
+  // never on it, and somebody who had left stayed on it until a give to them
+  // was refused. The answer is the next `nearby` push, a frame or two later.
+  // Only for the bag: a trunk's card has no give list.
+  if (containerId === primary.value?.id) tell('nearby')
   // Placed roughly here straight away and refined once the card has a measured
   // size. Without this the first frame renders it at 0,0, because `placeCard`
   // cannot flip a box it has not measured yet.
@@ -521,13 +576,46 @@ function doUse(): void {
   void ask('use', { slot })
 }
 
+/** Where a nearby player stands, as the give list says it: `To your left · 1.2 m`,
+    with the language's decimal mark. Never a name -- the server sends none. */
+function whereIs(person: { side: string; distance: number }): string {
+  const metres = person.distance.toFixed(1).replace('.', label('decimal', '.'))
+  const distance = `${metres} ${label('m', 'm')}`
+  const keys: Record<string, string> = {
+    ahead: 'sideAhead',
+    behind: 'sideBehind',
+    left: 'sideLeft',
+    right: 'sideRight'
+  }
+  const side = keys[person.side] ? label(keys[person.side]) : ''
+  return side ? `${side} · ${distance}` : distance
+}
+
+/** Opens the count dialog to give or drop part of a stack, or acts at once on a
+    single item, where there is nothing to choose. */
+function askCount(mode: 'give' | 'drop', target: number): boolean {
+  const stack = menuStack.value
+  if (!stack || stack.count < 2) return false
+  split.container = menu.container
+  split.slot = menu.slot
+  split.max = stack.count
+  split.count = 1
+  split.mode = mode
+  split.target = target
+  split.open = true
+  closeMenu()
+  return true
+}
+
 function doDrop(): void {
+  if (askCount('drop', 0)) return
   const slot = menu.slot
   closeMenu()
   void ask('drop', { slot })
 }
 
 function doGive(playerId: number): void {
+  if (askCount('give', playerId)) return
   const slot = menu.slot
   closeMenu()
   void ask('give', { target: playerId, slot })
@@ -540,15 +628,27 @@ function openSplit(): void {
   split.slot = menu.slot
   split.max = stack.count - 1
   split.count = Math.max(1, Math.floor(stack.count / 2))
+  split.mode = 'split'
+  split.target = 0
   split.open = true
   closeMenu()
 }
 
 function doSplit(): void {
-  const { container, slot, count } = split
+  const { container, slot, count, mode, target } = split
   split.open = false
-  void ask('split', { container, slot, count })
+  if (mode === 'give') void ask('give', { target, slot, count })
+  else if (mode === 'drop') void ask('drop', { slot, count })
+  else void ask('split', { container, slot, count })
 }
+
+/** The count dialog's title and confirm, by what it is for. */
+const countTitle = computed(() =>
+  split.mode === 'give' ? label('giveHowMany') : split.mode === 'drop' ? label('dropHowMany') : label('split')
+)
+const countConfirm = computed(() =>
+  split.mode === 'give' ? label('give') : split.mode === 'drop' ? label('drop') : label('split')
+)
 
 function stepSplit(delta: number): void {
   split.count = Math.max(1, Math.min(split.max, split.count + delta))
@@ -624,7 +724,7 @@ useBridge('opx:inventory:open', (payload) => {
       secondary.value = payload.secondary === false ? null : readContainer(payload.secondary)
       tab.value = tabs.value.length > 0 ? tabs.value[0].key : ''
       open.value = true
-      release = acquireFocus({ id: 'inventory', onEscape: close })
+      release = acquireFocus({ id: 'inventory', onEscape })
       // The nearby list is asked for, not assumed: who is close enough to be
       // handed something is a fact about the world, and the world is Lua's.
       tell('nearby')
@@ -753,7 +853,7 @@ try {
         >
           <header class="head">
             <div class="head-text">
-              <span class="eyebrow">{{ label('bag', 'BAG') }}</span>
+              <span class="eyebrow">{{ label('bag') }}</span>
               <h1 class="op-truncate">{{ titleOf(primary, 'bag') }}</h1>
             </div>
             <!-- The key the player actually has, rebinds included: Lua reads it
@@ -844,7 +944,7 @@ try {
           <template v-if="secondary">
             <header class="head">
               <div class="head-text">
-                <span class="eyebrow">{{ label(secondary.kind, '') }}</span>
+                <span class="eyebrow">{{ label(secondary.kind === 'drop' ? 'ground' : secondary.kind) }}</span>
                 <h1 class="op-truncate">{{ titleOf(secondary, 'stash') }}</h1>
               </div>
             </header>
@@ -862,8 +962,8 @@ try {
               :container="secondary"
               :catalog="catalog"
               :config="config"
-              :categories="[]"
-              :hotbar="[]"
+              :categories="NONE"
+              :hotbar="NONE"
               :selected="0"
               :over="drag.overContainer === secondary.id ? drag.overSlot : 0"
               :dragging="drag.container === secondary.id ? drag.slot : 0"
@@ -1016,8 +1116,8 @@ try {
               :disabled="busy"
               @click="doGive(person.id)"
             >
-              <span class="row-label op-truncate">#{{ person.id }}</span>
-              <span class="row-value op-value">{{ person.distance }}{{ label('m', 'm') }}</span>
+              <span class="row-label op-truncate">{{ whereIs(person) }}</span>
+              <span class="row-value op-value">#{{ person.id }}</span>
             </button>
             <div v-if="!nearby.length" class="sep op-eyebrow">{{ label('nobody') }}</div>
           </template>
@@ -1029,7 +1129,7 @@ try {
     <div v-if="split.open" class="menu-layer" @pointerdown.self="split.open = false">
       <div class="dialog">
         <header class="head">
-          <h2>{{ label('split') }}</h2>
+          <h2>{{ countTitle }}</h2>
         </header>
         <div class="stepper">
           <button type="button" class="row op-label" @click="stepSplit(-1)">&minus;</button>
@@ -1041,10 +1141,10 @@ try {
         <p class="hint">1 &ndash; {{ split.max }}</p>
         <footer class="foot">
           <button type="button" class="row op-label grow" @click="split.open = false">
-            {{ label('close') }}
+            {{ label('cancel') }}
           </button>
           <button type="button" class="row op-label grow on" @click="doSplit">
-            {{ label('split') }}
+            {{ countConfirm }}
           </button>
         </footer>
       </div>
@@ -1391,7 +1491,7 @@ button {
 .tab:hover:not(.on) {
   color: var(--op-red-deep);
   --aug-border-bg: var(--op-red-deep);
-  --aug-border-all: 1.8px;
+  --aug-border-all: 1.5px;
 }
 
 /* The active tab is the same outline as every other one. It goes bright and it
@@ -1759,7 +1859,7 @@ button {
 .row:hover:not(.off):not(.on) {
   color: var(--op-red-deep);
   --aug-border-bg: var(--op-red-deep);
-  --aug-border-all: 1.8px;
+  --aug-border-all: 1.5px;
 }
 
 /* Lit and blooming, and no fill. The bloom replaces the dark shadow. */
@@ -1807,10 +1907,10 @@ button {
 
 /* =============================================================================
    THE SLOT CARD AND THE SPLIT STEP -- floating, outside the pair, so neither
-   takes the fit or the tilt. The split step is not enclosed; the rows inside it
-   are the frames. THE CARD IS, because it is now carrying read-off text as well
-   as controls, and text with no ground of its own over live gameplay is text
-   that disappears on a bright street.
+   takes the fit or the tilt. Neither is a frame -- the rows inside are the frames
+   -- but BOTH have a ground, because each carries read-off text as well as
+   controls, and text with no ground of its own over live gameplay (or over a grid
+   of item pictures) is text that disappears.
    ========================================================================== */
 .menu-layer {
   position: absolute;
@@ -1855,6 +1955,15 @@ button {
   top: 50%;
   width: 300px;
   transform: translate(-50%, -50%);
+  /* THE CARD'S GROUND, for the card's reason. It opens dead centre, which is over the
+     inner columns of both grids, and with no ground of its own its title, its 26px
+     count and its range were drawn straight across item pictures. Same plate, same
+     leading rule and same padding as the slot card, so the two boxes this screen pops
+     are one family. */
+  padding: var(--op-space-3);
+  background: var(--op-plate);
+  border-left: var(--op-rule) solid var(--op-red);
+  animation: card-in var(--op-dur-fast) steps(2, end) backwards;
 }
 
 /* A CARD ROW IS NOT A FOOTER BUTTON. Same frame, same ground, same

@@ -67,7 +67,12 @@ local function wear(playerId, entry)
 	local players = api()
 	if players == nil then return false, 'models_unavailable' end
 	local called, ok, reason = pcall(players.setModel, playerId, entry.record, options())
-	if not called then return false, tostring(ok) end
+	-- A raise is logged and answered by code: its text is a Lua error with a
+	-- file and a line, which is the journal's business and not the operator's.
+	if not called then
+		Open77.log.error(('[admin] setModel raised: %s'):format(tostring(ok)))
+		return false, 'raised'
+	end
 	if ok ~= true then return false, tostring(reason or 'refused') end
 	worn[playerId] = entry.name
 	return true
@@ -78,7 +83,10 @@ local function shed(playerId)
 	local players = api()
 	if players == nil then return false, 'models_unavailable' end
 	local called, ok, reason = pcall(players.resetModel, playerId)
-	if not called then return false, tostring(ok) end
+	if not called then
+		Open77.log.error(('[admin] resetModel raised: %s'):format(tostring(ok)))
+		return false, 'raised'
+	end
 	if ok ~= true then return false, tostring(reason or 'refused') end
 	worn[playerId] = nil
 	return true
@@ -173,7 +181,7 @@ function Models.Register()
 		params = { { name = 'playerId', help = 'admin.help.playerId' },
 			{ name = 'ped|off', help = 'admin.help.ped', optional = true } },
 		handler = function(source, args, raw)
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.player.model')
 			if playerId == nil then return end
 			setModel(source, raw, playerId, args[2], 'admin.player.model')
 		end,

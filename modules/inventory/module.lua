@@ -56,15 +56,31 @@ M.Event = {
 	ARMED = OPX.Event(NET, 'inventory', 'armed'),
 	DROPS = OPX.Event(NET, 'inventory', 'drops'),
 	DROP = OPX.Event(NET, 'inventory', 'drop'),
+	-- The routing bucket the player is in: the client has no read of its own,
+	-- and it filters the pile list by it.
+	BUCKET = OPX.Event(NET, 'inventory', 'bucket'),
 	ANSWER = OPX.Event(NET, 'inventory', 'answer'),
+	-- Items another resource registered while the server runs, a few at a time:
+	-- `{ { name, owner, definition }, ... }`. See `Catalog.Register`.
+	CATALOG = OPX.Event(NET, 'inventory', 'catalog'),
+	-- Somebody in reach is handing this player something, and asks first:
+	-- `(token, { item, count, side, distance, expiresInMs })`. No name: never a
+	-- name to a stranger. `GIVE_WITHDRAWN (token)` takes it down again.
+	GIVE_OFFER = OPX.Event(NET, 'inventory', 'giveOffer'),
+	GIVE_WITHDRAWN = OPX.Event(NET, 'inventory', 'giveWithdrawn'),
 
 	-- Client to server. Every payload is attacker-controlled; only `source` is not.
 	REQUEST = OPX.Event(NET, 'inventory', 'request'),
 	HELLO = OPX.Event(NET, 'inventory', 'hello'),
+	-- The receiver's answer to a `GIVE_OFFER`: `(token, accepted)`.
+	GIVE_ANSWER = OPX.Event(NET, 'inventory', 'giveAnswer'),
 
 	-- The client's own bus, raised after the mirror is updated so a handler
 	-- reading it sees the change. Public: a bare AddEventHandler.
 	ON_CHANGED = OPX.Event(LOCAL, 'inventory', 'changed'),
+	-- Server only, public: what a bag gained and lost, by item name,
+	-- `(source, { citizenId, changes = { { name, delta, count } } })`.
+	ON_ITEMS = OPX.Event(LOCAL, 'inventory', 'items'),
 	ON_USED = OPX.Event(LOCAL, 'inventory', 'used'),
 	ON_ARMED = OPX.Event(LOCAL, 'inventory', 'armed'),
 	ON_OPENED = OPX.Event(LOCAL, 'inventory', 'opened'),

@@ -355,11 +355,22 @@ local function serve(player, key, leg)
 	end
 
 	local entrance = verdict.entrance
-	inFlight[player] = { atMs = OPX.Now(), key = entrance.key }
+	local flight = { atMs = OPX.Now(), key = entrance.key }
+	inFlight[player] = flight
 	local ok, outcome = move(player, entrance)
-	inFlight[player] = nil
+
+	-- THE LOCK IS LET GO ONLY IF IT IS STILL THIS TRIP'S. The move awaits for up
+	-- to seven seconds; a player who left meanwhile was forgotten, and the slot
+	-- may already belong to somebody whose own trip holds the lock now. Clearing
+	-- it blind released THEIR lock, and the answer below landed on THEIR screen.
+	local ours = inFlight[player] == flight
+	if ours then inFlight[player] = nil end
 
 	local row = tally(entrance.key)
+	if not ours then
+		if ok then row.taken = row.taken + 1 else row.lost = row.lost + 1 end
+		return
+	end
 	if ok then
 		row.taken = row.taken + 1
 		TriggerClientEvent(M.Event.ANSWER, player, entrance.key, entrance.leg, true, nil,
@@ -413,6 +424,12 @@ end
 -- @param player Source
 -- @return Result
 local function entrances(player)
+	-- A PLAYER ID FROM 1 UP, checked before the host is asked: this is a
+	-- published contract, and `Open77.players.position(0)` -- the console's
+	-- source -- does not answer nil, it throws past `pcall` and stops the
+	-- resource (devkit card `server:Open77.players.position`).
+	player = math.tointeger(tonumber(player))
+	if player == nil or player < 1 then return Result.Err('no_position') end
 	local at = pointOf(player)
 	if at == nil then return Result.Err('no_position') end
 	return Result.Ok({ bucket = at.bucket, entrances = payloadFor(player, at.bucket) })
@@ -593,6 +610,10 @@ function M.Start()
 	RegisterNetEvent(M.Event.ASK, function()
 		local player = tonumber(source) or 0
 		if player <= 0 then return end
+		-- A FLOOR, as every other door here has one: each ask is a character
+		-- read, a bucket filter, a sort and a payload, and a client polls every
+		-- POLL_MS (15 s). Faster than once a second is not a client polling.
+		if OPX.Cooling(player, 'teleports.ask', 1000) then return end
 		sync(player)
 	end)
 
@@ -608,6 +629,10 @@ function M.Start()
 			if not served then
 				inFlight[player] = nil
 				Open77.log.error('[teleports] a trip raised: ' .. tostring(failure))
+				-- ANSWERED, because the client's latch opens only on an answer: a
+				-- raise used to leave it shut, and every later press said "you are
+				-- already on your way" until the player rejoined.
+				TriggerClientEvent(M.Event.ANSWER, player, safe(key), safe(leg), false, 'failed', nil)
 			end
 		end)
 	end)

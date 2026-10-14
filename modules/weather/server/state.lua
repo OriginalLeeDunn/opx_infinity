@@ -215,13 +215,24 @@ end
 
 --- Sets the authoritative time of day.
 -- @author dop42
--- @param seconds number Second-of-day, already validated.
+--
+-- CHECKED HERE, NOT ONLY BY THE COMMAND. This is a published contract and
+-- trusted its argument as "already validated": a caller handing it a string or
+-- a NaN wrote it into the clock, every snapshot built from it raised in
+-- `Clock.At`, heartbeats and joins stopped, and the bad value was saved into
+-- the carried state for the next start to inherit. It answers a Result now,
+-- as `SetDayLength` and `SetWeather` do.
+-- @param seconds number Second-of-day.
 -- @param reason string
+-- @return Result
 function Authority.SetTime(seconds, reason)
+	seconds = tonumber(seconds)
+	if not Clock.Finite(seconds) then return OPX.Result.Err('invalid_time') end
 	ensureAnchored()
-	state.baseSeconds = seconds
+	state.baseSeconds = Clock.Normalize(seconds)
 	state.anchorMs = OPX.Now()
 	commit(reason)
+	return OPX.Result.Ok()
 end
 
 --- Holds or releases the authoritative clock.

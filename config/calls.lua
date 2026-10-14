@@ -123,7 +123,8 @@ OPX.Config.MODULES.calls = {
 	--
 	-- `H` for holo. Free on this build -- `E` is contextual, `I` the bag, `T`
 	-- chat, `Y` the hotbar peek, `X` stops an emote, `F1` the menu, `F3` the
-	-- animation picker, `F4` the skill tree, `F9` and `F10` staff -- and `false`
+	-- animation picker, `F4` the skill tree, `F9` the staff menu (F10 is free
+	-- since the Dev screen went) -- and `false`
 	-- switches the key off entirely for a server that would rather bind it
 	-- elsewhere.
 	KEY = { ID = 'opx.calls.holo', NAME = 'calls.key.holo', DEFAULT = 'H' },
@@ -145,7 +146,11 @@ OPX.Config.MODULES.calls = {
 	-- share a physical key and fires both, so outside a ringing call these
 	-- behave exactly as they did -- the handlers here do nothing at all unless
 	-- there is a call to answer. While one IS ringing, pressing Y also peeks the
-	-- hotbar for a moment. Move whichever bothers you; all three are config.
+	-- hotbar for a moment. X is CONTESTED (`KEY_PRIORITY` in
+	-- `config/client.lua`): a ringing call takes the press from an emote and a
+	-- carried crate, a cancelable bar takes it from the call, and hanging up a
+	-- call that is merely going on comes after all of them. Move whichever
+	-- bothers you; all three are config.
 	-- WHERE THE PROJECTION SITS. The owner moved this by hand three times --
 	-- centre, then bottom, then flush to the edge -- and every one of those was a
 	-- CSS edit because the value was not a setting. It is one now, and it speaks

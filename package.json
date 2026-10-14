@@ -7,14 +7,12 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    
     "typecheck": "tsc --noEmit && vue-tsc --noEmit -p ui/tsconfig.app.json"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.6",
     "@fontsource/rajdhani": "^5.2.6",
     "@fontsource/saira": "^5.2.6",
-    "augmented-ui": "^2.0.0",
     "vue": "^3.5.0"
   },
   "devDependencies": {

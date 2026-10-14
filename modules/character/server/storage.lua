@@ -280,6 +280,16 @@ SELECT cid FROM opx77_characters
 	return Result.Err('character.limit', tostring(slots))
 end
 
+-- `name` IS VARCHAR(64), AND A NAME IS TWO HALVES OF UP TO 32 LETTERS EACH plus
+-- the space between them: 65. Under strict SQL mode the row refused it, and a
+-- staff rename to two full-length halves made every later save of that
+-- character fail, autosave and logout alike. The column is the roster's
+-- denormalised "First Last"; the halves themselves live in `char_info`, whole,
+-- so the column is cut in letters to what it holds.
+local function storedName(name)
+	return type(name) == 'string' and OPX.Text.Clean(name, 64) or ''
+end
+
 --- Inserts a new character row, the unique key deciding a collision.
 -- Never a SELECT first: two players creating in the same tick would both pass it.
 -- @author dop42
@@ -296,7 +306,7 @@ VALUES
 		citizen = entity.citizenId,
 		user = entity.userId,
 		cid = entity.cid,
-		name = entity.name or '',
+		name = storedName(entity.name),
 		charInfo = encode(entity.charInfo),
 		money = encode(entity.money),
 		job = encode(entity.job),
@@ -328,7 +338,7 @@ UPDATE opx77_characters
  WHERE citizen_id = @citizen
   ]], {
 		citizen = entity.citizenId,
-		name = entity.name or '',
+		name = storedName(entity.name),
 		charInfo = encode(entity.charInfo),
 		money = encode(entity.money),
 		job = encode(entity.job),
@@ -386,6 +396,38 @@ SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(money, @path)) AS SIGNED)
   ]], { citizen = citizenId, path = '$.' .. moneyType })
 	if not read.ok then return read end
 	return Result.Ok(math.tointeger(tonumber(read.value)) or 0)
+end
+
+--- Sets, or with a nil value removes, one top-level key of an offline
+--- character's metadata, leaving every other key as the row holds it.
+-- The path is a bound parameter built from a key the caller has already held to
+-- `[%w_%-%.]`, quoted so a dot in it is part of the key and not a step.
+-- @author dop42
+-- @param citizenId CitizenId
+-- @param key string
+-- @param value any plain data, or nil to remove the key
+-- @return Result
+function M.Storage.SetMetadataKey(citizenId, key, value)
+	local path = '$."' .. key .. '"'
+	local written
+	if value == nil then
+		written = Storage.Execute([[
+UPDATE opx77_characters
+   SET metadata = JSON_REMOVE(metadata, @path)
+ WHERE citizen_id = @citizen AND deleted_at IS NULL
+  ]], { citizen = citizenId, path = path })
+	else
+		written = Storage.Execute([[
+UPDATE opx77_characters
+   SET metadata = JSON_SET(metadata, @path, CAST(@value AS JSON))
+ WHERE citizen_id = @citizen AND deleted_at IS NULL
+  ]], { citizen = citizenId, path = path, value = json.encode(value) })
+	end
+	if not written.ok then return written end
+	local affected = written.value
+	if type(affected) == 'table' then affected = affected.affectedRows end
+	if tonumber(affected) == 0 then return Result.Err('character.notFound', citizenId) end
+	return Result.Ok(true)
 end
 
 -- The one-column statement an offline group change writes, per column. Two whole

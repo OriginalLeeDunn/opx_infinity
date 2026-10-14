@@ -80,6 +80,16 @@ local settings = {}
 -- not by a colon, because either half may contain one.
 local groups = {}
 
+-- BUMPED BY EVERY CHANGE TO WHAT `build()` READS: a group stored, patched or
+-- removed, and the caps forgotten on a rebind. `pass()` redraws every 150ms
+-- inside the scheduler's shared resume, and `build()` sorted every group and
+-- concatenated a signature for every row on each of those passes -- up to 32
+-- groups, thousands of instructions, to arrive at the signature it already had.
+-- The frame is now rebuilt only when the revision moved. Caps cannot go stale
+-- behind it: see `CAP_UNNAMEABLE` below.
+local revision = 0
+local built = { revision = -1 }
+
 -- What each owner that has ever posted a group turned out to be: a module of
 -- this runtime, a resource of this host, or neither. Settled once, on the first
 -- group, because it is what the sweep below is allowed to act on.
@@ -421,6 +431,7 @@ local function removeOwner(owner)
 		if group.owner == owner then keys[#keys + 1] = key end
 	end
 	for index = 1, #keys do groups[keys[index]] = nil end
+	if #keys > 0 then revision = revision + 1 end
 	return #keys
 end
 
@@ -429,6 +440,7 @@ end
 -- from here and were already gone. See `CAP_UNNAMEABLE` for why this is the
 -- invalidation rather than a cache with a lifetime of its own.
 local function forgetCaps()
+	revision = revision + 1
 	for _, group in pairs(groups) do
 		for _, row in ipairs(group.rows) do
 			for _, cap in ipairs(row.keys) do cap.text = nil end
@@ -508,7 +520,11 @@ end
 -- older frame, and the next pass has to try again.
 local function draw(force)
 	if not ready then return end
-	local frame, signature, owners = build()
+	if built.revision ~= revision then
+		built.frame, built.signature, built.owners = build()
+		built.revision = revision
+	end
+	local frame, signature, owners = built.frame, built.signature, built.owners
 	local up = #frame > 0 and not captured and not hudOff and not down
 	if not up then signature = '' end
 	if not force and signature == drawnSignature then return end
@@ -616,6 +632,7 @@ local function show(owner, id, spec)
 	end
 
 	groups[groupKey(owner, id)] = group
+	revision = revision + 1
 	draw()
 	return Result.Ok({ id = id, replaced = held ~= nil, rows = #group.rows })
 end
@@ -637,6 +654,7 @@ local function update(owner, id, patch)
 	if merged == nil then return Result.Err(reason) end
 
 	groups[groupKey(owner, id)] = merged
+	revision = revision + 1
 	draw()
 	return Result.Ok({ id = id })
 end
@@ -654,7 +672,10 @@ local function hide(owner, id)
 	local key = groupKey(owner, id)
 	local removed = groups[key] ~= nil
 	groups[key] = nil
-	if removed then draw() end
+	if removed then
+		revision = revision + 1
+		draw()
+	end
 	return Result.Ok({ removed = removed })
 end
 
@@ -754,6 +775,7 @@ end
 function M.Init()
 	readSettings()
 	groups = {}
+	revision = revision + 1
 	ownerKinds = {}
 	sequence = 0
 	drawnSignature = nil
@@ -833,6 +855,7 @@ end
 -- @author dop42
 function M.Stop()
 	groups = {}
+	revision = revision + 1
 	ownerKinds = {}
 	drawnSignature = nil
 	drawnOwners = {}

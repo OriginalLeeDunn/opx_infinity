@@ -59,6 +59,11 @@ end
 -- client that never draws the menu cannot strand a body for the session.
 local HOLD_MAX_FLOOR_SECONDS = 60
 
+-- The most a hold can be stretched by a join that keeps reporting itself busy
+-- (`M.Waiting`), counted from the offer: half an hour in the fitting room and
+-- on the name form together is a player who is not coming back to choose.
+local HOLD_CAP_MS = 30 * 60 * 1000
+
 local function holdMs()
 	return math.floor(M.Number(M.Settings.HOLD_MAX_SECONDS, HOLD_MAX_FLOOR_SECONDS) * 1000)
 end
@@ -132,7 +137,7 @@ end
 -- @param source Source
 -- @param token integer the choice this settles, as the caller saw it
 -- @param point table|nil the spot chosen, or nil for the default
--- @param reason string what ended it: 'chosen' or 'timeout'
+-- @param reason string what ended it: 'chosen', 'resumed' or 'timeout'
 -- @return boolean whether it settled anything
 local function settle(source, token, point, reason)
 	local held = pending and pending[source]
@@ -147,12 +152,12 @@ local function settle(source, token, point, reason)
 	-- list while their body is moved underneath it. Sent whatever placement then
 	-- does, because a choice that has been spent is spent: a menu left up because a
 	-- kill was refused has nothing behind it, and the player has to be able to move.
-	send(M.Event.CLOSE, source, {
-		reason = reason,
-		-- The label only, for the sentence the client shows. The coordinates are
-		-- not the client's business in either direction.
-		place = point ~= nil and point.label or nil,
-	})
+	--
+	-- AND IT CARRIES NO SENTENCE. "Spawned at X." went up here, before the body
+	-- had moved, and stayed up when the placement was then refused (down, mid
+	-- transition, a refused kill): told they were somewhere they were not. The
+	-- sentence follows the placement, on the same name, as `result`.
+	send(M.Event.CLOSE, source, { reason = reason })
 
 	if reason == 'timeout' then
 		-- Not 'the default spawn': a player who picked nothing is placed by the
@@ -166,7 +171,20 @@ local function settle(source, token, point, reason)
 	-- life state with `Wait` -- and the routeway this is reached from is a net
 	-- handler, which is not a coroutine. Yielding from one is a raise, and a raise
 	-- here would be a character left where the pristine save dropped them.
-	CreateThread(function() place(source, held, point) end)
+	CreateThread(function()
+		local placed = place(source, held, point)
+		send(M.Event.CLOSE, source, {
+			reason = reason,
+			result = true,
+			placed = placed == true,
+			-- The label only, for the sentence the client shows. The coordinates
+			-- are not the client's business in either direction.
+			place = point ~= nil and point.label or nil,
+			-- And its id, which the client turns into the place's name in the
+			-- player's language when the catalogue has one.
+			placeId = point ~= nil and point.id or nil,
+		})
+	end)
 	return true
 end
 
@@ -202,8 +220,14 @@ function M.Offer(source, citizenId)
 
 	local catalogue = M.Catalogue()
 	if #catalogue == 0 then return false end
-	-- One choice at a time. A second offer -- a reconnect inside the window --
-	-- leaves the first one standing rather than replacing its deadline.
+	-- One choice at a time. A second offer for the SAME character leaves the
+	-- first one standing rather than replacing its deadline. One left over by a
+	-- character that is no longer the one on this slot is nobody's, and is
+	-- dropped -- see `Abandon` -- rather than standing in front of this one.
+	local standing = pending[source]
+	if standing ~= nil and standing.citizenId ~= citizenId then
+		M.Abandon(source, standing.citizenId)
+	end
 	if pending[source] ~= nil then return false end
 
 	-- 'first' ASKS A ROW, NOT A CLOCK. A character whose row already holds a
@@ -223,18 +247,26 @@ function M.Offer(source, citizenId)
 	-- the menu up -- see `M.Opened` -- which is the whole reason the offer carries
 	-- an event of its own. Until then `holdUntilMs` is the only bound, and it is
 	-- a bound on the RUNTIME rather than on the player.
+	-- WHETHER "WHERE I LEFT OFF" IS A CHOICE AT ALL. Picking nothing used to be
+	-- the only way to keep the row's position -- an invisible forty-five second
+	-- wait the page never mentioned. A character whose row holds a position is
+	-- offered it as a card of its own; one that has never stood anywhere has no
+	-- such place to go back to, and is not offered one.
+	local resume = hasStood(source, citizenId)
 	pending[source] = {
 		token = token,
 		citizenId = citizenId,
+		resume = resume,
 		expiresAtMs = nil,
 		holdUntilMs = OPX.Now() + holdMs(),
+		offeredAtMs = OPX.Now(),
 	}
 
 	-- A DURATION, not a deadline. The page counts down to its own clock plus this
 	-- number, and that display is presentation of a server number -- the server
 	-- counts this same `life` itself, and only its count ends the choice. The two
 	-- now agree because both start from the same moment: the menu appearing.
-	send(M.Event.OFFER, source, { timeoutMs = life })
+	send(M.Event.OFFER, source, { timeoutMs = life, resume = resume })
 	Open77.log.info(('[spawn] %s is choosing a spawn point (%d configured)')
 		:format(citizenId, #catalogue))
 
@@ -290,6 +322,25 @@ function M.Opened(source)
 		:format(held.citizenId, math.floor(life / 1000)))
 end
 
+--- The join is still busy ahead of the menu: the hold is stretched.
+-- @author dop42
+-- THE HOLD RAN OUT UNDER THE FITTING ROOM. It is five minutes from the offer,
+-- and the offer comes at world entry, before the name form and the clothes: a
+-- new player who took their time there was placed by the server ("No choice
+-- was made") -- a kill and a respawn under an open modal -- for a menu they
+-- had never seen. The client says, while the entry module reports itself
+-- busy, that it still is; each report pushes the hold a full hold away, up to
+-- `HOLD_CAP_MS` from the offer. A forged report buys its own player a later
+-- placement and nothing else, which is the bound `M.Opened` already accepts.
+-- @param source Source
+function M.Waiting(source)
+	local held = pending and pending[source]
+	if held == nil or held.expiresAtMs ~= nil then return end
+	local now = OPX.Now()
+	local cap = (held.offeredAtMs or now) + HOLD_CAP_MS
+	held.holdUntilMs = math.min(cap, math.max(held.holdUntilMs, now + holdMs()))
+end
+
 --- Handles the click. Every field on the payload is attacker-controlled.
 -- @author dop42
 -- @param source Source
@@ -310,6 +361,18 @@ function M.Choose(source, payload)
 		return
 	end
 
+	-- WHERE I LEFT OFF: no point, so the row decides, which is the resume. Only
+	-- for a choice that was offered it -- a character with nowhere to go back to
+	-- asking for it is refused like any id this module does not carry.
+	if payload.id == M.RESUME_ID then
+		if held.resume ~= true then
+			OPX.Refuse(source, 'spawn.noChoice', M.Operation.CHOOSE)
+			return
+		end
+		settle(source, held.token, nil, 'resumed')
+		return
+	end
+
 	-- THE LOOKUP. An id this module does not carry -- a typo, or a catalogue the
 	-- client invented -- is refused rather than placed, and the menu stays up so
 	-- the player can pick again.
@@ -320,6 +383,32 @@ function M.Choose(source, payload)
 	end
 
 	settle(source, held.token, point, 'chosen')
+end
+
+--- Drops a choice whose character has left the slot, and takes its menu down.
+-- @author dop42
+--
+-- A CHOICE BELONGS TO A CHARACTER, AND THE TABLE IS KEYED BY A SLOT. A switch in
+-- the world (`opx.select`) unloads one character and places the next on the
+-- spot, without asking this module anything -- so a choice still open for the
+-- first stayed open: its menu up on the player's screen holding the keyboard,
+-- the HUD standing aside for it, until the hold or the window ran out. Anything
+-- clicked on it placed nobody (`place` checks the citizen), which is the only
+-- reason it never moved the wrong body. Nothing is placed here: the character it
+-- was for has gone, and the one that replaced it is placed by its own path.
+-- @param source Source
+-- @param citizenId CitizenId|nil only a choice for this character is dropped
+-- @return boolean whether one was
+function M.Abandon(source, citizenId)
+	source = tonumber(source)
+	local held = source and pending and pending[source]
+	if held == nil then return false end
+	if citizenId ~= nil and held.citizenId ~= citizenId then return false end
+	pending[source] = nil
+	send(M.Event.CLOSE, source, { reason = 'abandoned' })
+	Open77.log.info(('[spawn] the choice of %s was dropped: the character left the slot')
+		:format(tostring(held.citizenId)))
+	return true
 end
 
 --- Whether a choice is outstanding for a player.
@@ -397,6 +486,21 @@ function M.Start()
 		if not src then return end
 		M.Opened(src)
 	end)
+
+	RegisterNetEvent(M.Event.WAITING, function()
+		local src = tonumber(source)
+		if not src then return end
+		if OPX.Cooling(src, 'spawn:waiting', 5000) then return end
+		M.Waiting(src)
+	end)
+
+	-- A character put down on a slot that stays connected: its choice goes with it.
+	AddEventHandler(OPX.Event(OPX.Channel.INTERNAL, 'character', 'unloaded'),
+		function(rawPlayerId, playerData)
+			local src = tonumber(rawPlayerId)
+			if not src then return end
+			M.Abandon(src, type(playerData) == 'table' and playerData.citizenId or nil)
+		end)
 
 	-- Forget the choice with the player. Nothing is placed: their slot is gone,
 	-- and the watcher notices the same way -- by finding no slot to settle.

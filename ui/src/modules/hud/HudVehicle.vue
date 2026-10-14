@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, shallowRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { holdBottomCenter } from '@/stores/corners'
 import { num, text } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
@@ -21,6 +22,12 @@ import { useLocale } from '@/composables/useLocale'
  * speed is not reported fills the outer ring from road speed instead, and one whose
  * integrity is not reported draws no inner ring and no integrity line at all: an empty
  * integrity ring is a thing a player brakes for.
+ *
+ * `fuel` IS OPTIONAL ON THE SAME TERMS. Cyberpunk has no tank; the fuel module keeps one on
+ * the vehicle's state bag, and a car nobody has filled -- or a server without the module --
+ * draws no fuel line at all rather than an empty gauge a player would pull over for. It is
+ * a line under the dial and not a third ring: the dial is speed, and a tank is read the way
+ * integrity is, as a share with a word in front of it.
  *
  * -- DESIGN PASS 02 -----------------------------------------------------------
  *
@@ -79,6 +86,10 @@ interface Vehicle {
   integrityLabel: string
   tone: Tone
   airborne: string
+  /** -1 when the vehicle has no tank this server measures, which is not the same as 0. */
+  fuel: number
+  fuelLabel: string
+  fuelTone: Tone
 }
 
 const EMPTY: Vehicle = {
@@ -90,7 +101,10 @@ const EMPTY: Vehicle = {
   integrity: -1,
   integrityLabel: '',
   tone: 'neutral',
-  airborne: ''
+  airborne: '',
+  fuel: -1,
+  fuelLabel: '',
+  fuelTone: 'neutral'
 }
 
 const vehicle = shallowRef<Vehicle>(EMPTY)
@@ -102,6 +116,7 @@ useBridge('opx:hud:vehicle', (payload: Payload) => {
   }
 
   const tone = text(payload.tone, 'neutral')
+  const fuelTone = text(payload.fuelTone, 'neutral')
   vehicle.value = {
     active: true,
     speed: Math.max(0, Math.round(num(payload.speed))),
@@ -113,7 +128,11 @@ useBridge('opx:hud:vehicle', (payload: Payload) => {
       typeof payload.integrity === 'number' ? Math.max(0, Math.min(100, payload.integrity)) : -1,
     integrityLabel: t(text(payload.integrityLabel)),
     tone: (TONES.indexOf(tone) === -1 ? 'neutral' : tone) as Tone,
-    airborne: payload.airborne === true ? t(text(payload.airborneLabel)) : ''
+    airborne: payload.airborne === true ? t(text(payload.airborneLabel)) : '',
+    // `typeof` again: an empty tank is 0, and -1 means there is no tank to read.
+    fuel: typeof payload.fuel === 'number' ? Math.max(0, Math.min(100, payload.fuel)) : -1,
+    fuelLabel: t(text(payload.fuelLabel)),
+    fuelTone: (TONES.indexOf(fuelTone) === -1 ? 'neutral' : fuelTone) as Tone
   }
 })
 
@@ -121,6 +140,51 @@ const outerFill = computed(() => {
   const value = vehicle.value
   const share = value.rpm >= 0 ? value.rpm : (value.speed / DIAL_KPH) * 100
   return Math.max(0, Math.min(100, share))
+})
+
+/**
+ * WHAT THE DIAL HOLDS OF THE BOTTOM EDGE, published for the hotbar peek. Both default to
+ * the bottom centre, and a peek while driving was drawn straight over the dial.
+ *
+ * MEASURED off the positioned wrapper (`.at` in HudRoot.vue), which is laid out whether
+ * or not the dial is showing and never transitions -- so the number is the dial's place,
+ * not a frame of its entrance. Published only while the car is live and only when the
+ * wrapper actually crosses the middle of the screen: a dial an operator anchored to a
+ * corner holds nothing the peek needs. The wrapper's own bleed is the gap between them.
+ */
+const root = ref<HTMLElement | null>(null)
+/** Half the peek's width, near enough: five 72px cells and their gaps. */
+const PEEK_HALF = 200
+let sizer: ResizeObserver | null = null
+
+function publish(): void {
+  const wrapper = root.value?.parentElement
+  if (!vehicle.value.active || !wrapper) {
+    holdBottomCenter(0)
+    return
+  }
+  const box = wrapper.getBoundingClientRect()
+  const middle = window.innerWidth / 2
+  const crosses = box.left < middle + PEEK_HALF && box.right > middle - PEEK_HALF
+  const low = box.bottom > window.innerHeight / 2
+  holdBottomCenter(crosses && low ? window.innerHeight - box.top : 0)
+}
+
+watch(() => vehicle.value.active, publish, { flush: 'post' })
+
+onMounted(() => {
+  window.addEventListener('resize', publish)
+  if (root.value && typeof ResizeObserver !== 'undefined') {
+    sizer = new ResizeObserver(publish)
+    sizer.observe(root.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', publish)
+  sizer?.disconnect()
+  sizer = null
+  holdBottomCenter(0)
 })
 
 const redlining = computed(() => vehicle.value.rpm >= REDLINE)
@@ -134,7 +198,7 @@ const gearClass = computed(() => {
 </script>
 
 <template>
-  <div class="vehicle" :class="{ live: vehicle.active, hot: redlining }">
+  <div ref="root" class="vehicle" :class="{ live: vehicle.active, hot: redlining }">
     <div class="dial">
       <svg class="rings" viewBox="0 0 120 120" aria-hidden="true">
         <!-- The black, as geometry. One stroke wider than the band it sits under. -->
@@ -176,6 +240,11 @@ const gearClass = computed(() => {
       <span v-if="vehicle.integrity >= 0" class="integrity-row" :class="vehicle.tone">
         <span class="label">{{ vehicle.integrityLabel }}</span>
         <b>{{ Math.round(vehicle.integrity) }}%</b>
+      </span>
+      <span v-if="vehicle.fuel >= 0" class="fuel-row" :class="vehicle.fuelTone">
+        <span class="label">{{ vehicle.fuelLabel }}</span>
+        <span class="fuel-track"><span class="fuel-fill" :style="{ width: vehicle.fuel + '%' }" /></span>
+        <b>{{ Math.round(vehicle.fuel) }}%</b>
       </span>
       <span v-if="vehicle.airborne" class="chip" data-augmented-ui="tr-clip border">
         <span class="chip-icon">!</span>
@@ -373,6 +442,11 @@ const gearClass = computed(() => {
   align-items: center;
   justify-content: center;
   gap: var(--op-space-2);
+  /* THE LINE KEEPS THE AIRBORNE CHIP'S HEIGHT WHETHER OR NOT IT IS UP. The block is
+     anchored by its bottom edge, so this line growing by the chip (its 10px type plus
+     4px above and below) pushed the whole dial up 7px every time the car left the
+     ground, and dropped it back on landing. */
+  min-height: calc(var(--op-fs-label) + 8px);
   /* NO GROUND. A plate went under this line and came straight back off on the
      owner's word, with the rest of the HUD's; the padding went with it, because
      it was only ever there to keep the plate off the glyphs. */
@@ -403,6 +477,61 @@ const gearClass = computed(() => {
 }
 
 .integrity-row.bad b {
+  color: var(--op-alarm);
+}
+
+/* =============================================================================
+   THE TANK -- the integrity line's twin, with a hairline gauge between the word
+   and the number: a frame that is an outline and a fill that is the quantity,
+   the same division the dial's rings make. Only the fill's width moves.
+   ========================================================================== */
+.fuel-row {
+  display: flex;
+  align-items: center;
+  gap: var(--op-space-1);
+}
+
+.fuel-row .label {
+  font: 400 var(--op-fs-micro) / 1 var(--op-font-mono);
+  letter-spacing: var(--op-track-micro);
+  text-transform: uppercase;
+  color: var(--op-red-idle);
+  white-space: nowrap;
+}
+
+.fuel-track {
+  position: relative;
+  width: 36px;
+  height: 4px;
+  border: 1px solid var(--op-red-idle);
+}
+
+.fuel-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--op-red);
+  transition: width var(--op-dur-fast) linear;
+}
+
+.fuel-row b {
+  font: 700 var(--op-fs-meta) / 1 var(--op-font-mono);
+  color: var(--op-red);
+  font-variant-numeric: tabular-nums;
+}
+
+.fuel-row.warn .fuel-fill {
+  background: var(--op-red-hi);
+}
+
+.fuel-row.warn b {
+  color: var(--op-red-hi);
+}
+
+.fuel-row.bad .fuel-fill {
+  background: var(--op-alarm);
+}
+
+.fuel-row.bad b {
   color: var(--op-alarm);
 }
 

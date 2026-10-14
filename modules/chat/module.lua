@@ -47,10 +47,7 @@ M.Event = {
 	SUGGESTIONS = OPX.Event(NET, 'chat', 'suggestions'),
 
 	-- The client's own bus. `view` is the seam a view module attaches to;
-	-- `submitted` carries a typed command line and its tokens to anything that
-	-- wants to see one before the dispatcher does.
 	VIEW = OPX.Event(LOCAL, 'chat', 'view'),
-	SUBMITTED = OPX.Event(LOCAL, 'chat', 'submitted'),
 }
 
 --- Names the host owns, listed once so there is one place to change them.

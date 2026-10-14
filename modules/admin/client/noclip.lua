@@ -182,7 +182,11 @@ function Noclip.Changed(on)
 	-- the one it cannot know about -- the native switched off underneath us --
 	-- and without it the server's idea of who is flying stays on for the rest of
 	-- the session, with their body hidden for it.
-	if on == true or not hideBody then return end
+	--
+	-- SENT WHETHER OR NOT THE BODY IS HIDDEN. It used to be skipped with
+	-- `HIDE_BODY` off, which left the server believing the operator still flew --
+	-- and the flight is also what the Observe screen and the roster read.
+	if on == true then return end
 	local sent, reason = TriggerServerEvent(M.Event.NOCLIP_BODY, false)
 	if not sent then
 		Open77.log.warn('[admin] the noclip body state was not sent: ' .. tostring(reason))

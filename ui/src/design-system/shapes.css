@@ -1,9 +1,17 @@
 /* =============================================================================
-   OPEN//77 DESIGN SYSTEM -- SHAPES, ON AUGMENTED-UI
+   OPEN//77 DESIGN SYSTEM -- SHAPES
    =============================================================================
-   augmented-ui draws every cut corner and every frame in this runtime. What
-   lives here is the OPX vocabulary on top of it: three presets that say what a
-   thing IS, and the state hooks that repaint them.
+   Every cut corner and every frame in this runtime is drawn here. The
+   vocabulary is augmented-ui's -- `data-augmented-ui="tr-clip border"`,
+   `--aug-tr`, `--aug-border-bg`, `--aug-border-all` -- but the library is
+   gone: the templates only ever asked for three of its tokens, and the 130 kB
+   core that survived the build-time prune evaluated a calc() polygon of some
+   forty points on every augmented element at every style recalc, on a page
+   composited over gameplay. What replaced it is the first block below: the
+   same polygons, written out for those three tokens and nothing else.
+
+   On top of it, three presets that say what a thing IS, and the state hooks
+   that repaint them.
 
    WHAT THIS REPLACED, and why it is not a smaller version of the same thing.
    Every pass-02 surface drew its frame as a 9-slice `border-image` from an SVG
@@ -15,31 +23,119 @@
    `--aug-border-bg`: a state change writes ONE custom property and the shape is
    untouched.
 
-   THE THREE OBJECTIONS THE OLD CODE RAISED, answered against the source in
-   `node_modules/augmented-ui/augmented-ui.css`:
+   WHAT THE BORDER LAYER IS:
 
-   1. "`--aug-border-bg` is one colour on four sides with no per-side form."
-      It is assigned to `background` (line 645), so it takes any gradient, and
-      the per-side WIDTHS `--aug-border-top/right/bottom/left` are first-class
-      (lines 215-218). `.op-arete` below is the lit leading edge, as a gradient.
-   2. "It confiscates the element's two pseudo-elements."
-      Only when both layers are on. `::after` is the border and `::before` is
-      the inlay, and each is `content: none` while its layer is off (631, 667).
-      Every preset here asks for `border` and NOT `inlay`, so `::before` is
-      still the element's own -- which is what the interlace uses.
-   3. "It re-clips on resize."
-      The clip is CSS custom properties resolved by the engine. There is no
+   1. `--aug-border-bg` is assigned to `background`, so it takes any gradient.
+      `.op-arete` below is the lit leading edge, as a gradient.
+   2. `::after` is the border layer. `::before` is the element's own -- which is
+      what the interlace uses. There is no inlay layer.
+   3. The clip is CSS custom properties resolved by the engine. There is no
       JavaScript and no observer. What remains true is the DOM cost, so rule 1
       still stands: augment the container, not forty cells.
+   4. There is ONE width, `--aug-border-all`. The library's per-side widths
+      (`--aug-border-top`, ...) were never used and are not implemented.
 
-   THE ONE REAL CONSTRAINT. augmented-ui clips the element, and a clip cuts an
-   outset `box-shadow` off along the diagonal. A shape that must bloom uses
+   THE ONE REAL CONSTRAINT. The element is clipped, and a clip cuts an outset
+   `box-shadow` off along the diagonal. A shape that must bloom uses
    `.op-lift` (a `drop-shadow` filter, which follows the cut) and accepts the
    filter's cost, or puts the glow on a child. Nothing that repaints every frame
    may take a filter: see the note on `.op-lift`.
    ========================================================================== */
 
-@import 'augmented-ui/augmented-ui.min.css';
+/* --- the geometry: augmented-ui's tr-clip, bl-clip and border, by hand -------
+   These rules replace the 130 kB core this page used to inline. They draw the
+   same three things the templates ever asked for, with the same polygons the
+   library resolved to, at the same specificity and in the same place in the
+   cascade, so every rule below them overrides them exactly as it overrode the
+   library. A token outside these three fails the build (`guardAugmented` in
+   vite.config.ts) -- it would otherwise be a silent plain rectangle.
+
+   c = --aug-tr, b = --aug-bl, w = --aug-border-all. The element is clipped to
+   its box with the corner(s) cut at 45deg; the edges sit 1px outside the box so
+   an antialiased edge never shaves the outer pixel. The border layer is the
+   box minus the same shape inset by w: the inner diagonal meets the edges at
+   w/2 past the cut, which is how the library offset a 45deg join.
+
+   The bottom-left corner is a custom property rather than a second selector so
+   that the clip stays at the specificity of one attribute, as it was.
+
+   The geometry, the attribute and the custom-property names are augmented-ui's:
+   augmented-ui, BSD 2-Clause License, Copyright (c) James0x57, PropJockey, 2020. */
+[data-augmented-ui] {
+  position: relative;
+  isolation: isolate;
+  --aug__BL_Out: -1px calc(100% + 1px);
+  --aug__BL_In: var(--aug-border-all) calc(100% - var(--aug-border-all));
+  clip-path: polygon(
+    -1px -1px,
+    calc(100% - var(--aug-tr)) -1px,
+    calc(100% - var(--aug-tr)) 0px,
+    100% var(--aug-tr),
+    calc(100% + 1px) var(--aug-tr),
+    calc(100% + 1px) calc(100% + 1px),
+    var(--aug__BL_Out));
+}
+
+[data-augmented-ui~="tr-clip"] { --aug-tr: 15px; }
+[data-augmented-ui~="bl-clip"] {
+  --aug-bl: 15px;
+  --aug__BL_Out:
+    var(--aug-bl) calc(100% + 1px),
+    var(--aug-bl) 100%,
+    0px calc(100% - var(--aug-bl)),
+    -1px calc(100% - var(--aug-bl));
+  --aug__BL_In:
+    calc(var(--aug-bl) + var(--aug-border-all)) calc(100% - var(--aug-border-all)),
+    calc(var(--aug-bl) + var(--aug-border-all) / 2) calc(100% - var(--aug-border-all)),
+    var(--aug-border-all) calc(100% - var(--aug-bl) - var(--aug-border-all) / 2),
+    var(--aug-border-all) calc(100% - var(--aug-bl) - var(--aug-border-all));
+}
+
+/* The border layer: a ring, painted with `--aug-border-bg`, so it takes a
+   gradient as readily as a colour. Inner path first, then the outer loop. */
+[data-augmented-ui~="border"]::after {
+  content: "";
+  position: absolute;
+  top: 0px;
+  right: 0px;
+  bottom: 0px;
+  left: 0px;
+  opacity: 1;
+  background: var(--aug-border-bg, none);
+  pointer-events: none;
+  clip-path: polygon(
+    var(--aug-border-all) var(--aug-border-all),
+    calc(100% - var(--aug-tr) - var(--aug-border-all)) var(--aug-border-all),
+    calc(100% - var(--aug-tr) - var(--aug-border-all) / 2) var(--aug-border-all),
+    calc(100% - var(--aug-border-all)) calc(var(--aug-tr) + var(--aug-border-all) / 2),
+    calc(100% - var(--aug-border-all)) calc(var(--aug-tr) + var(--aug-border-all)),
+    calc(100% - var(--aug-border-all)) calc(100% - var(--aug-border-all)),
+    var(--aug__BL_In),
+    var(--aug-border-all) var(--aug-border-all),
+    -1px var(--aug-border-all),
+    -1px calc(100% + 1px),
+    calc(100% + 1px) calc(100% + 1px),
+    calc(100% + 1px) -1px,
+    -1px -1px,
+    -1px var(--aug-border-all),
+    var(--aug-border-all) var(--aug-border-all));
+}
+
+/* `::before` is left as the library left it with no inlay asked for: nothing.
+   Restated so a rule that lost to the library still loses, and the interlace
+   (surface.css, later) still wins. */
+[data-augmented-ui]::before {
+  content: none;
+  position: static;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  opacity: 1;
+  background: none;
+  z-index: auto;
+  clip-path: none;
+}
 
 /* --- shared defaults --------------------------------------------------------
    Set once for every augmented element, so a preset only says what is
@@ -134,7 +230,7 @@
 
 /* --- .op-arete : the lit leading edge ---------------------------------------
    The whole depth of an unfilled design is one lit edge and one that is not,
-   and this is the pair augmented-ui was said not to be able to express. It is a
+   and this is the pair the old sprites could not express. It is a
    gradient across the border layer: the top-left run takes the lit tone, the
    bottom-right run the base one, and the hand-off sits on the diagonal the
    chamfer already implies.

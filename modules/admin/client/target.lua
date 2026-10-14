@@ -34,15 +34,15 @@ local Target = M.Target
 --   modules/target/shared/model.lua:187: script execution budget exceeded
 --
 -- The cost is per ROW -- validation and a generation read each -- so halving the
--- batch halves the work per resume. Measured in the suite's own harness
--- (2026-09-21, `probe-target-cost`), the registry costs about 1 100 instructions
--- a row: a batch of eight is 9 000, which is INSIDE one 10 000-instruction hook
--- interval only by luck, and sixteen is 17 000. Four is ~4 300 with the whole
--- interval as margin. It costs frames at registration, which happens on an
--- access change and not per tick -- and the batch boundary below keeps the
--- registry's whole-or-not-at-all promise, so the fix for the cost is the yield,
--- not a smaller promise.
-local BATCH = 4
+-- batch halves the work per resume. It costs frames at registration, which
+-- happens on an access change and not per tick.
+--
+-- TWO, NOT FOUR. Four rows measured 4,600 to 6,400 instructions a resume once
+-- every grant was held -- the registry's own walks (the sweep, the limit count)
+-- on top of four validations -- which is the budget's neighbourhood, not its
+-- margin. Two rows and a registry that counts once per batch keep a resume
+-- near a third of that. Forty rows is twenty frames, on an access change.
+local BATCH = 2
 
 -- Milliseconds before the first access request, then between two. A grant taken
 -- away has to reach the eye without the operator opening the menu.
@@ -319,7 +319,7 @@ end
 -- @author dop42
 -- @param context table
 -- @return string
-function M.Inspect(context)
+function Target.Inspect(context)
 	local lines = {}
 	fieldsOf(context, '', lines)
 	-- The thing that was hit, prefixed so a field name that appears on both --
@@ -332,7 +332,7 @@ end
 --- The last inspection this client made, or nil.
 -- @author dop42
 -- @return string|nil
-function M.LastInspection()
+function Target.LastInspection()
 	return lastInspection
 end
 
@@ -349,7 +349,7 @@ end
 
 -- What the inspector row does, wherever it is drawn.
 local function inspect(context)
-	local report = M.Inspect(context)
+	local report = Target.Inspect(context)
 	lastInspection = report
 	local copied = copyBlock(report)
 
@@ -409,12 +409,15 @@ local function buildRows()
 			grant = links.INVENTORY_OPEN,
 			select = links.INVENTORY_OPEN and onPlayer(links.INVENTORY_OPEN) or nil },
 		{ id = 'playerKick', folder = 'moderation', kind = 'player', label = 'admin.target.kick',
-			icon = 'door', danger = true, grant = Command.MODERATE_KICK, select = function(context)
+			-- `confirm = false`: these open the kick form, which confirms on its own.
+			icon = 'door', danger = true, confirm = false, grant = Command.MODERATE_KICK,
+			select = function(context)
 				local id = idOf(context, 'playerId')
 				return id ~= nil and M.Menu.OpenAt('player', tonumber(id), 'kick')
 			end },
 		{ id = 'playerBan', folder = 'moderation', kind = 'player', label = 'admin.target.ban',
-			icon = 'ban', danger = true, grant = Command.MODERATE_BAN, select = function(context)
+			icon = 'ban', danger = true, confirm = false, grant = Command.MODERATE_BAN,
+			select = function(context)
 				local id = idOf(context, 'playerId')
 				return id ~= nil and M.Menu.OpenAt('player', tonumber(id), 'ban')
 			end },
@@ -575,7 +578,7 @@ end
 -- every value in LINKS as well as this module's own commands, so the first guess,
 -- that the map covered only admin's own, is wrong. The ACL simply said no.
 -- `opx.weather.set`, `opx.weather.next` and `opx.time` are the WEATHER module's
--- commands, and a staff role written the way `README.md` writes one --
+-- commands, and a staff role written the way `docs/MANUAL.md` writes one --
 -- `command.opx.admin` plus `command.opx.admin.*` -- holds neither. So `granted`
 -- correctly dropped every row that ends in one, and the sky was left with the two
 -- rows whose grants ARE admin's own, Noclip and PvP. The same mechanism takes
@@ -603,13 +606,29 @@ local function refusals()
 	return names
 end
 
+-- The signature of what the access map grants: the granted row ids. Cheap, and
+-- what `register` compares first -- an access refresh arrives every time the
+-- operator leaves the menu's root, and almost never changes a grant.
+local function grantedSignature()
+	local ids = {}
+	for _, row in ipairs(ROWS) do
+		if granted(row.grant) then ids[#ids + 1] = row.id end
+	end
+	return table.concat(ids, ',')
+end
+
 -- The definitions the access map grants, by kind, and their signature.
 local function wanted()
 	local byKind, ids = {}, {}
+	-- Once, not once per row: the same word heads every folder.
+	local heading = locale('admin.target.group')
 	for index, row in ipairs(ROWS) do
+		-- Built on the registration thread, a few rows a resume: the first
+		-- registration builds every granted row, about 8,000 instructions in one go.
+		if index % 8 == 0 and coroutine.isyieldable() then Wait(0) end
 		if granted(row.grant) then
 			byKind[row.kind] = byKind[row.kind] or {}
-			local group = locale('admin.target.group')
+			local group = heading
 			if row.folder then
 				group = ('%s/%s'):format(group, locale('admin.target.folder.' .. row.folder))
 			end
@@ -619,6 +638,9 @@ local function wanted()
 				group = group,
 				icon = row.icon,
 				danger = row.danger == true,
+				-- A danger row asks for a second click on the eye unless it says
+				-- otherwise (the vehicle remove does not; kick and ban open a form).
+				confirm = row.confirm,
 				distance = distance,
 				order = 100 + index,
 				-- Plain functions, called in-process. This is what makes three dozen
@@ -715,6 +737,9 @@ local function register(contract, byKind, signature)
 		end
 	end
 	registered = signature
+	-- The closing line walks every row again for the grants it dropped; it does
+	-- not need to share a resume with the last batch.
+	if coroutine.isyieldable() then Wait(0) end
 	local total = 0
 	for _, rows in pairs(byKind) do total = total + #rows end
 	-- THE ROWS THAT ARE NOT THERE ARE THE HALF WORTH READING. A count alone said
@@ -761,10 +786,18 @@ local function sync()
 	-- yield, so every kind gets a resume, and the `syncing`/`dirty` pair that was
 	-- already here for re-entrancy is exactly the guard an asynchronous sync wants.
 	CreateThread(function()
-		repeat
-			dirty = false
+	repeat
+		dirty = false
+		-- UNCHANGED GRANTS COST A SIGNATURE, NOT A REBUILD. Building every
+		-- definition -- three dozen rows, three closures and a few catalogue
+		-- reads each -- ran before `register` could notice nothing had changed,
+		-- and it ran in the same resume as the clear and the first batch. Now
+		-- the ids are compared first, and a real change builds, yields, and then
+		-- registers on a fresh resume.
+		if registered == nil or grantedSignature() ~= registered then
 			local built, byKind, signature = pcall(wanted)
 			if built then
+				Wait(0)
 				-- Protected for the reason the loop above yields: `register` raising is how
 				-- this module lost two fifths of its rows in silence. A raise is now a line
 				-- in the server log instead of an absence in it.
@@ -779,8 +812,9 @@ local function sync()
 				Open77.log.warn('[admin] staff rows: ' .. tostring(byKind))
 				report('staff rows not built: ' .. tostring(byKind))
 			end
-		until not dirty
-		syncing = false
+		end
+	until not dirty
+	syncing = false
 	end)
 end
 

@@ -160,8 +160,10 @@ function Currency.Withdraw(source, amount)
 			source = source,
 			citizenId = Players.Citizen(source),
 		})
+		-- AS MONEY, in the language's own format: it read "You drew 1000000x
+		-- Eddies.", with no grouping and no currency, beside a HUD that groups.
 		OPX.NotifyLocale(source, 'inventory.notify.withdrew',
-			{ count = amount, item = Catalog.Label(item) }, 'success')
+			{ amount = OPX.Locale.Money(amount, moneyType) }, 'success')
 		return true, nil
 	end
 
@@ -250,8 +252,10 @@ function Currency.Deposit(source, slot, count)
 			source = source,
 			citizenId = Players.Citizen(source),
 		})
+		-- "Banked" was wrong as well as unformatted: the notes go back to the
+		-- balance they were drawn from, which this server calls cash, not bank.
 		OPX.NotifyLocale(source, 'inventory.notify.deposited',
-			{ count = count, item = Catalog.Label(item) }, 'success')
+			{ amount = OPX.Locale.Money(count, moneyType) }, 'success')
 		return true, nil
 	end
 
@@ -343,9 +347,11 @@ function Currency.Register()
 
 			local ok, why = Currency.Withdraw(source, amount)
 			if ok then
+				-- `toasted`: `Withdraw` has just toasted its own sentence, and the
+				-- command's answer on top of it was the same news twice.
 				return OPX.CommandNotice(source, raw, 'success',
 					locale('inventory.command.done.withdrew',
-						{ count = amount, item = Catalog.Label(item) }))
+						{ amount = OPX.Locale.Money(amount, Options.CURRENCY_MONEY_TYPE) }), true)
 			end
 			-- Two vocabularies answer here: this module's refusal codes and the
 			-- character module's own locale keys (`money.insufficient`). A key

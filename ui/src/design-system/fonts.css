@@ -42,20 +42,15 @@
   src: url('@fontsource/rajdhani/files/rajdhani-latin-700-normal.woff2') format('woff2');
 }
 
-/* body - 400 copy, 600 emphasis, 700 buttons */
+/* body - 400 copy, 700 buttons and UA bold (<b>, <h1>). No 600, for the same reason:
+   every 600 in ui/src is set on the mono stack. Re-add the face the day a rule asks
+   for it -- until then a 600 request would resolve to the 700 face, not a fallback. */
 @font-face {
   font-family: 'Saira';
   font-style: normal;
   font-weight: 400;
   font-display: block;
   src: url('@fontsource/saira/files/saira-latin-400-normal.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Saira';
-  font-style: normal;
-  font-weight: 600;
-  font-display: block;
-  src: url('@fontsource/saira/files/saira-latin-600-normal.woff2') format('woff2');
 }
 @font-face {
   font-family: 'Saira';

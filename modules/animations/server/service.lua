@@ -25,6 +25,20 @@ local wire = {}
 
 local built = false
 
+-- Whether the platform's catalogue has been read, and the serial of the offer
+-- as it stands: a client assembling the parts of one offer drops a part of
+-- another.
+local adoptedOnce, serial = false, 1
+
+-- Platform profiles adopted between two yields. Each is a definition, a few
+-- dozen clip checks and the word split; the thread gives the frame back
+-- between batches rather than walking a hundred profiles in one resume.
+local ADOPT_BATCH = 8
+
+-- Values one part of the offer may carry. The client decodes at most 1,024 per
+-- event and a table counts as one too, so this stays well under it.
+local PART_VALUES = 500
+
 -- Read at the moment of use: at load the host may not have installed the API.
 local function api()
 	local native = Open77.animations
@@ -70,11 +84,17 @@ end
 -- Lazy on purpose: at file load the host may not have finished installing the
 -- animation API, so the first slice or the first request is what triggers it.
 -- @author dop42
+--
+-- LATCHED ONLY ONCE IT HAS SOMETHING TO RESOLVE AGAINST. The latch used to be
+-- set before the API check, so a first call that came too early -- the reason
+-- this is lazy at all -- built an empty offer and kept it for the life of the
+-- resource: every play answered `unknown_animation`, not even
+-- `service_unavailable`, until a restart.
 function Service.Build()
 	if built then return end
-	built = true
 	local native = api()
 	if not Service.Available() then return end
+	built = true
 
 	local unchecked = 0
 	local entries = Catalogue.Entries()
@@ -113,12 +133,119 @@ function Service.Build()
 	end
 end
 
+-- Logs a refused profile once, by reason, rather than a line per profile.
+local function tally(counts, reason)
+	counts[reason] = (counts[reason] or 0) + 1
+end
+
+--- Reads the platform's catalogue and offers every profile not written here.
+--
+-- THE PLATFORM IS THE SOURCE, and it is read rather than copied: a build that
+-- adds a profile has it offered at the next start without a release of this
+-- resource. A written row of the same id wins -- it carries a translated label,
+-- a walking pace and a curated variant list -- so nothing is offered twice.
+-- DISABLED applies to both, and a profile the platform marks unusable is
+-- skipped (see `Catalogue.Usable`).
+--
+-- Call it from a thread: it yields between batches. Answers whether the offer
+-- changed, so the caller can send it again to whoever already has it.
+-- @author dop42
+-- @return boolean
+function Service.Adopt()
+	Service.Build()
+	if adoptedOnce or not Opt.PLATFORM then return false end
+	adoptedOnce = true
+	local native = api()
+	if native == nil or type(native.list) ~= 'function' then
+		Open77.log.warn('[animations] Open77.animations.list is unavailable; only the written ' ..
+			'catalogue is offered')
+		return false
+	end
+	local read, profiles, reason = pcall(native.list)
+	if not read or type(profiles) ~= 'table' then
+		Open77.log.warn(('[animations] the platform catalogue could not be read (%s); only the ' ..
+			'written catalogue is offered'):format(tostring(read and reason or profiles)))
+		return false
+	end
+
+	local listed, refused, added = {}, {}, 0
+	for index = 1, #profiles do
+		local definition, why = Catalogue.Definition(profiles[index])
+		if definition ~= nil then listed[definition.name] = true end
+		if definition == nil then
+			tally(refused, why)
+		elseif Opt.DISABLED[definition.name] then
+			tally(refused, 'disabled')
+		elseif Catalogue.Entry(definition.name) ~= nil then
+			-- A written row, already offered or deliberately not.
+			tally(refused, 'written')
+		else
+			local entry = Catalogue.Adopt(definition)
+			if entry ~= nil then
+				local variants = {}
+				for position = 1, #entry.clips do variants[position] = true end
+				offer[entry.name] = variants
+				wire[#wire + 1] = Catalogue.Wire(entry)
+				added = added + 1
+			end
+		end
+		if index % ADOPT_BATCH == 0 and type(Wait) == 'function' then Wait(0) end
+	end
+
+	local skipped = {}
+	for why, count in pairs(refused) do skipped[#skipped + 1] = ('%s %d'):format(why, count) end
+	table.sort(skipped)
+	Open77.log.info(('[animations] platform catalogue: %d profiles listed, %d adopted%s')
+		:format(#profiles, added, #skipped > 0 and (' (not adopted: ' ..
+			table.concat(skipped, ', ') .. ')') or ''))
+	for _, name in ipairs(Opt.DISABLED_UNWRITTEN) do
+		if not listed[name] then
+			Open77.log.warn(('[animations] config: DISABLED names %q, which is neither written ' ..
+				'nor a platform profile'):format(name))
+		end
+	end
+	if added > 0 then serial = serial + 1 end
+	return added > 0
+end
+
 --- Answers the offer in the shape a client is sent.
 -- @author dop42
 -- @return table[]
 function Service.Wire()
 	Service.Build()
 	return wire
+end
+
+-- How many decoded values one wire row costs a client.
+local function weight(row)
+	if row.clips ~= nil then return 12 + 2 * #row.clips end
+	return 3 + #row.variants
+end
+
+--- Sends one player the whole offer, in parts. The last part also carries what
+--- may be played with a nearby player (`Duo.Offered`), which the picker draws
+--- apart.
+-- @author dop42
+-- @param player Source
+function Service.SendOffer(player)
+	local rows = Service.Wire()
+	local parts, part, cost = {}, {}, 0
+	for index = 1, #rows do
+		local row = rows[index]
+		local spent = weight(row)
+		if #part > 0 and cost + spent > PART_VALUES then
+			parts[#parts + 1] = part
+			part, cost = {}, 0
+		end
+		part[#part + 1] = row
+		cost = cost + spent
+	end
+	parts[#parts + 1] = part
+	local duo = M.Duo and M.Duo.Offered() or nil
+	for index = 1, #parts do
+		TriggerClientEvent(M.Event.OFFER, player, serial, index, #parts, parts[index],
+			index == #parts and duo or false)
+	end
 end
 
 --- Answers an offered entry and its variant set, or nil.
@@ -139,7 +266,31 @@ local windows = { play = {}, stop = {} }
 -- Whether one more request fits, and whether this refusal is the first one in
 -- the window: a held key must cost one toast, not one per press. The refusals
 -- after it carry `quiet`, and Answer drops them.
-local function within(kind, player, multiplier)
+local within
+
+--- Whether one more play-kind request from a player fits the rate window, and
+--- whether a refusal is the first of its window. An invitation to a nearby
+--- player spends from the same window as a play.
+-- @author dop42
+-- @param player Source
+-- @return boolean
+-- @return boolean
+function Service.Within(player)
+	return within('play', player, 1)
+end
+
+--- Whether a player's readiness gate is open.
+-- @author dop42
+-- @param player Source
+-- @return boolean
+function Service.Ready(player)
+	local ready = Open77.ready
+	if type(ready) ~= 'table' or type(ready.isReady) ~= 'function' then return false end
+	local read, open = pcall(ready.isReady, player)
+	return read and open == true
+end
+
+within = function(kind, player, multiplier)
 	local limit = math.floor(OPX.Tune.Number('ANIM_RATE_REQUESTS', 1)) * multiplier
 	local spanMs = OPX.Tune.Number('ANIM_RATE_WINDOW_MS', 250)
 	local atMs = OPX.Now()
@@ -160,10 +311,7 @@ end
 -- `isReady` raises on an invalid id, and answers false for ever on a server with
 -- no appearance resource, so the read is guarded and a raise is a closed gate.
 local function gateOpen(player)
-	local ready = Open77.ready
-	if type(ready) ~= 'table' or type(ready.isReady) ~= 'function' then return false end
-	local read, open = pcall(ready.isReady, player)
-	return read and open == true
+	return Service.Ready(player)
 end
 
 -- The playback a player may not stop, per player: playbackId and end time.
@@ -197,13 +345,25 @@ end
 local LOOP_WORDS = { default = 'default', loop = true, once = false }
 
 -- Resolves request options against config, or answers a refusal code.
-local function resolveOptions(options)
+--
+-- A ONE-SHOT GESTURE plays once unless the caller says otherwise. `wave`,
+-- `shrug` and the rest of the platform's `once` layers are a second long; with
+-- LOOP_BY_DEFAULT they would be scheduled to repeat until stopped, and as a
+-- one-shot with ONE_SHOT_MS they would hold the playback ten seconds after the
+-- hand came down. They are scheduled for the clip the platform measured.
+local function resolveOptions(options, entry, variant)
 	if options == nil then options = {} end
 	if type(options) ~= 'table' then return nil, 'invalid_options' end
 
 	local loop = LOOP_WORDS[options.loop == nil and 'default' or options.loop]
 	if loop == nil then return nil, 'invalid_options' end
-	if loop == 'default' then loop = Opt.LOOP_BY_DEFAULT end
+	local measured = nil
+	if loop == 'default' and entry.once then
+		loop = false
+		measured = entry.durations[variant]
+	elseif loop == 'default' then
+		loop = Opt.LOOP_BY_DEFAULT
+	end
 
 	local maximum = math.floor(OPX.Tune.Number('ANIM_MAX_DURATION_MS', M.MIN_DURATION_MS))
 	local duration = options.durationMs
@@ -212,6 +372,9 @@ local function resolveOptions(options)
 	else
 		duration = Common.Integer(duration, M.MIN_DURATION_MS, maximum)
 		if duration == nil then return nil, 'invalid_options' end
+	end
+	if duration == nil and measured ~= nil then
+		duration = math.min(math.max(measured, M.MIN_DURATION_MS), maximum)
 	end
 	-- A playback that does not loop has to end somewhere.
 	if not loop and duration == nil then
@@ -241,6 +404,15 @@ end
 function Service.Play(player, name, variant, options)
 	if not Service.Available() then return { ok = false, error = 'service_unavailable' } end
 
+	-- THE WINDOW FIRST, then the questions. A refusal for an unknown name, a bad
+	-- variant or malformed options was answered before the rate check, so a
+	-- client sending nothing but bad requests got an unthrottled answer to each.
+	local allowed, first = within('play', player, 1)
+	if not allowed then
+		return { ok = false, error = 'rate_limited', quiet = not first,
+			animation = type(name) == 'string' and OPX.Text.Clean(name, 64) or nil }
+	end
+
 	local entry, variants = Service.Offered(name)
 	if entry == nil then return { ok = false, error = 'unknown_animation' } end
 
@@ -257,13 +429,8 @@ function Service.Play(player, name, variant, options)
 		end
 	end
 
-	local resolved, malformed = resolveOptions(options)
+	local resolved, malformed = resolveOptions(options, entry, variant)
 	if resolved == nil then return { ok = false, error = malformed, animation = entry.name } end
-
-	local allowed, first = within('play', player, 1)
-	if not allowed then
-		return { ok = false, error = 'rate_limited', quiet = not first, animation = entry.name }
-	end
 
 	if not resolved.override and locked(player) then
 		return { ok = false, error = 'animation_locked', animation = entry.name }
@@ -323,6 +490,10 @@ function Service.Stop(player, override)
 	if override ~= true and locked(player) then
 		return { ok = false, error = 'animation_locked' }
 	end
+
+	-- An emote with a nearby player is the coordinator's, not the animation
+	-- service's: the stop key ends it for both, and withdraws an invitation.
+	if M.Duo then M.Duo.Cancel(player, 'stopped') end
 
 	local called, stopped, reason = pcall(api().stop, player)
 	if not called then

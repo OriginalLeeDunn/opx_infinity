@@ -42,6 +42,12 @@ OPX.Config.MODULES.chat = {
 	-- Milliseconds between two messages from one player.
 	RATE_MS = 800,
 
+	-- A line goes to every client, so only a connection with a LOADED character
+	-- may send one (the owner's ruling, 2026-10) -- or one holding this ACL
+	-- right, so staff can still be reached from the character screen. The
+	-- console speaks through the `chat` contract and is never asked.
+	STAFF_PERMISSION = 'command.opx.admin',
+
 	-- Milliseconds between two suggestion lists for one player. Anyone can ask
 	-- and the answer is kilobytes, so it keeps a floor of its own.
 	READY_MS = 5000,

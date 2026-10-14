@@ -55,7 +55,7 @@ local M = OPX.Modules.Declare{
 	requires = {},
 	-- Read for their positions, never called into beyond a plain list read. Each
 	-- is handled as absent when it is absent.
-	optional = { 'garages', 'dealership', 'teleports', 'shops', 'hud', 'headquarters', 'bank' },
+	optional = { 'garages', 'dealership', 'teleports', 'shops', 'hud', 'headquarters', 'bank', 'fuel' },
 }
 
 --- The categories this module knows how to source, in the order they are built.
@@ -66,9 +66,10 @@ local M = OPX.Modules.Declare{
 -- pins that must survive the day the captures outnumber the quota. Garages
 -- next because the owner named them first and a player who cannot find their
 -- own car is the loudest case.
--- Bank branches last: a player looks for one when they have a paycheck to
--- draw, and a server has a handful of them.
-M.ORDER = { 'headquarters', 'garages', 'dealership', 'shops', 'teleports', 'jobs', 'bank' }
+-- Bank branches and gas stations last: a player looks for a branch when there
+-- is a paycheck to draw and for a station when the tank is low, and a server
+-- has a handful of each.
+M.ORDER = { 'headquarters', 'garages', 'dealership', 'shops', 'teleports', 'jobs', 'bank', 'fuel' }
 
 --- The vanilla HUD component whose hide also hides mappins ON THE MINIMAP.
 -- Named here rather than spelled at the call site because the boot note quotes

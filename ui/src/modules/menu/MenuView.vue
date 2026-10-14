@@ -2,8 +2,8 @@
 import { computed, onUnmounted, ref } from 'vue'
 import { emit } from '@/bridge/channel'
 import { guard } from '@/bridge/diag'
-import { acquireFocus } from '@/bridge/focus'
-import { list, num, text } from '@/bridge/types'
+import { acquireFocus, focusOwner } from '@/bridge/focus'
+import { num, text, records, own } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
 import { GLYPHS } from '@/modules/target/glyphs'
@@ -101,6 +101,15 @@ const ANCHORS: Record<string, string> = {
   'center': 'anchor-center'
 }
 
+/** How long a closed menu keeps its rows on screen: past the strip's 90ms fade, with
+    room to spare, so the rows leave once nothing can see them go. */
+const WIPE_MS = 240
+
+/** Bumped on every open and folded into the row keys, so a menu opened while the last
+    one's rows are still fading out gets new elements and its own entrance, instead of
+    inheriting the old rows' elements because their indices match. */
+const generation = ref(0)
+
 const handle = ref<Handle | null>(null)
 const open = ref(false)
 const hint = ref('')
@@ -136,7 +145,7 @@ const railEnd = computed(() => anchor.value.endsWith('right'))
     Imported from the target module rather than re-declared: it is one closed set shared
     by two surfaces. It belongs in `design/` and moves there when this pass is promoted. */
 function paths(name: string): string[] {
-  return (name && GLYPHS[name]) || []
+  return (name && own(GLYPHS, name)) || []
 }
 
 const stripStyle = computed(() => {
@@ -168,7 +177,7 @@ function mine(payload: Payload): boolean {
 }
 
 function readConfig(payload: Payload): void {
-  anchor.value = ANCHORS[text(payload.anchor)] ?? ANCHORS['top-left']
+  anchor.value = own(ANCHORS, text(payload.anchor)) ?? ANCHORS['top-left']
   const wide = num(payload.width)
   if (wide > 0) width.value = Math.round(wide)
   const tall = num(payload.maxHeight)
@@ -184,7 +193,7 @@ function readFrame(payload: Payload, stagger = false): void {
   first.value = Math.max(1, num(payload.first, 1))
   total.value = num(payload.total)
 
-  const rows = list<Payload>(payload.rows)
+  const rows = records(payload.rows)
   slots.value = rows.map((row, at) => {
     const rule = row.rule === true
     const label = text(row.label)
@@ -204,13 +213,28 @@ function readFrame(payload: Payload, stagger = false): void {
   })
 }
 
-/** Blanked on hide, not on the next open: a frame arriving during the fade-out would
-    otherwise show the previous menu's rows. Straight from menu.js `hide()`. */
+/** Blanked on hide, not on the next open, so nothing of this menu is left behind for
+    the next one. Straight from menu.js `hide()` -- with one change: the rows go when the
+    fade has FINISHED. They went in the same tick as `open`, so for the whole fade the
+    player watched an empty bay collapse to a sliver and then disappear. A frame arriving
+    during the fade cannot redraw them: `mine()` drops it, the handle is already gone. */
+let wipe: ReturnType<typeof setTimeout> | undefined
+
+function cancelWipe(): void {
+  if (wipe !== undefined) clearTimeout(wipe)
+  wipe = undefined
+}
+
 function blank(): void {
   open.value = false
-  slots.value = []
-  hint.value = ''
-  total.value = 0
+  cancelWipe()
+  wipe = setTimeout(() => {
+    wipe = undefined
+    if (open.value) return
+    slots.value = []
+    hint.value = ''
+    total.value = 0
+  }, WIPE_MS)
 }
 
 /* Focus is held for exactly as long as a menu is open, and released by whatever ends it
@@ -222,6 +246,11 @@ function keyDown(event: KeyboardEvent): void {
   // Escape belongs to bridge/focus.ts, which handles it in the capture phase and calls
   // `onEscape` below. Reading it here as well would send the intent twice.
   if (event.key === 'Escape') return
+  // Only while the menu is the TOP of the focus stack. The listener lives on `window`
+  // for as long as a full menu is open, and a panel, confirm or form opened over it
+  // had its Backspace, Enter and arrows swallowed here -- and sent to the hidden menu
+  // as `opx:menu:key`, so the menu moved behind the surface being typed into.
+  if (focusOwner() !== 'menu') return
   const key = KEYS[event.key]
   if (key === undefined) return
   event.preventDefault()
@@ -239,6 +268,10 @@ useBridge('opx:menu:open', (payload: Payload) => {
     // A second open replaces the first rather than stacking: the resource allows one
     // menu at a time and the previous handle is dead the moment this one arrives.
     release?.()
+    release = undefined
+    listen(false)
+    cancelWipe()
+    generation.value += 1
     handle.value = payload.handle
     readConfig(payload)
     readFrame(payload, true)
@@ -258,11 +291,13 @@ useBridge('opx:menu:open', (payload: Payload) => {
         id: 'menu',
         // An INTENT. The page does not close itself: Lua owns the close reason
         // (`pause`, `back`, `item`, ...) and answers with `opx:menu:close`. A menu
-        // its owner declared unclosable gets no Escape handler at all, so the key
-        // falls through to the focus stack, which releases nothing it does not own.
+        // its owner declared unclosable gets a handler that does NOTHING -- never an
+        // absent one: bridge/focus.ts treats a missing `onEscape` as "Escape releases",
+        // which announced an empty stack and handed the player's movement back while
+        // the unclosable menu stayed drawn.
         onEscape: closable.value
           ? () => emit('opx:menu:dismiss', { handle: handle.value })
-          : undefined
+          : () => {}
       })
     }
   }, undefined)
@@ -289,6 +324,7 @@ useBridge('opx:menu:close', (payload: Payload) => {
 })
 
 onUnmounted(() => {
+  cancelWipe()
   listen(false)
   release?.()
 })
@@ -320,7 +356,7 @@ function choose(row: Slot): void {
                row standing in it changed, which transitioned the wrong thing. -->
           <li
             v-for="row in slots"
-            :key="row.index"
+            :key="`${generation}:${row.index}`"
             class="slot op-enter"
             :class="{ gap: row.blank }"
             :style="`--op-slot: ${row.stagger}`"

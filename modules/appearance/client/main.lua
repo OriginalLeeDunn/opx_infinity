@@ -132,7 +132,13 @@ end
 -- @param key string a catalogue key
 -- @param params table|nil
 function M.Runtime.Notify(kind, key, params)
-	Open77.log.info(('[appearance] notify %s: %s'):format(kind, key))
+	-- THE REASON IS LOGGED, NOT SHOWN. The player-facing sentences used to end in
+	-- `: {reason}`, which put `wardrobe_busy` or `not_sent` in front of somebody
+	-- who can do nothing with it; the code still travels in `params` and lands
+	-- here, where the person reading the log can.
+	local why = type(params) == 'table' and (params.reason or params.failure) or nil
+	Open77.log.info(('[appearance] notify %s: %s%s'):format(kind, key,
+		why ~= nil and (' (' .. tostring(why) .. ')') or ''))
 	OPX.Toast.Locale(key, params, kind)
 end
 
@@ -690,6 +696,12 @@ local function awaitWorld(token, label)
 					'alive for %d ms, so this entry settles with no face rather than waiting ' ..
 					'for one nothing can deliver'):format(label, token, nowMs() - notAliveFrom))
 				State.restoreSettledToken = token
+				-- Given up for now, not for the session: see `ResumeOwedFace`. Only
+				-- once the platform's reset has run, because a late face on a body
+				-- it has not reset is the watchdog `Faceable` exists to avoid.
+				if label == 'restore' and State.playerResetDone then
+					State.faceOwed = State.citizenId
+				end
 				Runtime.Announce()
 				return false
 			end
@@ -753,6 +765,32 @@ function M.Runtime.BeginRestore(snapshot, origin)
 		Runtime.Notify('error', 'appearance.restoreFailed', { reason = tostring(reason) })
 		Runtime.Announce()
 	end)
+end
+
+--- Puts on the face a dead body made this world entry give up, once it is alive.
+-- @author dop42
+--
+-- "THE FACE GOES ON AT THE NEXT ONE" WAS THE NEXT WORLD ENTRY, and a revive is
+-- not one. A body that is reset and then dead -- the 2026-09-17 character stored
+-- in the ground, a death in the seconds of a join -- settles its entry with no
+-- face after DEAD_WAIT_MS so the gate and the clothes are not held, and that was
+-- the end of it: revived by a medic or by giving up, the player spent the rest of
+-- the session on the default face, and so did the look every other player was
+-- sent. Run from the watch pass; a no-op unless such an entry is owed a face.
+function M.Runtime.ResumeOwedFace()
+	local owed = State.faceOwed
+	if owed == nil then return end
+	if owed ~= State.citizenId or type(State.canonical) ~= 'table' then
+		State.faceOwed = nil
+		return
+	end
+	if State.restoreToken ~= State.restoreSettledToken or State.editing or State.creating or
+		State.bodyReloading or down or not faceable() then
+		return
+	end
+	State.faceOwed = nil
+	Runtime.Note('the body is alive again: the face given up at this world entry goes on now')
+	Runtime.BeginRestore(State.canonical, 'revived')
 end
 
 --- Settles a world entry on the default face of the character's own body.
@@ -1371,6 +1409,24 @@ local function registerEvents()
 		Runtime.Announce()
 	end)
 
+	-- THE RESET THAT FAILED IS STILL A RESET THAT IS OVER. Unheard, it left the
+	-- restore waiting on RESET_WAIT_MS -- a minute with the player in the world
+	-- on no face and the clothing gate and the published look held behind it --
+	-- and a body reload under its cover until BODY_RELOAD_TIMEOUT_MS, which only
+	-- ends on a live body. The platform is no longer the one holding the body, so
+	-- it is treated as the end of the hold: the reload's cover comes down, and the
+	-- restore falls to the not-alive clock (DEAD_WAIT_MS), which puts the face on
+	-- a body that is alive and settles the entry on one that is not.
+	AddEventHandler(HostEvent.RESET_FAILED, function(reason)
+		Open77.log.warn(('[appearance] the platform could not reset the body (%s; restore ' ..
+			'token=%d, announced=%s)'):format(tostring(reason), State.restoreToken,
+				tostring(State.gameplayAnnounced)))
+		Runtime.Note(('the platform reset of the body failed (%s)'):format(tostring(reason)))
+		Runtime.FinishReload('playerResetFailed')
+		State.playerResetDone = true
+		Runtime.Announce()
+	end)
+
 	-- The mirror aborted a restore before confirming it.
 	AddEventHandler(HostEvent.RESTORE_FAILED, function()
 		Runtime.FinishMutation()
@@ -1549,6 +1605,12 @@ function M.Contract.IsSettled()
 		waiting = 'body'
 	elseif State.restoreToken ~= State.restoreSettledToken then
 		waiting = 'restore'
+	elseif State.bootstrapToken == State.restoreToken and State.bootstrapQueued and
+		not (State.appearanceConfirmed and State.playerResetDone) then
+		-- The face is on and the entry still unsettled: the mirror has not
+		-- confirmed it, or the platform has not reset the body. Named, because
+		-- `nil` here read as "waiting on nothing" on an entry that was stuck.
+		waiting = State.appearanceConfirmed and 'reset' or 'mirror'
 	end
 	return Result.Ok({
 		settled = State.AppearanceSettled(),
@@ -1640,6 +1702,19 @@ end
 function M.Contract.OfferWardrobeGroups(owner, groups)
 	if not M.Wardrobe.IsOpen() then return Result.Err('no_wardrobe_open') end
 	local ok, reason = M.Wardrobe.OfferGroups(owner, groups)
+	if not ok then return Result.Err(tostring(reason)) end
+	return Result.Ok(true)
+end
+
+--- Prices the open fitting room: `fn(slots, draft)` answers the sentence its
+--- status line shows -- what the room will cost on Save -- or nil for none.
+-- @author dop42
+-- @param owner string the caller's own name
+-- @param fn function|nil nil takes the caller's price down
+-- @return Result
+function M.Contract.PriceWardrobe(owner, fn)
+	if not M.Wardrobe.IsOpen() then return Result.Err('no_wardrobe_open') end
+	local ok, reason = M.Wardrobe.PriceWith(owner, fn)
 	if not ok then return Result.Err(tostring(reason)) end
 	return Result.Ok(true)
 end
@@ -1741,6 +1816,7 @@ function M.Api()
 		OpenWardrobe = M.Contract.OpenWardrobe,
 		CloseWardrobe = M.Contract.CloseWardrobe,
 		OfferWardrobeGroups = M.Contract.OfferWardrobeGroups,
+		PriceWardrobe = M.Contract.PriceWardrobe,
 		DressWardrobe = M.Contract.DressWardrobe,
 
 		BeginClothingPreview = M.Contract.BeginClothingPreview,
@@ -1785,6 +1861,19 @@ function M.Start()
 	-- world, the bootstrap and a character already loaded are all picked up here.
 	State.EnterWorld()
 	markWorldEligibility('start')
+	-- A RESTART LANDS ON A BODY THE PLATFORM RESET LONG AGO, and its
+	-- `playerReset:complete` was raised to the VM that stopped. Waiting for
+	-- another is waiting for ever: the restore's face went on and the entry never
+	-- settled, so nothing was announced, no clothes went back on and the look was
+	-- never published. A join starts here in the menu (`worldEligible` false) and
+	-- is untouched; a reset projected as still running is still waited for.
+	if State.worldEligible and Runtime.Attached() then
+		local reset = playerResetPhase()
+		if reset == 'complete' or (reset == nil and inGameplay()) then
+			State.playerResetDone = true
+			Open77.log.info('[appearance] started in a world whose body is already reset')
+		end
+	end
 	Runtime.BeginBootstrap('start')
 
 	local api = OPX.Api.Get('character')
@@ -1807,6 +1896,8 @@ function M.Start()
 		if not ok then Open77.log.error('[appearance] watch: ' .. tostring(failure)) end
 		local watched, reason = pcall(Runtime.WatchReload)
 		if not watched then Open77.log.error('[appearance] reload watch: ' .. tostring(reason)) end
+		local resumed, why = pcall(Runtime.ResumeOwedFace)
+		if not resumed then Open77.log.error('[appearance] owed face: ' .. tostring(why)) end
 		local announced, problem = pcall(Runtime.Announce)
 		if not announced then Open77.log.error('[appearance] announce: ' .. tostring(problem)) end
 	end)

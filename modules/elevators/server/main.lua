@@ -355,6 +355,16 @@ local function onSighted(player, entity, x, y, z, floorCount, activeFloor)
 	TriggerClientEvent(M.Event.BOUND, player, key, record.id, record.floorCount)
 end
 
+-- Whether a player is down right now, read from the contract at the moment of
+-- use. Without the contract nobody is down.
+local function isDown(player)
+	local api = OPX.Api.Get('downed')
+	if api == nil or type(api.IsDown) ~= 'function' then return false end
+	local read, answer = pcall(api.IsDown, player)
+	if not read or type(answer) ~= 'table' or answer.ok ~= true then return false end
+	return type(answer.value) == 'table' and answer.value.down == true
+end
+
 -- Drops an adoption and tells every player handed its id.
 local function release(key)
 	owned[key] = nil
@@ -385,6 +395,11 @@ local function request(player, key, index)
 	local allowed, refusal = Access.Evaluate(floor, jobSnapshot(player), OPX.Now())
 	if not allowed then return { ok = false, error = refusal } end
 
+	-- AND THE DOWN SCREEN, which only the client's panel consulted: a client
+	-- sending REQUEST itself called and rode a cabin while bleeding out on the
+	-- floor. `teleports` refuses the same case on its server half.
+	if isDown(player) then return { ok = false, error = 'downed' } end
+
 	local record = owned[key]
 	if record == nil then return { ok = false, error = 'not_adopted' } end
 	local lift = Open77.elevators.get(record.id)
@@ -405,7 +420,8 @@ local function request(player, key, index)
 	local px, py = coordinate(position.x), coordinate(position.y)
 	if px == nil or py == nil then return { ok = false, error = 'no_position' } end
 	local reach = Access.FlatDistanceSquared(key, px, py)
-	if reach == nil or reach > Access.USE_RADIUS_SQ then
+	-- With the server's slack, as every place: see `REACH_SLACK`.
+	if reach == nil or reach > OPX.Spots.ServerReachSq(Access.USE_RADIUS) then
 		return { ok = false, error = 'too_far' }
 	end
 
@@ -455,9 +471,14 @@ local function state()
 	return OPX.Result.Ok({ adopted = adopted })
 end
 
--- Forgets a departing player and recalls a cabin left in motion. A cabin left
--- travelling goes back to floor 0, which every configured elevator has and none
--- gates, rather than parking open on a gated floor nobody answers.
+-- Forgets a departing player.
+--
+-- A CABIN IN MOTION IS LEFT TO ARRIVE. It used to be recalled to floor 0 when
+-- the player who last asked for a floor left mid-travel, which took every other
+-- passenger away from the floor they were riding to. Now it finishes the trip
+-- it was given with whoever is in it, and an empty cabin simply stays where it
+-- stops: a floor nobody answers is the floor the rider chose, and the next
+-- caller moves it.
 local function forget(playerId, reason)
 	local player = tonumber(playerId) or 0
 	if player <= 0 then return end
@@ -466,15 +487,12 @@ local function forget(playerId, reason)
 	logWindows[player] = nil
 	for _, players in pairs(told) do players[player] = nil end
 
-	local at = OPX.Now()
 	for key, record in pairs(owned) do
 		if record.rider == player then
 			record.rider = nil
-			if (record.rideEndsAtMs or 0) > at then
-				record.rideEndsAtMs = nil
-				local sent = moveCabin(record.id, 0)
-				Open77.log.info(('[elevators] %s: rider %d left mid-travel (%s); recalled to ' ..
-					'floor 0 (%s)'):format(key, player, tostring(reason), tostring(sent)))
+			if (record.rideEndsAtMs or 0) > OPX.Now() then
+				Open77.log.info(('[elevators] %s: rider %d left mid-travel (%s); the cabin ' ..
+					'carries on'):format(key, player, tostring(reason)))
 			end
 		end
 	end
@@ -489,7 +507,16 @@ local function sweepOnce()
 	local at = OPX.Now()
 	for key, record in pairs(owned) do
 		if record.usedAtMs == nil and at - (record.atMs or at) > UNUSED_MS then
+			-- GIVEN BACK TO THE HOST, not only forgotten here. `release` clears this
+			-- module's record and nothing else, so the lift stayed adopted and
+			-- locked on the host; the client never re-reports a lift the host
+			-- calls managed, so nothing re-bound it, and every request answered
+			-- `not_adopted` -- a shaft dead until the resource restarted, which is
+			-- the opposite of the healing this sweep is for. Unmanaged again, the
+			-- lift is re-sighted and re-adopted, locked, by the next passer-by.
+			releaseAdoption(record.id, 'ten minutes unused')
 			release(key)
+
 			Open77.log.warn(('[elevators] %s released: adopted %d minutes ago and never used')
 				:format(key, math.floor(UNUSED_MS / 60000)))
 		end

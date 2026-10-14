@@ -102,6 +102,11 @@ M.Event = {
 	-- Client-local. What the crafting screen is doing, for anything that wants
 	-- to watch it rather than own it. Public: a bare AddEventHandler reaches it.
 	ON_STATE = OPX.Event(LOCAL, 'crafting', 'state'),
+
+	-- Server only, public: an order placed, and one handed over.
+	-- `(source, { citizenId, bench, recipe, item, count, ... })`.
+	ON_ORDERED = OPX.Event(LOCAL, 'crafting', 'ordered'),
+	ON_COLLECTED = OPX.Event(LOCAL, 'crafting', 'collected'),
 }
 
 --- Why a request was refused, as a CLOSED set.
@@ -138,6 +143,8 @@ M.Refusal = {
 	NO_ROOM = 'no_room',
 	-- Too many requests in the window.
 	TOO_FAST = 'too_fast',
+	-- The player is down. The down screen is the client's; this is the server's.
+	DOWNED = 'downed',
 	-- The database would not answer. Nothing was taken and nothing was placed.
 	UNAVAILABLE = 'unavailable',
 }

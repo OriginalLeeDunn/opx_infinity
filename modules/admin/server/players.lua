@@ -95,8 +95,15 @@ end
 -- @param playerId Source
 -- @return boolean whether the native took it
 -- @return string|nil why it did not
+--
+-- The noclip hides the body only where `NOCLIP.HIDE_BODY` says it does. It used
+-- to hide it whenever noclip was on, so `HIDE_BODY = false` was a setting the
+-- server never read -- and since that same setting stops the client reporting
+-- the noclip ending, a body switched off by the key stayed hidden until the
+-- operator toggled again.
 local function applyVeil(playerId)
-	local wanted = hidden[playerId] == true or noclip[playerId] ~= nil
+	local veiled = noclip[playerId] ~= nil and M.Section('NOCLIP').HIDE_BODY ~= false
+	local wanted = hidden[playerId] == true or veiled
 	local ok, reason = Open77.players.setVisible(playerId, not wanted)
 	if not ok then return false, reason end
 	return true
@@ -110,6 +117,15 @@ end
 -- @author dop42
 -- @return boolean whether the body followed
 -- @return string|nil why it did not
+-- WHEN AN OBSERVE ENDS, for an operator who is not granted noclip of their own.
+-- Observing lifts the operator over the target with noclip on -- which also
+-- hides the body -- and that used to last until they toggled it off: an
+-- operator granted only `player.observe` had open-ended noclip and
+-- invisibility the `self.noclip` and `self.invisible` grants exist to
+-- withhold. Without `self.noclip` the observe now lasts PLACEMENT.OBSERVE_MS
+-- and the flight, and the veil with it, end on the sweep after that.
+local observeUntil = {}
+
 local function setNoclip(playerId, on, grant)
 	noclip[playerId] = on and grant or nil
 	travel(playerId, 'noclip', on == true)
@@ -132,6 +148,24 @@ function Players.IsNoclip(playerId)
 	return noclip[playerId] ~= nil
 end
 
+-- The held and worn lists, read once per player on the server. Split out so a
+-- push to every staff client reads them once rather than once per recipient:
+-- that was two host reads per player per staff member on every freeze, every
+-- model change and every disconnect.
+local function bodyLists(departed)
+	local held, worn = {}, {}
+	for _, id in ipairs(Server.PlayerIds()) do
+		if id ~= departed then
+			local still = readFlag('isFrozen', id)
+			if still == nil then still = frozen[id] == true end
+			if still then held[#held + 1] = id end
+			local ped = M.Models.Worn(id)
+			if ped ~= nil then worn[#worn + 1] = { id = id, ped = ped } end
+		end
+	end
+	return held, worn
+end
+
 --- Sends one staff client the body states behind its checkboxes: whether its own
 --- body is hidden, the ids of the players held still, and the ped each player
 --- wearing one is wearing.
@@ -145,19 +179,12 @@ end
 -- @author dop42
 -- @param playerId Source
 -- @param departed Source|nil a player leaving right now, left off the lists
-function Players.PushBodies(playerId, departed)
+-- @param held table|nil the held list, when the caller already read it
+-- @param worn table|nil the worn list, read with it
+function Players.PushBodies(playerId, departed, held, worn)
 	if playerId <= 0 then return end
 	local visible = readFlag('isVisible', playerId)
-	local held, worn = {}, {}
-	for _, id in ipairs(Server.PlayerIds()) do
-		if id ~= departed then
-			local still = readFlag('isFrozen', id)
-			if still == nil then still = frozen[id] == true end
-			if still then held[#held + 1] = id end
-			local ped = M.Models.Worn(id)
-			if ped ~= nil then worn[#worn + 1] = { id = id, ped = ped } end
-		end
-	end
+	if held == nil or worn == nil then held, worn = bodyLists(departed) end
 	local invisible
 	if visible == nil then invisible = hidden[playerId] == true else invisible = not visible end
 	-- The operator's own ped travels beside the list rather than inside it: the
@@ -169,10 +196,12 @@ end
 -- Sends the body states to every client the ACL grants one of the commands the
 -- states are drawn for.
 local function pushBodiesToStaff(departed)
+	local held, worn
 	for _, id in ipairs(Server.PlayerIds()) do
 		if id ~= departed and (Server.Permitted(id, Command.PLAYER_FREEZE) == true
 			or Server.Permitted(id, Command.PLAYER_MODEL) == true) then
-			Players.PushBodies(id, departed)
+			if held == nil then held, worn = bodyLists(departed) end
+			Players.PushBodies(id, departed, held, worn)
 		end
 	end
 end
@@ -384,7 +413,7 @@ function Players.Register()
 		params = { { name = 'playerId', help = 'admin.help.playerId' },
 			{ name = 'on|off', help = 'admin.help.toggle', optional = true } },
 		handler = function(source, args, raw)
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.player.freeze')
 			if playerId == nil then return end
 			local wanted, invalid = Text.Switch(args[2])
 			if invalid then return refuse(source, raw, 'bad_switch') end
@@ -460,7 +489,7 @@ function Players.Register()
 		help = 'admin.help.bring', params = { { name = 'playerId', help = 'admin.help.playerId' } },
 		inGame = true,
 		handler = function(source, args, raw)
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.player.bring')
 			if playerId == nil then return end
 			if playerId == source then return refuse(source, raw, 'self_target') end
 			local point, bucket = beside(source)
@@ -484,7 +513,7 @@ function Players.Register()
 		handler = function(source, args, raw)
 			local given = count(args)
 			if given < 4 or given > 5 then return answer(source, raw, false, 'admin.usage.tp') end
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.player.tp')
 			if playerId == nil then return end
 			local point = pointOf(args[2], args[3], args[4])
 			local heading = 0.0
@@ -505,7 +534,7 @@ function Players.Register()
 		help = 'admin.help.observe', params = { { name = 'playerId', help = 'admin.help.playerId' } },
 		inGame = true,
 		handler = function(source, args, raw)
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.player.observe')
 			if playerId == nil then return end
 			if playerId == source then return refuse(source, raw, 'self_target') end
 			if not Server.Admitted(source, raw, playerId, 'admin.player.observe') then return end
@@ -518,6 +547,13 @@ function Players.Register()
 			audit(source, 'admin.player.observe', placed, playerId, code)
 			if not placed then return refuse(source, raw, code, { reason = reason }) end
 			setNoclip(source, true, Command.PLAYER_OBSERVE)
+			if Server.Permitted(source, Command.SELF_NOCLIP) == true then
+				observeUntil[source] = nil
+			else
+				observeUntil[source] = Server.NowMs()
+					+ math.floor(M.Bounded('PLACEMENT.OBSERVE_MS', M.Section('PLACEMENT').OBSERVE_MS,
+						5000, 3600000, 120000))
+			end
 			answer(source, raw, true, 'admin.done.observe',
 				{ id = playerId, name = Server.LabelOf(playerId) or '?' })
 		end,
@@ -537,7 +573,7 @@ function Players.Register()
 		help = 'admin.help.playerWardrobe',
 		params = { { name = 'playerId|me', help = 'admin.help.playerOrMe' } },
 		handler = function(source, args, raw)
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.player.wardrobe')
 			if playerId == nil then return end
 			local event = 'admin.player.wardrobe'
 			if not Server.Admitted(source, raw, playerId, event) then return end
@@ -591,7 +627,7 @@ function Players.Register()
 	Server.Command(Command.PLAYER_KILL, {
 		help = 'admin.help.kill', params = { { name = 'playerId', help = 'admin.help.playerId' } },
 		handler = function(source, args, raw)
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.player.kill')
 			if playerId == nil then return end
 			if not Server.Admitted(source, raw, playerId, 'admin.player.kill') then return end
 			local ok, reason = Open77.players.kill(playerId, {
@@ -619,8 +655,15 @@ function Players.Register()
 			if count(args) ~= 2 or value == nil or value < 0 then
 				return answer(source, raw, false, 'admin.usage.health')
 			end
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.player.health')
 			if playerId == nil then return end
+			-- ZERO IS A KILL, and a kill has its own grant. `player.health 0` used to
+			-- go through on the health grant alone, so an operator refused
+			-- `player.kill` could kill anyway by typing the other command.
+			if value < 1 and Server.Permitted(source, Command.PLAYER_KILL) ~= true then
+				audit(source, 'admin.player.health', false, playerId, 'zero without the kill grant')
+				return refuse(source, raw, 'kill_not_granted')
+			end
 			if not Server.Admitted(source, raw, playerId, 'admin.player.health') then return end
 			local maximum = healthOf(playerId)
 			value = math.min(value, maximum)
@@ -641,7 +684,7 @@ function Players.Register()
 			if count(args) ~= 2 or value == nil or value < 0 or value > 10000 then
 				return answer(source, raw, false, 'admin.usage.armor')
 			end
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.player.armor')
 			if playerId == nil then return end
 			if not Server.Admitted(source, raw, playerId, 'admin.player.armor') then return end
 			local ok, reason = Open77.players.setArmor(playerId, value)
@@ -657,7 +700,7 @@ function Players.Register()
 		params = { { name = 'playerId', help = 'admin.help.playerId' },
 			{ name = 'reason', help = 'admin.help.reason', optional = true } },
 		handler = function(source, args, raw)
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.moderate.kick')
 			if playerId == nil then return end
 			local reason = M.Trimmed(Text.Rest(args, 2), 200) or locale('admin.kick.defaultReason')
 			-- Cut in bytes, not characters: the platform's limit is on the wire.
@@ -676,7 +719,7 @@ function Players.Register()
 			{ name = 'duration', help = 'admin.help.banDuration', optional = true },
 			{ name = 'reason', help = 'admin.help.reason', optional = true } },
 		handler = function(source, args, raw)
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.moderate.ban')
 			if playerId == nil then return end
 
 			local seconds, reasonFrom = nil, 2
@@ -716,6 +759,16 @@ function Players.Register()
 	-- own: a staff member whose grant is taken away mid-session would keep
 	-- flying.
 	OPX.Scheduler.Every('admin:travel-sweep', SWEEP_MS, function()
+		local now = Server.NowMs()
+		for playerId, untilMs in pairs(observeUntil) do
+			if noclip[playerId] ~= Command.PLAYER_OBSERVE then
+				observeUntil[playerId] = nil
+			elseif now >= untilMs then
+				observeUntil[playerId] = nil
+				setNoclip(playerId, false)
+				Server.Tell(playerId, 'admin.toast.observeEnded', nil, 'info')
+			end
+		end
 		for playerId, grant in pairs(noclip) do
 			if Server.Permitted(playerId, grant) == false then
 				setNoclip(playerId, false)
@@ -748,6 +801,9 @@ function Players.Register()
 	AddEventHandler(OPX.Host.PLAYER_DISCONNECTED, function(playerId)
 		local player = tonumber(playerId) or 0
 		noclip[player], mapPick[player], speedChosen[player] = nil, nil, nil
+		observeUntil[player] = nil
+		Server.ForgetHeavy(player)
+		M.Vehicles.Forget(player)
 		local wasFrozen = frozen[player] ~= nil
 		local wasWorn = M.Models.Worn(player) ~= nil
 		hidden[player], frozen[player] = nil, nil

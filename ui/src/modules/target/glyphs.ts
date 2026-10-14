@@ -1,3 +1,4 @@
+import { own } from '@/bridge/types'
 /**
  * The row glyphs, carried over verbatim from `GLYPHS` in `opx77_target/web/target.js`.
  *
@@ -110,5 +111,5 @@ export const GLYPHS: Record<string, string[]> = {
 
 /** An unknown name draws the generic glyph, never nothing and never raw markup. */
 export function glyphPaths(name: string): string[] {
-  return GLYPHS[name] ?? GLYPHS.interact
+  return own(GLYPHS, name) ?? GLYPHS.interact
 }

@@ -68,8 +68,15 @@ end)
 AddEventHandler(OPX.Host.CLIENT_RESOURCE_STOP, function(name)
 	if name ~= RESOURCE then return end
 	stopping = true
+	-- THE FOCUS GOES BACK FIRST. It used to go back only inside `Teardown`, at
+	-- the end, so a budget overrun anywhere in the module stops below left the
+	-- player holding a cursor and no controls, with no way out short of dying.
+	-- Under pcall: nothing here may stop the rest of the stop path running.
+	pcall(OPX.UI.ReleaseAllFocus)
 	OPX.Scheduler.Stop()
-	OPX.Modules.Stop()
+	-- `true`: each module's `Stop` gets a fresh budget where the stack can yield.
+	-- See `OPX.Modules.Stop`.
+	OPX.Modules.Stop(true)
 	-- AFTER the modules, and it was missing entirely. `OPX.UI.Teardown` says in
 	-- its own docstring that this is the stop path, and nothing called it: the
 	-- CEF page outlived the resource that built it. After `Modules.Stop` because

@@ -97,6 +97,11 @@ M.Event = {
 	-- own travel doors.
 	SHOW = OPX.Event(NET, 'appearance', 'show'),
 
+	-- Client to server, every two minutes while a fitting room is open: "the
+	-- room is still up". The server keeps the room's save grant alive with it,
+	-- up to a hard cap, so a long browse is not answered "not saved".
+	ROOM_ALIVE = OPX.Event(NET, 'appearance', 'roomAlive'),
+
 	-- The client's own bus. `decision` is what this module says after every
 	-- decision it reaches, and is public: a bare AddEventHandler listens to it.
 	-- `view` is the seam a view module attaches to; see client/wardrobe.lua.
@@ -116,6 +121,10 @@ M.HostEvent = {
 	CANCELLED = 'open77:appearance:cancelled',
 	RESTORE_FAILED = 'open77:appearance:restore_failed',
 	RESET_COMPLETE = 'open77:playerReset:complete',
+	-- The same reset, given up on by the host. A resource-client event on the
+	-- devkit's list beside `complete`; nothing here listened to it, so a reset
+	-- that failed was waited on for the whole of RESET_WAIT_MS.
+	RESET_FAILED = 'open77:playerReset:failed',
 	SHELL_HIDE = 'open77:shell:hide',
 	BUCKET_CHANGE = 'onPlayerBucketChange',
 }

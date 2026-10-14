@@ -60,6 +60,36 @@ local function wordEntry(lowered, entry, at)
 	return char == '_' or char == '.' or (char >= '0' and char <= '9')
 end
 
+--- The words a player reads for a vehicle model: a catalogue label as it is, or a
+--- TweakDB record turned into something readable. Nil for nothing usable.
+-- @author dop42
+--
+-- `Vehicle.v_standard2_villefort_cortes_player` reads `Villefort Cortes`: the
+-- namespace, the `v_` prefix, the class-and-size token (`standard2`, `sport1`
+-- -- a word ENDING IN A DIGIT, so `militech_` in a record without one is kept)
+-- and the `_player` suffix are the engine's filing, not the car's name. Moved
+-- here from the vehicle keys so the garage list can say the same name; a list
+-- of bare plates is a list nobody recognises their car in.
+-- @param model any
+-- @param maxBytes integer|nil
+-- @return string|nil
+function OPX.Vehicle.DisplayName(model, maxBytes)
+	if type(model) ~= 'string' or model == '' then return nil end
+	local name = model
+	if name:find('^Vehicle%.') then
+		name = name:gsub('^Vehicle%.', ''):gsub('^v_', ''):gsub('_player$', '')
+		name = name:gsub('^%a+%d+_', '', 1)
+		name = name:gsub('_', ' '):gsub('(%a)([%w]*)', function(first, rest)
+			return first:upper() .. rest
+		end)
+	end
+	name = name:gsub('%c', '')
+	if name == '' then return nil end
+	local limit = tonumber(maxBytes) or 48
+	if #name > limit then name = name:sub(1, limit) end
+	return name
+end
+
 --- Whether a TweakDB vehicle record names an AV.
 -- @author dop42
 --

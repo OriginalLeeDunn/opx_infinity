@@ -70,6 +70,20 @@ local function ownedBy(owner)
 	return total
 end
 
+--- Lets a departing player's spawns count against nobody.
+-- THE CAP IS KEYED BY PLAYER ID, AND A PLAYER ID IS A SLOT the host hands to the
+-- next connection: a staff car left standing when its operator logged off kept
+-- counting against whoever was given that id next, who was refused a spawn
+-- (`vehicle_cap`) for a car they had never seen, and whose `remove mine` removed
+-- it. The car stays where it is -- somebody may be driving it -- and `cleanup`
+-- still finds it.
+-- @param player integer
+function Vehicles.Forget(player)
+	for _, entry in pairs(spawned) do
+		if entry.owner == player then entry.owner = false end
+	end
+end
+
 -- The vehicle the operator sits in, else the nearest in range in their bucket.
 local function nearest(source)
 	if source <= 0 then return nil, 'console_has_no_player' end
@@ -127,6 +141,28 @@ local function vehicleOf(source, raw, token)
 	if vehicleId == nil then
 		refuse(source, raw, 'no_vehicle')
 		return nil
+	end
+	-- A TYPED ID IS ANY LIVE VEHICLE ON THE SERVER, and was taken as one: an
+	-- operator could repair, flag, enter or cut a key to a player's car three
+	-- districts away in another instance, which `near` never allowed. Without
+	-- `M.VEHICLE_ANYWHERE` a typed vehicle must carry the operator, or sit in
+	-- their instance within VEHICLES.REACH. The console is the server and holds it.
+	if Server.Holds(source, M.VEHICLE_ANYWHERE) ~= true then
+		local snapshot = snapshotOf(vehicleId) or {}
+		for _, occupant in ipairs(occupantsOf(snapshot)) do
+			if occupant == source then return vehicleId end
+		end
+		local origin = Server.PositionOf(source)
+		local x, y, z = Text.Finite(snapshot.x), Text.Finite(snapshot.y), Text.Finite(snapshot.z)
+		local reach = M.Bounded('VEHICLES.REACH', M.Section('VEHICLES').REACH, 1, 10000, 100)
+		local within = origin ~= nil and x ~= nil and y ~= nil and z ~= nil
+			and (Text.Integer(snapshot.bucket) or 0) == origin.bucket
+			and OPX.Math.DistanceSquared({ x = x, y = y, z = z }, origin) <= reach * reach
+		if not within then
+			refuse(source, raw, 'vehicle_out_of_reach')
+			Server.Audit(source, 'admin.vehicle.reach', false, nil, tostring(vehicleId))
+			return nil
+		end
 	end
 	return vehicleId
 end
@@ -382,7 +418,13 @@ function Vehicles.Register()
 					seat, { moveBucket = true })
 				seated = read and ok == true
 				if seated then break end
-				if read then reason = failure else reason = ok end
+				if read then
+					reason = failure
+				else
+					-- Logged, and answered as a word: the raise text is a file and a line.
+					Open77.log.error(('[admin] warpPlayerIntoVehicle raised: %s'):format(tostring(ok)))
+					reason = 'raised'
+				end
 			end
 			audit(source, 'admin.vehicle.enter', seated, nil,
 				('%s %s'):format(tostring(vehicleId), seated and '' or tostring(reason)))
@@ -409,11 +451,14 @@ function Vehicles.Register()
 			local vehicleId = vehicleOf(source, raw, args[1] or 'near')
 			if vehicleId == nil then return end
 			-- On a thread, for the reason `spawnFor` gives: the bag write yields.
-			CreateThread(function()
+			Server.Heavy(source, raw, function()
 				local cut = keys.GiveFor(source, vehicleId)
 				local ok = type(cut) == 'table' and cut.ok == true
+				-- The value is read defensively: on this bare thread a raise is no
+				-- answer and no audit line, after the key has been cut.
+				local value = ok and type(cut.value) == 'table' and cut.value or {}
 				audit(source, 'admin.vehicle.key', ok, nil, ('%s %s'):format(tostring(vehicleId),
-					ok and cut.value.plate or tostring(type(cut) == 'table' and cut.error or cut)))
+					ok and tostring(value.plate) or tostring(type(cut) == 'table' and cut.error or cut)))
 				if not ok then
 					-- `noRoom` carries the key's label as its detail; the bare id is
 					-- only the fallback for a refusal that names none.
@@ -424,7 +469,7 @@ function Vehicles.Register()
 					return
 				end
 				answer(source, raw, true, 'admin.done.key',
-					{ vehicle = tostring(vehicleId), label = cut.value.label })
+					{ vehicle = tostring(vehicleId), label = tostring(value.label or vehicleId) })
 			end)
 		end,
 	})

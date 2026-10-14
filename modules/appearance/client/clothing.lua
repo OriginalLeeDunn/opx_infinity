@@ -799,6 +799,19 @@ function M.Clothing.OnRefused(code, operation)
 	-- Neither is this client's business any more: the character has moved on.
 	if code == 'clothing.stale' or code == 'error.notLoggedIn' then return end
 	if code == 'error.unavailable' then return strike(failed, code) end
+	-- THE SHOP COULD NOT TAKE THE MONEY, so the clothes go back. The server
+	-- charges a priced room's save before writing it, and refused this one: the
+	-- stored record is still what this character owns, so it is what the puppet
+	-- is dressed in again -- the same restart a record stored elsewhere gets --
+	-- rather than a look nobody paid for staying on, and being published.
+	if code == 'clothing.unpaid' then
+		wanted = failed.previous
+		Runtime.Note(('the clothing of %s was not paid for; the stored look goes back on')
+			:format(tostring(citizen)))
+		publish('clothingSaved', false, code)
+		if previewOwner == nil then Clothing.EnterWorld() end
+		return
+	end
 	Open77.log.warn(('[appearance] clothing save refused: %s'):format(code))
 	publish('clothingSaved', false, code)
 end

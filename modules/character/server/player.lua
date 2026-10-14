@@ -173,11 +173,7 @@ end
 -- @param moneyType MoneyType|nil
 -- @return string
 function M.FormatMoney(amount, moneyType)
-	local grouped = OPX.Math.GroupDigits(math.floor(amount + 0.5))
-	if moneyType == nil or moneyType == 'EDDIES' then
-		return grouped .. ' \u{20AC}$'
-	end
-	return ('%s %s'):format(grouped, moneyType)
+	return OPX.Locale.Money(amount, moneyType)
 end
 
 --- Fills in whatever a stored entity is missing, in place.
@@ -260,11 +256,10 @@ function M.CreatePlayer(entity, offline)
 		self.Revision = self.Revision + 1
 		if self.Offline then return end
 		TriggerClientEvent(M.Event.DATA, self.PlayerData.source, self.PlayerData)
-		-- The whole of PlayerData to its owner above, and the PUBLIC half of it to
-		-- everybody else in the bucket here. Every mutator in this module and in
-		-- `groups.lua` funnels through this function, which is what makes one call
-		-- enough; `State` reads the same PlayerData and decides for itself what is
-		-- fit to replicate, and writes nothing that has not moved.
+		-- The whole of PlayerData to its owner above, and NOTHING to anybody else:
+		-- never a name to a stranger (the owner's decision, see `server/state.lua`).
+		-- The call stays so the bag of a slot reloaded over an older build is
+		-- scrubbed of the keys that build replicated.
 		M.State.Publish(self)
 	end
 
@@ -345,15 +340,9 @@ function M.RegisterPlayer(player)
 	M.Registry.byCitizenId[data.citizenId] = data.source
 	M.Registry.byUserId[data.userId] = data.source
 
-	-- In the roster and on the wire in the same breath: a client that streams this
-	-- body in the next tick reads who it is off the bag rather than waiting for
-	-- somebody to tell it.
-	--
-	-- CLEARED FIRST, and not as a formality. `State` skips writing a key whose value
-	-- has not moved since it last published it, and what it remembers is keyed on
-	-- the player id -- which is recycled. A slot whose previous bag went down with
-	-- its session would otherwise have every key that happens to match skipped, and
-	-- a key skipped onto an empty bag is a key nobody ever sees.
+	-- The bag carries nothing about a character any more (`server/state.lua`);
+	-- clearing and publishing here scrubs a recycled slot of whatever an older
+	-- build left on it.
 	M.State.Clear(data.source)
 	M.State.Publish(player)
 end
@@ -474,15 +463,38 @@ function M.GetCharacter(citizenId)
 	return Result.Ok({ entity = fetched.value, offline = true })
 end
 
---- Answers a positive, finite, rounded amount, or nil.
+-- THE MOST AN ACCOUNT HOLDS, either way: 2^53 - 1, the largest integer every
+-- step of the trip survives -- Lua, the JSON column, the client's number. There
+-- was no ceiling at all. `/opx.money <id> EDDIES 9000000000000000000` twice
+-- wrapped the 64-bit sum to about -4.4e17, and `1e308` twice made the balance
+-- `inf`, which no JSON encoder writes: the character stopped saving.
+local MAX_BALANCE = 9007199254740991
+
+--- Answers a positive, finite, rounded amount no larger than an account holds, or nil.
 -- NaN arrives from a client through JSON and passes every comparison, including
 -- the one that would stop the player spending it.
 local function amountOf(value)
 	local n = tonumber(value)
 	if not OPX.Math.IsFinite(n) then return nil end
 	n = math.floor(n + 0.5)
-	if n <= 0 then return nil end
+	if n <= 0 or n > MAX_BALANCE then return nil end
 	return n
+end
+
+--- Whether a balance is one an account may hold.
+local function holdable(balance)
+	return balance <= MAX_BALANCE and balance >= -MAX_BALANCE
+end
+
+--- Whether a Player is still the one in the roster under its connection.
+-- THE MONEY HOOKS MAY YIELD (`OPX.Hooks.Trigger` runs whatever a module hung on
+-- them, and `character:loading` already reads the database from one), so the
+-- world can move between the checks a mutator makes and the write it then does.
+-- A Player that logged out during the hook has already been saved by its logout:
+-- a balance changed on it afterwards is changed on a table nobody writes again,
+-- and the shop that was told "paid" handed its goods over for nothing.
+local function stillLoaded(player)
+	return not player.Offline and M.Players[player.PlayerData.source] == player
 end
 
 --- Announces a balance change to its four audiences: the owning client, the
@@ -550,8 +562,11 @@ function M.AddMoney(identifier, moneyType, amount, reason)
 	}) then
 		return false, 'money.vetoed'
 	end
+	if not stillLoaded(player) then return false, 'error.notLoggedIn' end
 
 	local money = player.PlayerData.money
+	-- Asked after the hook, on the balance the write will actually move.
+	if not holdable(money[moneyType] + value) then return false, 'money.tooLarge' end
 	money[moneyType] = money[moneyType] + value
 	announceMoney(player, moneyType, value, 'add', reason)
 	return true
@@ -596,6 +611,18 @@ function M.RemoveMoney(identifier, moneyType, amount, reason)
 		return false, 'money.vetoed'
 	end
 
+	-- ASKED AGAIN AFTER THE HOOK, which may yield (see `stillLoaded`). Two
+	-- purchases in flight both passed the balance test above before either had
+	-- subtracted; without this second look both subtract, and a balance of 100
+	-- pays for two 100 items and ends at -100.
+	if not stillLoaded(player) then return false, 'error.notLoggedIn' end
+	if money[moneyType] - value < 0
+		and not OPX.Config.SHARED.MONEY.ALLOW_NEGATIVE[moneyType] then
+		return false, 'money.insufficient'
+	end
+	-- Only reachable on a currency allowed to go negative.
+	if not holdable(money[moneyType] - value) then return false, 'money.tooLarge' end
+
 	money[moneyType] = money[moneyType] - value
 	announceMoney(player, moneyType, value, 'remove', reason)
 	return true
@@ -618,6 +645,7 @@ function M.SetMoney(identifier, moneyType, amount, reason)
 	local n = tonumber(amount)
 	if not OPX.Math.IsFinite(n) then return false, 'money.badAmount' end
 	n = math.floor(n + 0.5)
+	if not holdable(n) then return false, 'money.tooLarge' end
 	if n < 0 and not OPX.Config.SHARED.MONEY.ALLOW_NEGATIVE[moneyType] then
 		return false, 'money.negative'
 	end
@@ -627,6 +655,7 @@ function M.SetMoney(identifier, moneyType, amount, reason)
 	}) then
 		return false, 'money.vetoed'
 	end
+	if not stillLoaded(player) then return false, 'error.notLoggedIn' end
 
 	player.PlayerData.money[moneyType] = n
 	announceMoney(player, moneyType, n, 'set', reason)
@@ -763,6 +792,79 @@ function M.GetMetadata(identifier, key)
 	return player.Functions.GetMetaData(key)
 end
 
+--- A character's whole metadata, online or not. Coroutine only for an offline
+--- one: the row is read.
+-- @author dop42
+-- @param citizenId CitizenId
+-- @return Result { metadata, offline } -- the metadata a COPY
+function M.ReadMetadata(citizenId)
+	local parsed = OPX.CitizenId.Parse(citizenId)
+	if not parsed.ok then return Result.Err('character.notFound', tostring(citizenId)) end
+	citizenId = parsed.value
+	local online = M.GetPlayerByCitizenId(citizenId)
+	if online ~= nil then
+		return Result.Ok({ metadata = OPX.Table.DeepCopy(online.PlayerData.metadata or {}),
+			offline = false })
+	end
+	local fetched = M.Storage.FetchOne(citizenId)
+	if not fetched.ok then return fetched end
+	return Result.Ok({ metadata = fetched.value.metadata or {}, offline = true })
+end
+
+--- Writes one metadata key of a character, online or not, held in the offline
+--- ledger like `AddMoneyOffline`. Coroutine only.
+-- `check(metadata)` is asked with the metadata as it stands at the moment of the
+-- write -- read under the ledger for an offline row -- and a string answer
+-- refuses the write with that code; it is how a caller bounds what it keeps
+-- against what is really there rather than against a read made before a wait.
+-- A character online is written in memory, through `SetMetadata`.
+-- @author dop42
+-- @param citizenId CitizenId
+-- @param key string `[%w_%-%.]`, at most 128 bytes
+-- @param value any plain data, or nil to remove the key
+-- @param check fun(metadata: table): string|nil|nil
+-- @return Result { offline }
+function M.WriteMetadata(citizenId, key, value, check)
+	local parsed = OPX.CitizenId.Parse(citizenId)
+	if not parsed.ok then return Result.Err('character.notFound', tostring(citizenId)) end
+	citizenId = parsed.value
+	if type(key) ~= 'string' or #key < 1 or #key > 128 or not key:match('^[%w_%-%.]+$') then
+		return Result.Err('error.badRequest', 'key')
+	end
+	if OPX.BootError then return Result.Err('error.unavailable', OPX.BootError) end
+
+	local function online()
+		local player = M.GetPlayerByCitizenId(citizenId)
+		if player == nil then return nil end
+		local refused = check and check(player.PlayerData.metadata or {}) or nil
+		if refused ~= nil then return Result.Err(refused) end
+		M.SetMetadata(player, key, OPX.Table.DeepCopy(value))
+		return Result.Ok({ offline = false })
+	end
+
+	if not M.Ledger.Settle(citizenId) then
+		return Result.Err('error.unavailable', 'the row is being written')
+	end
+	local live = online()
+	if live ~= nil then return live end
+
+	M.Ledger.Enter(citizenId)
+	local fetched = M.Storage.FetchOne(citizenId)
+	if not fetched.ok then
+		M.Ledger.Leave(citizenId)
+		return fetched
+	end
+	local refused = check and check(fetched.value.metadata or {}) or nil
+	if refused ~= nil then
+		M.Ledger.Leave(citizenId)
+		return Result.Err(refused)
+	end
+	local written = M.Storage.SetMetadataKey(citizenId, key, value)
+	M.Ledger.Leave(citizenId)
+	if not written.ok then return written end
+	return Result.Ok({ offline = true })
+end
+
 --- Writes the two halves of a character's name, once. Coroutine only.
 -- @author dop42
 --
@@ -780,9 +882,9 @@ function M.SetName(identifier, firstName, lastName)
 	if not player then return Result.Err('error.notLoggedIn', tostring(identifier)) end
 
 	local first = M.ValidateName(firstName)
-	if not first.ok then return Result.Err('character.badName', 'firstName') end
+	if not first.ok then return Result.Err((M.NameRefusal(first)), 'firstName') end
 	local last = M.ValidateName(lastName)
-	if not last.ok then return Result.Err('character.badName', 'lastName') end
+	if not last.ok then return Result.Err((M.NameRefusal(last)), 'lastName') end
 
 	local charInfo = player.PlayerData.charInfo
 	if charInfo.firstName ~= nil or charInfo.lastName ~= nil then
@@ -1209,10 +1311,18 @@ local function unload(source)
 	-- it. Both callers below leave the ledger once they have saved.
 	M.Ledger.Enter(player.PlayerData.citizenId)
 
+	-- THE SLOT MAY NOT BE THIS PLAYER'S ANY MORE. Core's `session:forgotten`
+	-- reaches the logout a tick after the session went, by which time a recycled
+	-- slot can hold another account's fresh session: its `citizenId` is not this
+	-- character's to clear, and the UNLOADED screen is not theirs to be shown.
+	-- Everything addressed to the SLOT below waits on the account still being
+	-- the one this Player was loaded for; the roster, the ledger and the
+	-- in-VM announcements are about the character and always go.
 	local session = OPX.Sessions[source]
-	if session then session.citizenId = nil end
+	local holds = session ~= nil and session.userId == player.PlayerData.userId
+	if holds then session.citizenId = nil end
 
-	TriggerClientEvent(M.Event.UNLOADED, source)
+	if holds then TriggerClientEvent(M.Event.UNLOADED, source) end
 	TriggerEvent(M.Event.IN_UNLOADED, source, player.PlayerData)
 	OPX.Publish(M.Event.ON_UNLOADED, source, {
 		citizenId = player.PlayerData.citizenId,
@@ -1239,7 +1349,9 @@ function M.Logout(source)
 	local settled, failure = pcall(function()
 		M.SamplePosition(player)
 		player.MaySample = false
-		OPX.Buckets.Isolate(source, 'unloaded')
+		-- The account it was loaded for, so a recycled slot's new holder is
+		-- never moved into a selection bucket for somebody else's logout.
+		OPX.Buckets.Isolate(source, 'unloaded', player.PlayerData.userId)
 	end)
 	if not settled then
 		Open77.log.error(('[character] logout of %s raised before its save: %s')

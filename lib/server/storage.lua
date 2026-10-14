@@ -298,6 +298,39 @@ end
 -- it is spliced into DDL, which cannot bind one as a parameter.
 local IDENTIFIER = '^[%a_][%w_]*$'
 
+-- What a column definition spliced into DDL may hold: a type, its size, a
+-- character set, NULL / NOT NULL and a plain default. No quotes, no semicolons.
+local COLUMN_DEFINITION = '^[%w_ %(%),]+$'
+
+--- Adds a column to a table that may predate it, and does nothing when it is
+--- already there. The column's twin of `EnsureIndex`, for the same reason: a
+--- column written into a CREATE TABLE reaches a fresh install and nothing else.
+-- @author dop42
+-- @param tableName string
+-- @param column string
+-- @param definition string e.g. `VARCHAR(40) CHARACTER SET ascii COLLATE ascii_bin NULL`
+-- @return Result true when it was added, false when it was already there
+function OPX.Storage.EnsureColumn(tableName, column, definition)
+	if type(tableName) ~= 'string' or not tableName:match(IDENTIFIER)
+		or type(column) ~= 'string' or not column:match(IDENTIFIER)
+		or type(definition) ~= 'string' or not definition:match(COLUMN_DEFINITION) then
+		return Result.Err('bad-column', tostring(column))
+	end
+	local present = Storage.Scalar([[
+SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+ WHERE table_schema = DATABASE() AND table_name = @tableName AND column_name = @column
+  ]], { tableName = tableName, column = column })
+	if not present.ok then return present end
+	if (tonumber(present.value) or 0) > 0 then return Result.Ok(false) end
+
+	local added = Storage.Execute(('ALTER TABLE %s ADD COLUMN %s %s')
+		:format(tableName, column, definition))
+	if not added.ok then return added end
+	Open77.log.info(('[storage] added column %s to %s'):format(column, tableName))
+	return Result.Ok(true)
+end
+
 --- Adds an index to a table that may predate it, and does nothing when it is
 --- already there.
 -- @author dop42

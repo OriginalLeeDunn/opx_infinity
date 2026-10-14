@@ -42,6 +42,20 @@ CREATE TABLE IF NOT EXISTS opx77_vehicles (
 ]],
 }
 
+--- Columns added after the table first shipped. `CREATE TABLE IF NOT EXISTS`
+--- reaches a fresh install and nothing else, so a column a server's existing
+--- table lacks is added by `OPX.Schema.AddColumns` at boot.
+--
+-- `fuel` IS THE TANK, IN LITRES, as the vehicle's `fuel` state-bag field holds
+-- it -- the platform's field (`open77_fuel`) and `modules/fuel`'s. NULL is a car
+-- nobody has measured yet: one from before the column, or a fresh purchase, and
+-- it comes out with whatever tank a fresh car gets. Kept here, beside health and
+-- damage, because it is a fact about the car the garage puts away and gives
+-- back, and the module that writes this row is the one that knows when.
+M.Storage.COLUMNS = {
+	{ TABLE = 'opx77_vehicles', COLUMN = 'fuel', DEFINITION = 'FLOAT NULL DEFAULT NULL' },
+}
+
 --- Where a vehicle is, as stored in the state column.
 -- A number and not a string, because the column is a TINYINT: a game mode adds
 -- its own states without touching the table.
@@ -56,6 +70,7 @@ local STATE = M.Storage.STATE
 function M.Storage.ToEntity(row)
 	local state = tonumber(row.state)
 	local health = tonumber(row.health)
+	local fuel = tonumber(row.fuel)
 	return {
 		plate = row.plate,
 		citizenId = row.citizen_id,
@@ -67,6 +82,8 @@ function M.Storage.ToEntity(row)
 		damage = Storage.Decode(row.body, nil),
 		paint = Storage.Decode(row.paint, nil),
 		metadata = Storage.Decode(row.metadata, {}),
+		-- Nil, not 0, for a car never measured: an empty tank is a real reading.
+		fuel = OPX.Math.IsFinite(fuel) and fuel >= 0 and fuel or nil,
 	}
 end
 
@@ -78,7 +95,7 @@ local toEntity = M.Storage.ToEntity
 -- @return Result
 function M.Storage.FetchByOwner(citizenId)
 	local rows = Storage.Query([[
-SELECT plate, citizen_id, record, appearance, garage, state, health, body, paint, metadata
+SELECT plate, citizen_id, record, appearance, garage, state, health, body, paint, metadata, fuel
   FROM opx77_vehicles
  WHERE citizen_id = @citizen
  ORDER BY created_at
@@ -99,7 +116,7 @@ end
 -- @return Result
 function M.Storage.FetchOne(plate)
 	local row = Storage.Single([[
-SELECT plate, citizen_id, record, appearance, garage, state, health, body, paint, metadata
+SELECT plate, citizen_id, record, appearance, garage, state, health, body, paint, metadata, fuel
   FROM opx77_vehicles
  WHERE plate = @plate
  LIMIT 1
@@ -137,7 +154,15 @@ VALUES (@plate, @citizen, @record, NULLIF(@appearance, ''), @garage, @state, @he
 	})
 end
 
---- Writes back a vehicle's condition, paint, state and garage.
+--- The `fuel` parameter: the litres, or -1 for "not read", which the statements
+--- below turn into "keep what the row has" -- a nil would bind as NULL and
+--- forget a tank that was simply not asked about this time.
+local function fuelParam(fuel)
+	if type(fuel) == 'number' and fuel == fuel and fuel >= 0 and fuel < 1000000 then return fuel end
+	return -1
+end
+
+--- Writes back a vehicle's condition, paint, state, garage and tank.
 -- Neither `plate` nor `citizen_id` appears in the SET list: an UPDATE able to
 -- move a vehicle to another character is how vehicles get stolen.
 -- @author dop42
@@ -147,7 +172,8 @@ function M.Storage.Save(entity)
 	return Storage.Execute([[
 UPDATE opx77_vehicles
    SET garage = @garage, state = @state, health = @health, body = NULLIF(@body, ''),
-       paint = NULLIF(@paint, ''), metadata = @metadata
+       paint = NULLIF(@paint, ''), metadata = @metadata,
+       fuel = IF(@fuel < 0, fuel, @fuel)
  WHERE plate = @plate
   ]], {
 		plate = entity.plate,
@@ -157,6 +183,7 @@ UPDATE opx77_vehicles
 		body = Storage.Nullable(entity.damage),
 		paint = Storage.Nullable(entity.paint),
 		metadata = json.encode(entity.metadata or {}),
+		fuel = fuelParam(entity.fuel),
 	})
 end
 
@@ -177,6 +204,56 @@ function M.Storage.SetState(plate, state, garage)
 	return Storage.Execute(
 		'UPDATE opx77_vehicles SET state = @state, garage = @garage WHERE plate = @plate',
 		{ plate = plate, state = state, garage = garage })
+end
+
+--- Writes back the condition of a vehicle and files it as stored, SENT NOW and
+--- answered later. The resource-stop path, and the one statement here that does
+--- not await.
+-- @author dop42
+--
+-- A stop handler is not a coroutine: every `.await` in this file fails there,
+-- and a `CreateThread` is not promised another resume once the resource is
+-- going. The bridge's CALLBACK form sends the statement before it returns and
+-- needs neither, so the write leaves while the engine can still be asked what
+-- the car looked like. No read first -- that would be an await -- so `flags`,
+-- which lives inside the metadata blob, is set in place with `JSON_SET`.
+-- @param entity table { plate, state, health, damage, flags, fuel }
+-- @param onDone function|nil (ok, reason), when the database answers
+-- @return boolean sent
+-- @return string|nil why not
+function M.Storage.SaveConditionNow(entity, onDone)
+	local api = MySQL
+	local update = api and api.update
+	if update == nil then return false, 'no-database' end
+	local params = {
+		plate = entity.plate,
+		state = entity.state,
+		health = entity.health,
+		body = Storage.Nullable(entity.damage),
+		fuel = fuelParam(entity.fuel),
+	}
+	local sql = [[
+UPDATE opx77_vehicles
+   SET state = @state, health = @health, body = NULLIF(@body, ''),
+       fuel = IF(@fuel < 0, fuel, @fuel)
+ WHERE plate = @plate
+  ]]
+	if entity.flags ~= nil then
+		params.flags = entity.flags
+		sql = [[
+UPDATE opx77_vehicles
+   SET state = @state, health = @health, body = NULLIF(@body, ''),
+       fuel = IF(@fuel < 0, fuel, @fuel),
+       metadata = JSON_SET(metadata, '$.flags', @flags)
+ WHERE plate = @plate
+  ]]
+	end
+	local called, sent, why = pcall(update, sql, params, function(affected, reason)
+		if onDone ~= nil then onDone(reason == nil, reason) end
+	end)
+	if not called then return false, tostring(sent) end
+	if sent == false then return false, tostring(why) end
+	return true
 end
 
 --- Deletes a vehicle row by its plate.

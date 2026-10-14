@@ -167,33 +167,53 @@ local function refusalText(name, message)
 	return message, 'error'
 end
 
+-- The bytes that mean something to the tokeniser, by what it is inside: out of
+-- quotes a backslash, either quote and any space; inside one, a backslash and
+-- the quote that closes it. Every other byte is copied as it stands.
+local SPECIAL = { [''] = '[\\"\'%s]', ['"'] = '[\\"]', ["'"] = "[\\']" }
+
 --- Splits a typed command into dispatcher tokens, honouring quotes and escapes.
 -- Each token is accumulated in a table and joined once: appending to a string a
 -- character at a time is quadratic.
+--
+-- A RUN AT A TIME, NOT A CHARACTER AT A TIME. This runs inside the page
+-- callback's one resume, and walking the line a byte per iteration cost ~19 VM
+-- instructions a byte: a full 240-character command was ~4,700, and the cut of
+-- an unbounded line plus its walk ~6,900 -- the budget meter's 9,000 for the
+-- submit, against a budget of ~10,000 whose overrun makes the command vanish
+-- with no answer. `find` skips each run of ordinary bytes natively, so the Lua
+-- work is per special byte; the tokens are the same.
 local function commandTokens(text)
 	local line = text:sub(2)
 	local tokens, buffer, quote, escaped, started = {}, {}, nil, false, false
-	for index = 1, #line do
-		local character = line:sub(index, index)
+	local index, size = 1, #line
+	while index <= size do
 		if escaped then
-			buffer[#buffer + 1], escaped, started = character, false, true
-		elseif character == '\\' then
-			escaped, started = true, true
-		elseif quote ~= nil then
-			if character == quote then quote = nil else buffer[#buffer + 1] = character end
-			started = true
-		elseif character == '"' or character == "'" then
-			quote, started = character, true
-		elseif character:match('%s') then
-			if started then
-				tokens[#tokens + 1] = table.concat(buffer)
-				buffer, started = {}, false
-				if #tokens > MAX_ARGUMENTS then
-					return nil, locale('chat.tooManyArgs', { max = MAX_ARGUMENTS })
+			buffer[#buffer + 1], escaped, started = line:sub(index, index), false, true
+			index = index + 1
+		else
+			local stop = line:find(SPECIAL[quote or ''], index) or size + 1
+			if stop > index then
+				buffer[#buffer + 1], started = line:sub(index, stop - 1), true
+				index = stop
+			else
+				local character = line:sub(index, index)
+				index = index + 1
+				if character == '\\' then
+					escaped, started = true, true
+				elseif quote ~= nil then
+					-- Inside a quote only its own closing quote stops the run.
+					quote, started = nil, true
+				elseif character == '"' or character == "'" then
+					quote, started = character, true
+				elseif started then
+					tokens[#tokens + 1] = table.concat(buffer)
+					buffer, started = {}, false
+					if #tokens > MAX_ARGUMENTS then
+						return nil, locale('chat.tooManyArgs', { max = MAX_ARGUMENTS })
+					end
 				end
 			end
-		else
-			buffer[#buffer + 1], started = character, true
 		end
 	end
 	if escaped then return nil, locale('chat.escapeAtEnd') end
@@ -212,6 +232,9 @@ end
 -- In that order: a close the view paints before the keyboard goes back is not
 -- seen. A box that is already closed is not told twice, because closing it again
 -- would fade every line in the log back in.
+-- When the input line opened, for Escape's layer order.
+local openedAtMs = 0
+
 local function closeChat(asked)
 	if opened then
 		opened = false
@@ -241,6 +264,7 @@ local function openChat()
 	end
 	if opened then return end
 	opened = true
+	openedAtMs = OPX.Now()
 
 	-- The focus is asked for BEFORE the open: both travel on one ordered
 	-- channel, and the element focus has to land in a surface that already holds
@@ -331,14 +355,23 @@ end
 -- every one after it is appended. A page that receives the first and misses the
 -- rest is short a few completions -- it is never left holding half of one list
 -- and half of another.
-local function sendSuggestions(list)
-	local total = #list
-	if total == 0 then
-		return publish('interactive', 'suggestions', { suggestions = {}, reset = true })
-	end
+--
+-- ONE PAYLOAD PER RESUME. Every chunk is a local event and a page send, and the
+-- list is every command the player may see -- seventy-odd today, ten chunks,
+-- growing with every module -- which went out in one go from whichever handler
+-- asked: the box opening (a key), the page reporting ready, the server's answer.
+-- The chunks now go out on a thread of their own, one a frame, and a newer send
+-- abandons an older one: its first chunk resets the page anyway.
+local sendGeneration = 0
 
+local function sendChunks(list, mine, paced)
+	local total = #list
 	local at, first = 1, true
 	while at <= total do
+		if not first and paced then
+			Wait(0)
+			if sendGeneration ~= mine then return false end
+		end
 		local chunk = {}
 		for index = at, math.min(at + SUGGESTIONS_PER_PAYLOAD - 1, total) do
 			chunk[#chunk + 1] = list[index]
@@ -349,6 +382,17 @@ local function sendSuggestions(list)
 		first = false
 		at = at + SUGGESTIONS_PER_PAYLOAD
 	end
+	return true
+end
+
+local function sendSuggestions(list)
+	sendGeneration = sendGeneration + 1
+	local mine = sendGeneration
+	if #list == 0 then
+		return publish('interactive', 'suggestions', { suggestions = {}, reset = true })
+	end
+	if type(CreateThread) ~= 'function' then return sendChunks(list, mine, false) end
+	CreateThread(function() sendChunks(list, mine, true) end)
 	return true
 end
 
@@ -395,6 +439,14 @@ local function submit(text)
 	-- keyboard held, and a command that answers nothing gives the view no other
 	-- reason to redraw.
 	closeChat(true)
+	-- BOUNDED HERE, NOT ONLY ON THE PAGE. `MAX_LENGTH` is handed to the input
+	-- box and the server cuts what it relays, but a command is tokenised on
+	-- this side a character at a time, inside the page callback's one resume:
+	-- a line the page did not bound -- a paste into an older view, a forged
+	-- emit -- was an unbounded walk on the per-resume budget, and the command
+	-- would vanish with no answer. Cut at a character, never mid-sequence.
+	local limit = tonumber(M.Settings.MAX_LENGTH) or 240
+	if #text > limit then text = text:sub(1, OPX.Text.Span(text, limit)) end
 	if #text == 0 then return end
 
 	if text:sub(1, 1) ~= '/' then
@@ -416,7 +468,6 @@ local function submit(text)
 		return
 	end
 
-	TriggerEvent(M.Event.SUBMITTED, { text = text, tokens = tokens })
 	local sent, why = TriggerServerEvent(M.Host.COMMAND_EXECUTE, table.unpack(tokens))
 	if not sent then
 		Open77.log.warn('[chat] command not sent: ' .. tostring(why))
@@ -525,7 +576,12 @@ function M.Start()
 	-- this module has no binding of its own. Escape is swallowed before any
 	-- surface sees it, and arrives as the pause key instead.
 	AddEventHandler(M.Host.CHAT_KEY, openChat)
-	AddEventHandler(M.Host.PAUSE_KEY, function() closeChat() end)
+	-- Escape closes the TOP layer only: see `OPX.Spots.Key.Layer`.
+	local layer = OPX.Spots.Key.Layer('chat', function() return opened and openedAtMs or nil end)
+	AddEventHandler(M.Host.PAUSE_KEY, function()
+		if not OPX.Spots.Key.TopLayer(layer) then return end
+		closeChat()
+	end)
 
 	AddEventHandler(OPX.Event(OPX.Channel.LOCAL, 'downed', 'changed'), function(payload)
 		if type(payload) ~= 'table' then return end

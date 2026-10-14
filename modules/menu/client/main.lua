@@ -16,8 +16,7 @@ local OWNER = 'menu'
 local MAX_NODES = 400
 local MAX_ROWS = 200
 local MAX_DEPTH = 8
-local MAX_DATA_NODES = 64
-local MAX_DATA_DEPTH = 4
+-- A row's and a menu's `data` are held to `OPX.Modal.DATA_NODES` and `DATA_DEPTH`.
 
 local MAX_LABEL = 96
 local MAX_VALUE = 48
@@ -105,11 +104,6 @@ local pendingOpen = false
 -- not pay for a CEF page.
 local wired = false
 
--- Whether the player is down, and how many state messages have been heard, so
--- a late catch-up read never overrides a newer one.
-local down = false
-local downHeard = 0
-
 -- ── text and names ──────────────────────────────────────────────────────────
 
 -- Whether a value is a number that is neither NaN nor infinite. The one shared
@@ -117,11 +111,27 @@ local downHeard = 0
 -- for the same answer and the only thing it can ever do is drift.
 local finite = OPX.Math.IsFinite
 
---- Whether a value is a bounded identifier: word characters, `_`, `:`, `-`, `.`.
-local function validName(value, maximum)
-	return type(value) == 'string' and #value > 0 and #value <= maximum
-		and value:match('^[%w_:%-%.]+$') ~= nil
+local find = string.find
+
+--- `Text.Clean` with the common case answered in place.
+-- Every row of a spec is cleaned field by field inside the caller's resume --
+-- label, description, value, the toggle words -- and most of those fields are
+-- absent or are short plain text already. Those come back as they are without
+-- a copy through `gsub`: no control character and no more bytes than the limit
+-- in characters means nothing to replace and nothing to cut. Anything else goes
+-- through `Text.Clean` exactly as before.
+local function clean(value, maximum)
+	if value == nil then return nil end
+	if type(value) == 'string' and #value <= maximum and not find(value, '%c') then return value end
+	return Text.Clean(value, maximum)
 end
+
+-- The id check and the payload bound are `OPX.Modal`'s, shared with `form` and
+-- `panel`, and aliased here rather than wrapped. `dataFault` validates a
+-- caller's opaque table whole (`OPX.Modal.DATA_NODES`, `DATA_DEPTH`), answering
+-- a refusal code or nil.
+local validName = OPX.Modal.ValidName
+local dataFault = OPX.Modal.DataFault
 
 --- Whether a value is text the status line accepts. A table would sanitise to
 --- nil and silently clear the line, so it is refused rather than accepted.
@@ -131,40 +141,13 @@ end
 
 -- ── the spec ────────────────────────────────────────────────────────────────
 
---- Counts a caller's opaque table against the payload budget.
-local function fitsInPayload(value, depth, budget)
-	budget.nodes = budget.nodes + 1
-	if budget.nodes > MAX_DATA_NODES then return false end
-	if type(value) ~= 'table' then return true end
-	if depth > MAX_DATA_DEPTH then return false end
-	for key, nested in pairs(value) do
-		if not fitsInPayload(key, depth + 1, budget) then return false end
-		if not fitsInPayload(nested, depth + 1, budget) then return false end
-	end
-	return true
-end
-
---- Validates a caller's opaque table whole, answering a refusal code or nil.
-local function dataFault(value, notTable, tooLarge)
-	if value == nil then return nil end
-	if type(value) ~= 'table' then return notTable end
-	if not fitsInPayload(value, 1, { nodes = 0 }) then return tooLarge end
-	return nil
-end
-
 --- Validates a slider and settles its range, step and starting value.
+-- A suffix past its length is cut, not refused.
 local function normalizeSlider(slider)
-	if type(slider) ~= 'table' then return nil, 'invalid_slider' end
-	local low = finite(slider.min) and slider.min + 0.0 or 0.0
-	local high = finite(slider.max) and slider.max + 0.0 or 100.0
-	if high <= low then return nil, 'invalid_slider_range' end
-	local step = finite(slider.step) and math.abs(slider.step) + 0.0 or 1.0
-	if step <= 0 then step = 1.0 end
-	local value = finite(slider.value) and slider.value + 0.0 or low
-	if value < low then value = low end
-	if value > high then value = high end
-	return { min = low, max = high, step = step, value = value,
-		suffix = Text.Clean(slider.suffix, MAX_SUFFIX) or '' }
+	local settled, reason = OPX.Modal.SliderRange(slider)
+	if settled == nil then return nil, reason end
+	settled.suffix = clean(slider.suffix, MAX_SUFFIX) or ''
+	return settled
 end
 
 --- Validates a choice list and settles which entry starts current.
@@ -172,7 +155,7 @@ local function normalizeChoices(item)
 	if type(item.choices) ~= 'table' then return nil, 'invalid_choices' end
 	local labels = {}
 	for index = 1, #item.choices do
-		local label = Text.Clean(item.choices[index], MAX_VALUE)
+		local label = clean(item.choices[index], MAX_VALUE)
 		if label == nil then return nil, 'invalid_choice' end
 		labels[index] = label
 	end
@@ -186,6 +169,136 @@ end
 
 -- Recurses, so it is declared before the row normaliser reaches for it.
 local normalizeItems
+
+-- ── rows that did not change ───────────────────────────────────────────────
+--
+-- A CALLER THAT HANDS THE SAME ROW BACK IS NOT CHECKED AGAIN. An update was a
+-- full re-check of the spec, about 238 instructions a row, and a screen that
+-- redraws keeps most of its rows as they were. A plain row (no `items`, no
+-- `confirm`, no table nested deeper than one level) that passed is remembered
+-- by identity with a shallow copy of every field and of every table it holds
+-- (`data`, `choices`, `slider`). Handed back with every field the same, it
+-- answers the entry it built for under half the cost. Anything else -- a field
+-- changed, added or removed, an id that came from a position that moved, a row
+-- the player adjusted since, a row used twice in one spec -- is checked from
+-- scratch. Only a row that passed is remembered, so every refusal is the one
+-- it always was, in the same order.
+--
+-- The memory is the live menu's own (`record.memo`): the rows of the spec it
+-- was built from, replaced by each update that lands and dropped with the menu
+-- -- the client sandbox has no weak tables, and this keeps nothing a closed
+-- menu held. A row is copied the second spec it appears in, not the first, so
+-- a caller that builds every row afresh pays a table write a row and no copy.
+
+-- An empty memory, for a pass with no menu behind it.
+local FORGOTTEN = {}
+
+--- A fresh check budget, reading what `memo` remembered.
+local function budgetOf(memo)
+	return { nodes = 0, used = {}, memo = memo or FORGOTTEN, keep = {} }
+end
+
+-- A shallow copy of a table of plain values, and its size; nil for a table
+-- that nests another.
+local function flatCopy(value)
+	local copy, count = {}, 0
+	for key, nested in pairs(value) do
+		if type(nested) == 'table' or type(key) == 'table' then return nil end
+		copy[key] = nested
+		count = count + 1
+	end
+	return copy, count
+end
+
+-- Whether a table still holds exactly the plain values copied.
+local function sameAs(value, copy, size)
+	if type(value) ~= 'table' then return false end
+	local count = 0
+	for key, nested in pairs(value) do
+		if copy[key] ~= nested then return false end
+		count = count + 1
+	end
+	return count == size
+end
+
+-- What to remember of a row that passed, or false for a row not worth it.
+local function remember(item, index, entry)
+	if item.items ~= nil or (item.confirm ~= nil and item.confirm ~= false) then return false end
+	local fields, size, nested = {}, 0, nil
+	for key, value in pairs(item) do
+		if type(key) == 'table' then return false end
+		if type(value) == 'table' then
+			local copy, count = flatCopy(value)
+			if copy == nil then return false end
+			nested = nested or {}
+			nested[#nested + 1] = { key = key, copy = copy, size = count }
+		end
+		fields[key] = value
+		size = size + 1
+	end
+	return { entry = entry, index = index, fields = fields, size = size, nested = nested }
+end
+
+-- The entry a row built last time, when nothing it was built from changed.
+local function recalled(item, memo, index, used)
+	local entry = memo.entry
+	if entry.touched or used[entry] then return nil end
+	if item.id == nil and memo.index ~= index then return nil end
+	if not sameAs(item, memo.fields, memo.size) then return nil end
+	local nested = memo.nested
+	if nested ~= nil then
+		for slot = 1, #nested do
+			local was = nested[slot]
+			if not sameAs(item[was.key], was.copy, was.size) then return nil end
+		end
+	end
+	used[entry] = true
+	return entry
+end
+
+-- ── checking a spec in steps ────────────────────────────────────────────────
+--
+-- A SPEC IS CHECKED ROW BY ROW, about 240 instructions a row, inside the resume
+-- that hands it over -- a twenty-row staff page was 6,000 to 9,000 on top of
+-- whatever the caller had already spent. A caller running on a thread of its
+-- own may say so with `yield = true` on the spec, and the rows are then checked
+-- `PACE_ROWS` at a time with a frame between. Everything else is unchanged:
+-- the same checks, the same refusals, the whole spec or nothing, and a caller
+-- that does not say so -- or that says so from somewhere it cannot yield --
+-- gets exactly the path it always had.
+--
+-- What a frame can change is checked again before anything is installed: the
+-- surface, the down state and who holds the menu for an open; the handle for an
+-- update. A caller is answered as though it had arrived after the change.
+local PACE_ROWS = 6
+
+-- Set while a paced check runs, nil otherwise: called once per row.
+local pacing = nil
+
+-- Checks a spec's rows, paced when the caller asked and can yield. Answers the
+-- rows, the node count and whether it yielded, or nil and the refusal.
+local function checkRows(spec, memo)
+	local paced = spec.yield == true and type(Wait) == 'function' and coroutine.isyieldable()
+	local budget = budgetOf(memo)
+	if not paced then
+		local items, reason = normalizeItems(spec.items, 1, budget)
+		if items == nil then return nil, reason end
+		return { items = items, nodes = budget.nodes, yielded = false, memo = budget.keep }
+	end
+	local count, yielded = 0, false
+	pacing = function()
+		count = count + 1
+		if count % PACE_ROWS == 0 then
+			yielded = true
+			Wait(0)
+		end
+	end
+	local ran, items, reason = pcall(normalizeItems, spec.items, 1, budget)
+	pacing = nil
+	if not ran then error(items, 0) end
+	if items == nil then return nil, reason end
+	return { items = items, nodes = budget.nodes, yielded = yielded, memo = budget.keep }
+end
 
 --- Normalises one row and derives its kind from its shape.
 -- The tests run in a fixed order and the first match wins, so a row carrying
@@ -206,13 +319,42 @@ local function normalizeItem(item, index, depth, budget)
 	-- A separator returns before anything else is read: a description, a data
 	-- table or a disabled flag on one is dropped rather than refused.
 	if item.separator == true then
-		return { id = id, kind = 'separator', label = Text.Clean(item.label, MAX_LABEL) or '' }
+		return { id = id, kind = 'separator', label = clean(item.label, MAX_LABEL) or '' }
 	end
 
-	local label = Text.Clean(item.label or item.text, MAX_LABEL)
+	-- `confirm` ON A ROW THAT DOES SOMETHING: the row becomes a two-row level
+	-- whose FIRST row keeps things as they are (so Enter pressed without looking
+	-- does nothing) and whose second does what the row said, under the same id
+	-- and data, so the caller hears exactly the select it always heard. Callers
+	-- used to build this by hand, or not at all. `confirm = true` takes the
+	-- words from the catalogue; a table may name `title`, `yes` and `no`.
+	if item.confirm ~= nil and item.confirm ~= false and item.items == nil then
+		local ask = type(item.confirm) == 'table' and item.confirm or {}
+		local named = clean(item.label or item.text, MAX_LABEL)
+		if named == nil or named == '' then return nil, 'invalid_item_label' end
+		local yes = {}
+		for field, value in pairs(item) do yes[field] = value end
+		yes.confirm = nil
+		yes.label = clean(ask.yes, MAX_LABEL) or locale('menu.confirm.yes', { label = named })
+		yes.icon = 'warning'
+		item = {
+			id = id, label = named, icon = item.icon, description = item.description,
+			disabled = item.disabled, value = item.value,
+			title = clean(ask.title, MAX_LABEL) or locale('menu.confirm.title', { label = named }),
+			items = {
+				{ id = tostring(id) .. '_keep', icon = 'back', back = true,
+					label = clean(ask.no, MAX_LABEL) or locale('menu.confirm.no') },
+				yes,
+			},
+		}
+	end
+
+	local label = clean(item.label or item.text, MAX_LABEL)
 	if label == nil or label == '' then return nil, 'invalid_item_label' end
 
-	if item.description ~= nil and Text.Clean(item.description, MAX_DESCRIPTION) == nil then
+	-- Cleaned once and kept: the row below used to clean it a second time.
+	local description = clean(item.description, MAX_DESCRIPTION)
+	if item.description ~= nil and description == nil then
 		return nil, 'invalid_item_description'
 	end
 	local fault = dataFault(item.data, 'invalid_item_data', 'item_data_too_large')
@@ -248,7 +390,7 @@ local function normalizeItem(item, index, depth, budget)
 		id = id,
 		label = label,
 		icon = icon,
-		description = Text.Clean(item.description, MAX_DESCRIPTION),
+		description = description,
 		data = item.data,
 		disabled = item.disabled == true,
 		close = item.close == true or nil,
@@ -262,8 +404,8 @@ local function normalizeItem(item, index, depth, budget)
 		if children == nil then return nil, reason end
 		entry.kind = 'submenu'
 		entry.items = children
-		entry.title = Text.Clean(item.title, MAX_LABEL) or label
-		entry.value = Text.Clean(item.value, MAX_VALUE)
+		entry.title = clean(item.title, MAX_LABEL) or label
+		entry.value = clean(item.value, MAX_VALUE)
 		entry.cursor = item.cursor
 		return entry
 	end
@@ -274,8 +416,8 @@ local function normalizeItem(item, index, depth, budget)
 		entry.kind = 'toggle'
 		entry.on = item.toggle
 		entry.labels = {
-			on = Text.Clean(item.onLabel, MAX_VALUE),
-			off = Text.Clean(item.offLabel, MAX_VALUE),
+			on = clean(item.onLabel, MAX_VALUE),
+			off = clean(item.offLabel, MAX_VALUE),
 		}
 		return entry
 	end
@@ -310,7 +452,7 @@ local function normalizeItem(item, index, depth, budget)
 	end
 
 	entry.kind = 'action'
-	entry.value = Text.Clean(item.value, MAX_VALUE)
+	entry.value = clean(item.value, MAX_VALUE)
 	return entry
 end
 
@@ -323,9 +465,29 @@ normalizeItems = function(items, depth, budget)
 	if total > MAX_ROWS then return nil, 'too_many_items' end
 
 	local list = {}
+	local used, remembered, keep = budget.used, budget.memo, budget.keep
 	for index = 1, total do
-		local entry, reason = normalizeItem(items[index], index, depth, budget)
-		if entry == nil then return nil, reason end
+		if pacing ~= nil then pacing() end
+		local item = items[index]
+		-- `false` is a row seen once and not yet worth a copy.
+		local memo = remembered[item]
+		local entry = memo and recalled(item, memo, index, used) or nil
+		if entry ~= nil then
+			-- Counted as a row checked afresh would be, and refused the same way.
+			budget.nodes = budget.nodes + 1
+			if budget.nodes > MAX_NODES then return nil, 'menu_too_large' end
+			keep[item] = memo
+		else
+			local reason
+			entry, reason = normalizeItem(item, index, depth, budget)
+			if entry == nil then return nil, reason end
+			if memo == nil then
+				if keep[item] == nil then keep[item] = false end
+			else
+				used[entry] = true
+				keep[item] = remember(item, index, entry)
+			end
+		end
 		list[index] = entry
 	end
 	if #list == 0 then return nil, 'empty_menu' end
@@ -413,6 +575,8 @@ end
 --- Steps a toggle, a choice list or a slider, answering whether it moved.
 local function adjust(entry, delta)
 	if entry.disabled then return false end
+	-- Rebuilt from the spec on the next update, as before, not answered as it stands.
+	entry.touched = true
 	local kind = entry.kind
 	if kind == 'toggle' then
 		entry.on = not entry.on
@@ -423,20 +587,7 @@ local function adjust(entry, delta)
 		entry.selected = ((entry.selected - 1 + delta) % total) + 1
 		return true
 	elseif kind == 'slider' then
-		local slider = entry.slider
-		local before = slider.value
-		local value = slider.value + (slider.step * delta)
-		-- Clamped, never wrapped: a volume that jumps from 0 to 100 is a
-		-- complaint, not a feature.
-		if value < slider.min then value = slider.min end
-		if value > slider.max then value = slider.max end
-		-- Snapped back onto the step grid after every move, because 0.1 added
-		-- ten times is not 1.0.
-		local steps = math.floor(((value - slider.min) / slider.step) + 0.5)
-		value = slider.min + (steps * slider.step)
-		if value > slider.max then value = slider.max end
-		slider.value = value
-		return value ~= before
+		return OPX.Modal.StepSlider(entry.slider, delta)
 	end
 	return false
 end
@@ -523,7 +674,7 @@ end
 -- ── building and rebuilding ─────────────────────────────────────────────────
 
 --- Builds a menu record from a caller's spec, or refuses it whole.
-local function build(owner, spec)
+local function build(owner, spec, checked, memo)
 	if type(spec.on) ~= 'function' then return nil, 'callback_required' end
 
 	local id = spec.id
@@ -586,9 +737,16 @@ local function build(owner, spec)
 	-- the rows of the menu that is up and is not the moment to move it.
 	local where = geometry(spec)
 
-	local budget = { nodes = 0 }
-	local items, reason = normalizeItems(spec.items, 1, budget)
-	if items == nil then return nil, reason end
+	local items, nodes, kept
+	if checked ~= nil then
+		items, nodes, kept = checked.items, checked.nodes, checked.memo
+	else
+		local budget = budgetOf(memo)
+		local reason
+		items, reason = normalizeItems(spec.items, 1, budget)
+		if items == nil then return nil, reason end
+		nodes, kept = budget.nodes, budget.keep
+	end
 
 	return {
 		owner = owner,
@@ -606,7 +764,8 @@ local function build(owner, spec)
 		closeOnSelect = spec.closeOnSelect == true,
 		reportFocus = spec.reportFocus == true,
 		items = items,
-		nodes = budget.nodes,
+		nodes = nodes,
+		memo = kept,
 		stack = { screen(items, title, nil, spec.cursor) },
 	}
 end
@@ -636,16 +795,18 @@ end
 --- Patches a live menu from a spec, keeping the player's position.
 -- `items` is all-or-nothing: the whole tree is rebuilt, or the whole call is
 -- refused and the live menu is untouched.
-local function rebuild(owned, spec)
+local function rebuild(owned, spec, checked)
 	if not validStatus(spec.status) then return false, 'invalid_status' end
 	if spec.on ~= nil and type(spec.on) ~= 'function' then return false, 'callback_required' end
 
-	local items, nodes
-	if spec.items ~= nil then
-		local budget = { nodes = 0 }
+	local items, nodes, kept
+	if checked ~= nil then
+		items, nodes, kept = checked.items, checked.nodes, checked.memo
+	elseif spec.items ~= nil then
+		local budget = budgetOf(owned.memo)
 		local built, reason = normalizeItems(spec.items, 1, budget)
 		if built == nil then return false, reason end
-		items, nodes = built, budget.nodes
+		items, nodes, kept = built, budget.nodes, budget.keep
 	end
 
 	local title
@@ -660,6 +821,7 @@ local function rebuild(owned, spec)
 	if items ~= nil then
 		owned.items = items
 		owned.nodes = nodes
+		owned.memo = kept
 	end
 	if title ~= nil then owned.title = title end
 	if spec.on ~= nil then owned.on = spec.on end
@@ -860,7 +1022,7 @@ local setPolling
 -- replaced rather than a pile of them.
 local function writeStatus(owned, text, bad)
 	local clean = text ~= nil and Text.Clean(text, MAX_STATUS) or nil
-	if clean == nil or clean == '' then return false end
+	if clean == nil or clean == '' then return end
 	-- THE ANSWER IS CHECKED, because it can be refused. `OPX.Toast.Show` answers
 	-- nil for a surface that is not up, and this used to discard that: the notice
 	-- went nowhere and said so to nobody. Six other modules already fall back to
@@ -872,7 +1034,6 @@ local function writeStatus(owned, text, bad)
 		message = clean,
 	})
 	if raised == nil then Open77.log.info('[menu] ' .. clean) end
-	return false
 end
 
 --- Closes the open menu and tells its owner why.
@@ -905,11 +1066,36 @@ local function closeNow(handle, reason)
 	return true
 end
 
---- Whether an owner's menu opens, and stays open, while the player is down.
-local function allowedWhileDown(owner)
-	local allowed = M.Settings.WHILE_DOWN
-	return type(allowed) == 'table' and allowed[owner] == true
-end
+-- THE DOWN STATE, THE OWNER SWEEP, ESCAPE AND THE UPKEEP PASS are `OPX.Modal`'s,
+-- one implementation for `menu`, `form` and `panel`. What is the menu's own is
+-- how it closes, what Escape does and what a pass re-sends.
+--
+-- Escape is swallowed by the plugin before any surface sees it; when it arrives
+-- on the pause key rather than on `menu:dismiss`, the reason is the pause menu.
+-- It is also the ONLY route Escape has in `cursor` mode: the page never sees a
+-- keystroke it does not hold the keyboard for, so `bridge/focus.ts` never runs
+-- and `menu:dismiss` never arrives. A menu its owner declared unclosable is left
+-- alone for the same reason the page withholds its Escape handler -- otherwise
+-- `closable = false` would hold against one key and not the other. An
+-- unclosable menu on top still takes the press, and does nothing with it, so
+-- what is under it stays too.
+local life = OPX.Modal.New({
+	name = 'menu',
+	current = function() return record end,
+	close = function(reason) closeNow(record.handle, reason) end,
+	settings = function() return M.Settings end,
+	pauseKey = M.Host.PAUSE_KEY,
+	pause = function(owned)
+		if owned.closable then closeNow(owned.handle, 'pause') end
+	end,
+	job = 'menu:upkeep',
+	everyMs = UPKEEP_MS,
+	-- The open is re-sent until the page reports ready: a surface built on first
+	-- use is not ready when the first menu opens on it.
+	upkeep = function()
+		if pendingOpen then draw() end
+	end,
+})
 
 --- Opens a menu, replacing the caller's own or, with `steal`, another's.
 -- @author dop42
@@ -927,22 +1113,41 @@ local function Open(spec)
 	-- Nothing to draw on, and there never will be at this start.
 	if OPX.UI.Interactive() == nil then return Result.Err('no_surface') end
 
-	if down and not allowedWhileDown(owner) then return Result.Err('player_down') end
+	if life.Blocked(owner) then return Result.Err('player_down') end
 	if record ~= nil and record.owner ~= owner and spec.steal ~= true then
 		return Result.Err('menu_busy')
 	end
 
+	-- A caller on its own thread may have the rows checked in steps (see
+	-- `checkRows`); whatever a frame changed is checked again before this goes on.
+	-- What the menu up now remembers of its rows (see `remember`): a reopen that
+	-- hands the same rows back is not checked again either.
+	local memo = record and record.memo or nil
+	local checked
+	if spec.yield == true then
+		local rowsReason
+		checked, rowsReason = checkRows(spec, memo)
+		if checked == nil then return Result.Err(rowsReason) end
+		if checked.yielded then
+			if OPX.UI.Interactive() == nil then return Result.Err('no_surface') end
+			if life.Blocked(owner) then return Result.Err('player_down') end
+			if record ~= nil and record.owner ~= owner and spec.steal ~= true then
+				return Result.Err('menu_busy')
+			end
+		end
+	end
+
 	-- Built before the live menu is taken down, so a refused spec costs the
 	-- player nothing.
-	local built, reason = build(owner, spec)
+	local built, reason = build(owner, spec, checked, memo)
 	if built == nil then return Result.Err(reason) end
 
-	if record ~= nil then
-		closeNow(record.handle, record.owner == owner and 'reopened' or 'superseded')
-	end
+	-- What a close callback opens in turn is closed too (see `Supersede`).
+	if record ~= nil then life.Supersede(record.owner == owner and 'reopened' or 'superseded') end
 
 	nextHandle = nextHandle + 1
 	built.handle = nextHandle
+	built.openedAtMs = OPX.Now()
 	record = built
 	announce()
 	-- Set BEFORE the page is told to open: the page announces `focus:set` during
@@ -986,7 +1191,21 @@ local function Update(handle, spec)
 	if record == nil then return Result.Err('no_menu_open') end
 	if handle ~= nil and handle ~= record.handle then return Result.Err('stale_handle') end
 
-	local ok, reason = rebuild(record, spec)
+	-- Paced like `Open`, and the menu it was asked about must still be the one
+	-- up afterwards: a frame can close it, or put another in its place.
+	local checked
+	if spec.yield == true and spec.items ~= nil then
+		local owned = record
+		local rowsReason
+		checked, rowsReason = checkRows(spec, owned.memo)
+		if checked == nil then return Result.Err(rowsReason) end
+		if checked.yielded then
+			if record == nil then return Result.Err('no_menu_open') end
+			if record ~= owned then return Result.Err('stale_handle') end
+		end
+	end
+
+	local ok, reason = rebuild(record, spec, checked)
 	if not ok then return Result.Err(reason) end
 	settle(record)
 	if spec.status ~= nil then writeStatus(record, spec.status, spec.statusBad) end
@@ -994,17 +1213,18 @@ local function Update(handle, spec)
 	return Result.Ok(true)
 end
 
---- Writes the transient line under the list, or clears it with a nil text.
+--- Raises the caller's line as a toast (see `writeStatus`); a nil or empty text says nothing.
 -- @author dop42
 -- @param handle integer
 -- @param text string|number|nil
--- @param bad boolean|nil True draws the line as a failure.
+-- @param bad boolean|nil True raises it as a failure.
 -- @return Result
 local function SetStatus(handle, text, bad)
 	if record == nil then return Result.Err('no_menu_open') end
 	if handle ~= nil and handle ~= record.handle then return Result.Err('stale_handle') end
 	if not validStatus(text) then return Result.Err('invalid_status') end
-	if writeStatus(record, text, bad) then draw() end
+	-- A toast, not a line in the frame: there is nothing to redraw.
+	writeStatus(record, text, bad)
 	return Result.Ok(true)
 end
 
@@ -1108,11 +1328,7 @@ local function activate()
 end
 
 --- The open menu when a page payload names it, or nil for a stale one.
-local function fromPage(payload)
-	if record == nil or type(payload) ~= 'table' then return nil end
-	if payload.handle ~= record.handle then return nil end
-	return record
-end
+local fromPage = life.FromPage
 
 --- One key the page forwarded.
 local function onKey(payload)
@@ -1200,39 +1416,28 @@ end
 
 --- Escape. The page keeps focus until this answers with a close: the close
 --- reason belongs to Lua and the page never decides it.
+---
+--- INSIDE A SUBMENU, ESCAPE IS BACK. It used to close the whole menu from any
+--- depth, while Backspace and Left went up one level: so a player three levels
+--- into a shop who pressed the key every other screen uses to back out lost
+--- the shop. One rule now -- Escape goes back, and closes at the top -- which is
+--- what the BACK key already did.
 local function onDismiss(payload)
 	if fromPage(payload) == nil then return end
+	if #record.stack > 1 then
+		local handle = record.handle
+		record.stack[#record.stack] = nil
+		dispatch(record, nil, 'back')
+		if record ~= nil and record.handle == handle then draw() end
+		return
+	end
 	closeNow(record.handle, 'dismissed')
 end
 
--- Answers the surface-wide focus broadcast for this module's own owners.
---
--- THE BROADCAST NAMES THE WHOLE STACK'S TOP, NOT JUST "EMPTY OR NOT", and
--- reading only the empty case was the incomplete half of this idiom.
--- `ui/src/bridge/focus.ts` announces on EVERY change to the page's focus stack,
--- carrying the one owner now on top -- so a top that moved from one of OURS to
--- somebody else's arrives here as `focus = true` with an owner this module does
--- not know, and the old shape did nothing at all with that. The stale Lua entry
--- then sat above the module actually on screen and `applyFocus` applied ITS
--- wants: the chat line's `cursor = false` over the inventory's `cursor = true`,
--- with the inventory drawn and the cursor gone.
---
--- The answer is the same in all six copies: release every owner of mine that is
--- NOT the announced one, then acquire the announced one if it is mine. `form`,
--- `menu` and `panel` are saved from the worst of it by an explicit
--- `ReleaseFocus` on their close paths; `chat` and `downed` have none, so for
--- those two this handler is the only release there is.
-local function onFocus(payload)
-	if type(payload) ~= 'table' then return end
-	local owner = payload.owner
-	local held = (payload.focus == true and type(owner) == 'string') and owner or nil
-	for name in pairs(FOCUS) do
-		if name ~= held then OPX.UI.ReleaseFocus(name) end
-	end
-	local wants = held ~= nil and FOCUS[held] or nil
-	if wants == nil then return end
-	OPX.UI.AcquireFocus(held, wants)
-end
+-- Answers the surface-wide focus broadcast for this module's own owners: see
+-- `OPX.Modal.FocusResponder`. `FOCUS.menu` is read at every broadcast, so the
+-- answer is what the menu up now was granted.
+local onFocus = OPX.Modal.FocusResponder(FOCUS)
 
 -- ── the keyboard Lua reads itself ───────────────────────────────────────────
 --
@@ -1261,6 +1466,23 @@ local function pagePolls()
 	return record ~= nil and record.focus == 'full'
 end
 
+-- HANDS ONE POLLED KEY TO A RESUME OF ITS OWN.
+--
+-- The poll is a scheduler job, and the scheduler runs up to four due jobs in
+-- one resume of the client's ONLY loop -- whose overrun retires that loop for
+-- the session, silently, with the HUD, the prompts, the target eye and these
+-- very keys inside it. A key used to be handled inline here: Enter reached
+-- `activate`, then the owner's row callback, which routinely builds and opens
+-- its next screen -- tens of thousands of instructions for a long list, on a
+-- budget shared with three other jobs. Now the poll only notices the edge and
+-- the key is played on a one-shot thread, a frame later, where an overrun can
+-- cost that one press and nothing else. The handle rides along, so a key whose
+-- menu was replaced in the meantime is dropped by `onKey` like any stale one.
+local function playKey(payload)
+	if type(CreateThread) ~= 'function' then return onKey(payload) end
+	CreateThread(function() onKey(payload) end)
+end
+
 --- One pass over the six keys: edge, then repeat.
 local function pollKeys()
 	if record == nil or pagePolls() then return end
@@ -1287,15 +1509,13 @@ local function pollKeys()
 				heldUntil[name] = (key == 'enter' or key == 'back') and math.huge
 					or atMs + REPEAT_FIRST_MS
 			elseif due == nil then
-				-- The rising edge. Fires at once and arms the long first repeat.
+				-- The rising edge. Fires and arms the long first repeat. One key per
+				-- pass: the next one is read against the frame this one leaves.
 				heldUntil[name] = atMs + REPEAT_FIRST_MS
-				onKey({ handle = record.handle, key = key })
-				-- A press may have closed the menu under us.
-				if record == nil then return end
+				return playKey({ handle = record.handle, key = key })
 			elseif atMs >= due then
 				heldUntil[name] = atMs + REPEAT_NEXT_MS
-				onKey({ handle = record.handle, key = key, ['repeat'] = true })
-				if record == nil then return end
+				return playKey({ handle = record.handle, key = key, ['repeat'] = true })
 			end
 		end
 	end
@@ -1350,48 +1570,6 @@ wire = function()
 	OPX.UI.On(SURFACE, 'focus:set', onFocus)
 end
 
--- ── upkeep ──────────────────────────────────────────────────────────────────
-
--- `expireStatus` went with the status line. A toast carries its own lifetime,
--- so there is nothing here left to time out.
-
---- Closes a menu whose owner is a module that has stopped.
--- Only a declared module is swept: an owner this runtime knows nothing about
--- is left alone rather than guessed at.
-local function sweepOwner()
-	if record == nil then return end
-	local owner = OPX.Modules.Record(record.owner)
-	if owner ~= nil and owner.State ~= 'started' then
-		closeNow(record.handle, 'owner_stopped')
-	end
-end
-
--- ── the player being down ───────────────────────────────────────────────────
-
---- Holds the down flag and closes a menu not allowed to stay up.
-local function setDown(value)
-	down = value == true
-	if down and record ~= nil and not allowedWhileDown(record.owner) then
-		closeNow(record.handle, 'player_down')
-	end
-end
-
---- Catches up once with a player who went down before this module started.
--- A state heard while the read was in flight is newer than the read, and wins.
-local function adoptDownState()
-	local downed = OPX.Api.Get('downed')
-	if downed == nil then return end
-	local heard = downHeard
-	local answer = downed.IsDown()
-	if not answer.ok then
-		Open77.log.warn(('[menu] the downed contract did not answer: %s')
-			:format(tostring(answer.error)))
-		return
-	end
-	if downHeard ~= heard then return end
-	setDown(answer.value.down == true)
-end
-
 -- ── lifecycle ───────────────────────────────────────────────────────────────
 
 --- Builds the held state.
@@ -1402,8 +1580,7 @@ function M.Init()
 	nextHandle = 0
 	pendingOpen = false
 	wired = false
-	down = false
-	downHeard = 0
+	life.Reset()
 end
 
 --- Publishes the menu contract.
@@ -1422,32 +1599,7 @@ end
 --- Wires the down state, the pause key and the upkeep pass.
 -- @author dop42
 function M.Start()
-	AddEventHandler(OPX.Event(OPX.Channel.LOCAL, 'downed', 'changed'), function(payload)
-		if type(payload) ~= 'table' then return end
-		downHeard = downHeard + 1
-		setDown(payload.down == true)
-	end)
-
-	-- Escape is swallowed by the plugin before any surface sees it; when it
-	-- arrives here rather than on `menu:dismiss`, the reason is the pause menu.
-	-- It is also the ONLY route Escape has in `cursor` mode: the page never sees a
-	-- keystroke it does not hold the keyboard for, so `bridge/focus.ts` never runs
-	-- and `menu:dismiss` never arrives. A menu its owner declared unclosable is
-	-- left alone here for the same reason the page withholds its Escape handler --
-	-- otherwise `closable = false` would hold against one key and not the other.
-	AddEventHandler(M.Host.PAUSE_KEY, function()
-		if record ~= nil and record.closable then closeNow(record.handle, 'pause') end
-	end)
-
-	OPX.Scheduler.Every('menu:upkeep', UPKEEP_MS, function()
-		if record == nil then return end
-		-- The open is re-sent until the page reports ready: a surface built on
-		-- first use is not ready when the first menu opens on it.
-		if pendingOpen then draw() end
-		sweepOwner()
-	end)
-
-	adoptDownState()
+	life.Start()
 end
 
 --- Closes whatever is open and hands the keyboard back.

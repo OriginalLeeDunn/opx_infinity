@@ -32,6 +32,11 @@ local IDENTITY_MS = 3000
 -- Milliseconds down before a give up is accepted, settled in `Init`.
 local giveUpMs = 120000
 
+-- How long a loaded character's body may stay unplaced before a death on it is
+-- counted, and before a stored down row is put back on it anyway. See `placed`.
+local DEATH_GRACE_MS = 30000
+local RESTORE_GRACE_MS = 600000
+
 -- Downed players by id: sinceMs, waiting, waitingSinceMs, position and citizenId.
 local down = {}
 
@@ -44,6 +49,10 @@ local checked = {}
 
 -- When each player last made each kind of request, by player:kind slot.
 local lastRequest = {}
+
+-- Per loaded player whose body the character module has not placed yet: the
+-- citizen, and when this module first saw it unplaced.
+local unplaced = {}
 
 -- The character contract, looked up in `Start`.
 local character
@@ -89,13 +98,13 @@ local function isDead(playerId)
 	return read and dead == true
 end
 
--- A player's name, stripped of control characters and cut to 32 bytes. Not
+-- A player's name, stripped of control characters, mended and cut to 32 characters. Not
 -- `OPX.Audit.Safe`: this name is also listed to a caller, and it is cut without
 -- an ellipsis.
 local function nameOf(playerId)
 	local read, name = pcall(Open77.players.name, playerId)
 	if not read or type(name) ~= 'string' then return nil end
-	return (name:gsub('%c', ' ')):sub(1, 32)
+	return OPX.Text.Clean(name, 32)
 end
 
 -- A player's finite position and bucket, or nil.
@@ -243,10 +252,50 @@ local function inWorld(playerId)
 	return true, type(data.citizenId) == 'string' and data.citizenId or nil
 end
 
+-- Whether the character module has put this character's body where its row says.
+--
+-- A JOIN IS A KILL AND A RESPAWN, and neither is a death or a revive. The
+-- character module places a joining body once the gate opens (`PlaceCharacter`,
+-- and later still when the spawn menu is up), and until then the body is the
+-- platform's join body. A stored down row put back on it was a kill the
+-- placement then respawned: the scan read the body alive again, closed the
+-- record as `alive` and CLEARED THE ROW -- a character that disconnected down
+-- came back standing, which is a free revive for anybody who quits while
+-- bleeding out. A death read on the unplaced body opened a fresh record over the
+-- stored one, writing it back as zero seconds down and not waiting.
+--
+-- `MaySample` is the character module's own word for "placed": false from the
+-- load, true once `PlaceCharacter` has put the body down. A contract that does
+-- not carry it is taken as placed, which is the behaviour before this existed.
+-- BOUNDED, because a placement that failed leaves it false for the session, and
+-- a player whose deaths nobody counts is a player nothing ever revives.
+local function placed(playerId, citizenId, graceMs)
+	if character == nil or type(character.GetPlayer) ~= 'function' then return true end
+	local loaded = character.GetPlayer(playerId)
+	if type(loaded) ~= 'table' or loaded.MaySample ~= false then
+		unplaced[playerId] = nil
+		return true
+	end
+	local atMs = OPX.Now()
+	local seen = unplaced[playerId]
+	if seen == nil or seen.citizenId ~= citizenId then
+		seen = { citizenId = citizenId, sinceMs = atMs }
+		unplaced[playerId] = seen
+	end
+	return atMs - seen.sinceMs >= graceMs
+end
+
 -- Puts a character stored down back down once, by a kill `goDown` then resumes.
 local function restore(playerId, citizenId)
 	local row = M.Storage.Read(citizenId)
 	if row == nil then return end
+	-- ASKED AGAIN AFTER THE READ, WHICH YIELDS. The character that owned this
+	-- slot may have logged out, or the player left and the id went to somebody
+	-- else, while the row was on its way: killing the slot then put one
+	-- character's stored death on another's body, and the `restoring` mark left
+	-- behind silenced the down-row check for whoever held the slot next.
+	local still, current = inWorld(playerId)
+	if still ~= true or current ~= citizenId then return end
 	restoring[playerId] = { citizenId = citizenId, downForMs = row.downForMs, waiting = row.waiting }
 
 	local ok, reason = Open77.players.kill(playerId, { cause = 'script', weapon = 'opx:downed:restore' })
@@ -270,7 +319,9 @@ local function observe(playerId)
 	local life = lifeOf(playerId)
 	if phaseOf(life) == 'dead' then
 		local loaded, citizenId = inWorld(playerId)
-		if loaded == true then goDown(playerId, life, citizenId) end
+		if loaded == true and placed(playerId, citizenId, DEATH_GRACE_MS) then
+			goDown(playerId, life, citizenId)
+		end
 		return
 	end
 
@@ -282,6 +333,12 @@ local function observe(playerId)
 	if loaded == nil then return end
 	if loaded == false or citizenId == nil then
 		checked[playerId] = { atMs = atMs }
+		return
+	end
+	-- Not before the body is placed, and not ticked off either: the restore is
+	-- still owed to this character, so it is asked again on a later pass.
+	if not placed(playerId, citizenId, RESTORE_GRACE_MS) then
+		checked[playerId] = { atMs = atMs, citizenId = seen and seen.citizenId or nil }
 		return
 	end
 	local already = seen and seen.citizenId == citizenId
@@ -434,6 +491,7 @@ local function departed(rawPlayerId)
 		local ran, failure = pcall(M.Trauma.Departed, playerId)
 		if not ran then Open77.log.error('[downed] the trauma books could not let go: ' .. tostring(failure)) end
 	end
+	unplaced[playerId] = nil
 
 	local prefix = tostring(playerId) .. ':'
 	for slot in pairs(lastRequest) do
@@ -567,8 +625,9 @@ M.Internal = {
 --- Builds the state and contributes the table.
 -- @author dop42
 function M.Init()
-	down, restoring, checked, lastRequest = {}, {}, {}, {}
+	down, restoring, checked, lastRequest, unplaced = {}, {}, {}, {}, {}
 	if M.Trauma ~= nil then M.Trauma.Reset() end
+	if M.Team ~= nil then M.Team.Reset() end
 	giveUpMs = math.floor(clamp(M.Settings.GIVE_UP_AFTER_S, 0, 3600, 120) * 1000)
 	OPX.Schema.Add(M.Storage.SCHEMA)
 end
@@ -607,6 +666,8 @@ function M.Start()
 	RegisterNetEvent(EVENT_GIVE_UP, onGiveUp)
 	AddEventHandler(OPX.Host.PLAYER_DISCONNECTED, departed)
 	if M.Trauma ~= nil then M.Trauma.Start() end
+	-- The Trauma Team's own AV, which answers a distress signal no medic took.
+	if M.Team ~= nil then M.Team.Start() end
 
 	-- The fast path. On a thread, because reading the identity may yield.
 	AddEventHandler('onPlayerLifeStateChanged', function(playerId)
@@ -642,4 +703,10 @@ function M.Start()
 		Open77.log.warn('HOSPITALS has no usable row: nobody will be able to give up')
 	end
 	Open77.log.info(('downed: give up unlocks after %ds'):format(math.floor(giveUpMs / 1000)))
+end
+
+--- Takes the Trauma Team's AVs and their crews out of the world.
+-- @author XEROX710
+function M.Stop()
+	if M.Team ~= nil then M.Team.Stop() end
 end

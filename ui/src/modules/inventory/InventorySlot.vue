@@ -103,7 +103,7 @@ import type { CatalogEntry, ScreenConfig, Stack } from './types'
  *
  *   empty      1.4px   --red-idle    -- the slot exists, and that is all it says
  *   occupied   1.4px   --red-idle    -- something is in it, and the item says so
- *   hover      1.8px   --red-deep    -- denser, NOT brighter, and no bloom
+ *   hover      1.5px   --red-deep    -- denser, NOT brighter, and no bloom (the menu's hover)
  *   target     2.4px   --red         -- lit and the ONLY cell that blooms
  *
  * THE DRAGGED CELL IS NOT ON THAT RAMP, and that is the whole solve. A fifth
@@ -323,7 +323,7 @@ const showArt = computed(() => props.stack !== null && !props.broken.has(props.s
 .cell.filled:hover:not(.over):not(.dragging) {
   color: var(--op-red-deep);
   --aug-border-bg: var(--op-red-deep);
-  --aug-border-all: 1.8px;
+  --aug-border-all: 1.5px;
 }
 
 /* --- TARGET: lit, heaviest, and the one thing on the grid that blooms -----

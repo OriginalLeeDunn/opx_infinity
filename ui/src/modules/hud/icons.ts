@@ -1,3 +1,4 @@
+import { own } from '@/bridge/types'
 /**
  * The five gauge glyphs, carried over verbatim from `ICONS` in `opx77_hud/web/hud.js`.
  *
@@ -25,5 +26,5 @@ export const ICONS: Record<string, string[]> = {
 
 /** Unknown names draw nothing rather than an empty frame, as hud.js did. */
 export function iconPaths(name: string): string[] {
-  return ICONS[name] ?? []
+  return own(ICONS, name) ?? []
 }

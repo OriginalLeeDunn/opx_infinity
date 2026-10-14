@@ -22,11 +22,16 @@ import type { Payload } from '@/bridge/types'
  * keyboard, `modal` does. A module declaring the wrong one either cannot be clicked or
  * goes inert as soon as nothing holds focus.
  *
- * `cover` is the third, and it holds one thing: the loading cover, drawn OVER both of the
+ * `notice` sits between `modal` and `cover`, and it holds the toasts. A toast is usually
+ * the answer to something the player just did on a modal view, and on `overlay` a refusal
+ * raised by a form or the join screen was drawn UNDER that view's scrim -- dimmed by half
+ * exactly when it had to be read. It never takes a pointer.
+ *
+ * `cover` is the last, and it holds one thing: the loading cover, drawn OVER all of the
  * others while the game's own loading screen is up. It never takes a pointer either --
  * a load is not something the player drives.
  */
-export type LayerName = 'overlay' | 'modal' | 'cover'
+export type LayerName = 'overlay' | 'modal' | 'notice' | 'cover'
 
 interface UiState {
   /**
@@ -39,6 +44,10 @@ interface UiState {
   focused: boolean
   /** `opx:locale:set`. Keys, never sentences -- see useLocale. */
   strings: Record<string, string>
+  /** Whether a whole catalogue has landed. Until it has, a missing key is a key
+      that has not ARRIVED yet rather than one that does not exist, and `useLocale`
+      draws nothing for it instead of the raw key. */
+  stringsReady: boolean
   /** Modules ModuleHost has unmounted after a throw. Shown in the diag overlay only. */
   failed: string[]
 }
@@ -46,8 +55,15 @@ interface UiState {
 const state = reactive<UiState>({
   focused: false,
   strings: {},
+  stringsReady: false,
   failed: []
 })
+
+/* The catalogue being received, swapped in whole when its last part lands. Parts used
+   to be merged into the live dictionary as they arrived, so a language change emptied
+   every label for the frames in between; and on a cold page every label that had not
+   arrived yet painted as its raw key -- `hud.voice.state.idle` on the HUD. */
+let incomingStrings: Record<string, string> | null = null
 
 export const ui = readonly(state)
 
@@ -77,9 +93,14 @@ export function setFocused(focused: boolean): void {
 export function setStrings(payload: Payload): void {
   const incoming = table(payload.strings)
   const first = payload.first !== false
-  const next: Record<string, string> = first ? {} : { ...state.strings }
-  for (const key of Object.keys(incoming)) next[key] = text(incoming[key], key)
-  state.strings = next
+  // A payload with neither flag is a whole catalogue in one part, as before.
+  const done = payload.done !== false
+  if (first || incomingStrings === null) incomingStrings = {}
+  for (const key of Object.keys(incoming)) incomingStrings[key] = text(incoming[key], key)
+  if (!done) return
+  state.strings = incomingStrings
+  incomingStrings = null
+  state.stringsReady = true
 }
 
 export function noteModuleFailure(id: string): void {

@@ -80,9 +80,17 @@ function OPX.EnsureSession(playerId)
 end
 
 --- Drops a session. This disconnects, it does not discard: the session is marked
---- `departing` first, so a module unloading a character knows not to put a
---- leaving player back into a selection bucket, and the announcement happens
---- while the session can still be read.
+--- `departing` first, for whoever still holds a reference to it.
+---
+--- THE ANNOUNCEMENT IS NOT READ WHILE THE SESSION STILL EXISTS, whatever this
+--- docstring used to say. The server `TriggerEvent` is QUEUED -- the devkit card
+--- (op77.45 on): "publishing appends to the host's queue, the host drains it at
+--- the next tick boundary" -- so every handler runs a tick later, after the line
+--- below has removed the session, and on the eviction path after `EnsureSession`
+--- has already put the NEXT account's session on the same slot. A handler that
+--- reads `OPX.Sessions[playerId]` is therefore reading somebody else's, or
+--- nobody's. The account the departed session belonged to travels with the
+--- event instead, so a handler can tell which of the two it is looking at.
 -- @author dop42
 -- @param playerId Source
 function OPX.ForgetSession(playerId)
@@ -92,7 +100,7 @@ function OPX.ForgetSession(playerId)
 	local session = OPX.Sessions[playerId]
 	if session then session.departing = true end
 
-	TriggerEvent(FORGOTTEN, playerId)
+	TriggerEvent(FORGOTTEN, playerId, session and session.userId or nil)
 
 	OPX.Sessions[playerId] = nil
 end

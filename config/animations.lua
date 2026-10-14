@@ -23,14 +23,68 @@ OPX.Config.MODULES.animations = {
 	-- Show the stop key in the prompt strip while your animation plays.
 	PROMPTS = true,
 
-	-- Catalogue names never offered to anybody.
+	-- Catalogue names never offered to anybody, alone or with somebody. A
+	-- platform profile id works here too (`'camera_point'`, `'carry_pickup'`...):
+	-- those are matched once the platform's catalogue has been read, and one
+	-- matching nothing is a line in the boot log. A paired move's id
+	-- (`'escort'`, `'carried'`, see SHARED below) withholds that move.
 	DISABLED = {},
+
+	-- THE WHOLE PLATFORM CATALOGUE. true offers every profile of
+	-- open77_animations (read at runtime with `Open77.animations.list`, 104 on
+	-- op77.123 in twelve families) beside the fifteen rows written in
+	-- modules/animations/shared/catalogue.lua, so a profile a new build adds is
+	-- offered without a release. false offers only the written ones.
+	PLATFORM = true,
+
+	-- EMOTES WITH A NEARBY PLAYER, through the platform's two-player
+	-- coordinator (`Open77.playerInteractions`; needs open77_player_interactions
+	-- running). The asker picks one, the nearest player within RANGE is
+	-- invited, and nothing plays until they accept -- from a two-row menu or
+	-- `/e accept`. The server measures the distance, at the ask and again at the
+	-- yes; no client names who is invited.
+	SHARED = {
+		ENABLED = true,
+		-- Metres between the two bodies, 0.25 to 10.
+		RANGE = 3.0,
+		-- How long an invitation waits for its answer, 1000 to 60000.
+		INVITE_MS = 15000,
+
+		-- The platform's own paired presentations, each offered from both
+		-- sides (`carry` and "be carried"...). `carry` and `escort` WALK: the
+		-- asker leads and the other body follows. ENABLED = false withholds a
+		-- kind; DURATION_MS is how long it lasts once it starts (500..600000).
+		KINDS = {
+			carry = { ENABLED = true, DURATION_MS = 60000 },
+			escort = { ENABLED = true, DURATION_MS = 60000 },
+			give = { ENABLED = true, DURATION_MS = 5000 },
+			heal = { ENABLED = true, DURATION_MS = 12000 },
+		},
+
+		-- ANY TWO PROFILES, one per body: the asker's, then the other player's,
+		-- "the same" included -- every ordered pair of the offered catalogue.
+		-- The pair is stationary: either body walking off ends it.
+		ANY = true,
+		-- How long such a pair lasts. Two one-shot gestures (`wave`, `shrug`...)
+		-- last as long as the longer clip instead.
+		DURATION_MS = 30000,
+
+		-- Named shortcuts to a pair of profiles, listed above "any two". The ID
+		-- names the locale key `animations.duo.name.<ID>` (without one the row
+		-- reads its two profiles) and may not be a paired move's id. A shortcut
+		-- naming a profile the build lacks, or one in DISABLED, is not offered.
+		PAIRS = {
+			{ ID = 'talk', ACTOR = 'preach', TARGET = 'armscrossed', DURATION_MS = 20000 },
+			{ ID = 'film', ACTOR = 'record', TARGET = 'dance', DURATION_MS = 30000 },
+		},
+	},
 
 	LOOP_BY_DEFAULT = true,
 	ONE_SHOT_MS = 10000,
 	MAX_DURATION_MS = 600000,
 
-	-- Play requests per player per window; stops get twice as many.
+	-- Play requests per player per window; stops get twice as many. An
+	-- invitation to a nearby player counts as a play.
 	RATE_LIMIT = { WINDOW_MS = 10000, REQUESTS = 6 },
 
 	PICKER = {

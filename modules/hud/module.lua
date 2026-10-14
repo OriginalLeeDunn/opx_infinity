@@ -13,7 +13,10 @@
 -- `character` is required because there is no read-out without a character.
 -- `needs` and `downed` are optional and degrade to silence: no needs means the
 -- hunger and thirst gauges simply do not exist, and no downed module means
--- nobody is ever down.
+-- nobody is ever down. `fuel` is read the same way and is NOT declared: it
+-- needs `prompts`, which needs this, and the graph refuses a cycle by name. The
+-- dial asks for its contract each draw, and without it draws no fuel line --
+-- Cyberpunk has no tank of its own to read.
 
 OPX.Modules.Declare{
 	id = 'hud',

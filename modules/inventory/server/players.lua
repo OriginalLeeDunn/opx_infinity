@@ -112,11 +112,31 @@ function Players.MayAct(source)
 	return true
 end
 
+--- Lets go of what a connection holds that is not its bag: the weapon in hand,
+--- the use and drop windows, and the second container it has open.
+---
+--- APART FROM `Release` BECAUSE A CONNECTION CAN HOLD THESE WITH NO CHARACTER
+--- BOUND TO IT: a character re-bound to a newer connection leaves the older one
+--- unbound, and a staff search is a view opened by whoever asked. `Release`
+--- stops at "nobody is bound here", so a departure skipped all of it -- and the
+--- next player given that id inherited a STAFF view, which reach does not
+--- check, onto somebody else's container.
+-- @param source Source
+-- @param connected boolean whether the connection is still there to be told
+local function forgetConnection(source, connected)
+	M.Weapons.Forget(source, connected)
+	M.Actions.Forget(source)
+	Containers.CloseSecondary(source, false)
+end
+
 --- Records a citizen id on a connection, dropping a stale binding of the same
 --- character somewhere else.
 local function bind(source, citizenId)
 	local previous = byCitizen[citizenId]
-	if previous and previous ~= source then bySource[previous] = nil end
+	if previous and previous ~= source and bySource[previous] ~= nil then
+		bySource[previous] = nil
+		forgetConnection(previous, false)
+	end
 	bySource[source] = { citizenId = citizenId }
 	byCitizen[citizenId] = source
 end
@@ -216,15 +236,16 @@ end
 -- @param citizenId CitizenId|nil releases only this character when given
 function Players.Release(source, reason, citizenId)
 	local entry = bySource[source]
-	if not entry then return end
+	if not entry then
+		if reason == 'disconnected' then forgetConnection(source, false) end
+		return
+	end
 	if citizenId ~= nil and entry.citizenId ~= citizenId then return end
 	bySource[source] = nil
 	if byCitizen[entry.citizenId] == source then byCitizen[entry.citizenId] = nil end
 
 	local connected = reason ~= 'disconnected'
-	M.Weapons.Forget(source, connected)
-	M.Actions.Forget(source)
-	Containers.CloseSecondary(source, false)
+	forgetConnection(source, connected)
 	if connected then TriggerClientEvent(M.Event.RESET, source) end
 
 	local bag = Containers.Find(KIND.CHARACTER, entry.citizenId)

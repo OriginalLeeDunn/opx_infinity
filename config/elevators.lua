@@ -56,7 +56,10 @@ OPX.Config.MODULES.elevators = {
 	JOB_MAX_AGE_MS = 60000,
 
 	POLL_MS = 15000,
-	SCAN_MS = 2000,
+	-- 500, the pace of every other place (garages, dealers, stores, teleports,
+	-- doors): at 2000 the lift's row came up to two seconds after the player
+	-- stepped up to the doors, and its key did nothing until it had.
+	SCAN_MS = 500,
 
 	MATCH_RADIUS = 6.0,
 	USE_RADIUS = 4.0,

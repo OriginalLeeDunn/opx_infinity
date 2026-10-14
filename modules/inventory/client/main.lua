@@ -35,7 +35,13 @@ local REQUEST_TIMEOUT_MS = 15000
 -- nodes with its name, and the host REFUSES a page write past 1,024 value nodes
 -- WHOLE rather than truncating it -- `lib/client/surface.lua` hands that refusal
 -- back as `Send`'s second answer, and this file reads it on the open path.
-local CATALOG_PART = 40
+--
+-- AND A PART IS ONE RESUME. Shaping an entry costs ~130 VM instructions (two
+-- catalogue-key lookups), so the forty a part used to carry were ~5,400 -- in
+-- the scheduler's shared pass, beside up to three other jobs, where the meter
+-- put the job alone at ~8,000 of a ~10,000 budget whose overrun unwinds the
+-- whole pass in silence. Twenty is ~2,700, on a thread of its own.
+local CATALOG_PART = 20
 
 -- Whether the surface has been built and its channels wired, whether the page has
 -- reported itself mounted, the one write that is waiting for it to, and when that
@@ -62,10 +68,8 @@ local held = nil
 local waiting = {}
 local nextRequest = 0
 
--- Catalogue names still to be written to the page, and the generation the writer
--- belongs to: a newer send stops an older writer at its next part.
-local catalogQueue = nil
-local catalogAt = 1
+-- The generation the catalogue writer belongs to: a newer send stops an older
+-- writer at its next part.
 local catalogWrites = 0
 
 local release = nil
@@ -91,7 +95,14 @@ local function labels()
 	local keys = {
 		'bag', 'ground', 'trunk', 'glovebox', 'stash', 'drop', 'weight', 'ammo', 'serial',
 		'condition', 'use', 'split', 'dropZone', 'giveTo', 'sortWeight', 'sortName', 'close',
-		'nobody', 'unknown', 'kg', 'g', 'm', 'slots', 'groundHint',
+		'nobody', 'unknown', 'kg', 'g', 'm', 'groundHint',
+		-- `character` is the eyebrow over a searched bag, which drew the raw kind;
+		-- `cancel` is the split dialog's way out, which said `Close`.
+		'character', 'cancel',
+		-- The count dialog's give and drop questions, and its give button.
+		'give', 'giveHowMany', 'dropHowMany',
+		-- Where a person in the give list stands, never who they are.
+		'sideAhead', 'sideBehind', 'sideLeft', 'sideRight', 'decimal',
 		-- The two the page needs for its own status line. Every refusal the SERVER
 		-- makes is toasted from there, so the page only ever has to say that a
 		-- round trip failed or never came back.
@@ -137,33 +148,31 @@ function Screen.SendConfig()
 	send('config', configPayload())
 end
 
---- Queues the whole catalogue to be written to the page in parts.
--- The scheduler drains it one part per pass: an entry costs about sixty VM
--- instructions to shape, a client handler that passes 10,000 is stopped by the
--- host, and a page write past 1,024 value nodes is dropped without a word.
+--- Writes the whole catalogue to the page in parts, one part a frame.
+-- ON A THREAD OF ITS OWN, a part a resume: a client resume that passes ~10,000
+-- instructions is stopped by the host, and a page write past 1,024 value nodes
+-- is dropped without a word -- see `CATALOG_PART`. It used to be drained a part
+-- per pass of the 500 ms screen job, inside the scheduler's shared resume; a
+-- frame apiece is both cheaper per resume and sooner. A newer write (the page
+-- reporting ready again) stops an older one before its next part.
 local function queueCatalog()
 	catalogWrites = catalogWrites + 1
-	catalogQueue = Catalog.Names()
-	catalogAt = 1
-end
-
---- Writes the next catalogue part, if one is waiting.
-local function drainCatalog()
-	if catalogQueue == nil then return end
-	local names = catalogQueue
 	local mark = catalogWrites
-	local first = catalogAt
-	local last = math.min(#names, first + CATALOG_PART - 1)
-
-	local entries = {}
-	for index = first, last do entries[names[index]] = Catalog.ViewOf(names[index]) end
-	send('catalog', { entries = entries, first = first == 1, done = last >= #names })
-
-	-- A newer send replaced the queue while this part was being shaped; that
-	-- writer owns it now.
-	if mark ~= catalogWrites then return end
-	catalogAt = last + 1
-	if catalogAt > #names then catalogQueue = nil end
+	local names = Catalog.Names()
+	CreateThread(function()
+		local first = 1
+		-- One part even for an empty catalogue: `first` and `done` together are
+		-- how the page is told it holds nothing.
+		repeat
+			if mark ~= catalogWrites or not pageReady then return end
+			local last = math.min(#names, first + CATALOG_PART - 1)
+			local entries = {}
+			for index = first, last do entries[names[index]] = Catalog.ViewOf(names[index]) end
+			send('catalog', { entries = entries, first = first == 1, done = last >= #names })
+			first = last + 1
+			if first <= #names then Wait(0) end
+		until first > #names
+	end)
 end
 
 -- ── requests ─────────────────────────────────────────────────────────────────
@@ -460,8 +469,13 @@ local function announce(changes)
 	local lines = {}
 	for index = 1, #changes do
 		local change = changes[index]
-		lines[#lines + 1] = ('%s%d %s')
-			:format(change.delta > 0 and '+' or '', change.delta, Catalog.Label(change.name))
+		-- NOT THE NOTES. Every move of money as notes is told by the server, as
+		-- an amount ("You took 1,000 €$ out as notes."); a "+1000 Eddies" here
+		-- on top was the same withdraw on a second surface.
+		if change.name ~= Options.CURRENCY_ITEM then
+			lines[#lines + 1] = ('%s%d %s')
+				:format(change.delta > 0 and '+' or '', change.delta, Catalog.Label(change.name))
+		end
 	end
 	if #lines == 0 then return end
 	-- THE ANSWER IS CHECKED, because it can be refused. `OPX.Toast.Show` answers
@@ -491,8 +505,148 @@ local function tell(resource, name, ...)
 	end)
 end
 
+-- Most runtime items one catalogue event may carry: what the server sends
+-- (`RUNTIME_CHUNK`), and what fits one resume with every item at the
+-- validator's bounds. A longer list is refused whole rather than validated past
+-- the resume budget.
+local MAX_RUNTIME_PART = 4
+
+--- Takes in items another resource registered at runtime, a few at a time, and
+--- rewrites the page's catalogue once they are in.
+-- Each one is validated again by `Catalog.Register`, the function the server
+-- ran, so a row the server took is a row this half takes too.
+local function receiveCatalog(part)
+	if type(part) ~= 'table' or #part > MAX_RUNTIME_PART then return end
+	local taken = 0
+	for index = 1, #part do
+		local row = part[index]
+		if type(row) == 'table' then
+			local registered, why = Catalog.Register(row.name, row.definition, row.owner)
+			if registered then
+				taken = taken + 1
+			else
+				Open77.log.warn(('[inventory] runtime item %s refused: %s')
+					:format(tostring(row.name), tostring(why)))
+			end
+		end
+	end
+	if taken > 0 and pageReady then queueCatalog() end
+end
+
+-- ── a give offered to this player ──────────────────────────────────────────
+-- A GIVE ASKS FIRST (the owner's ruling, 2026-10): somebody in reach pressed
+-- give, and the server asks this player before anything moves. What is shown is
+-- the item, the count and where the giver stands -- in the #91 words the give
+-- list uses, "To your left · 1.2 m" -- and never who. The answer goes back as a
+-- token the server minted; it re-checks everything on a yes. An offer nobody
+-- answers is withdrawn by the server after fifteen seconds.
+
+local GIVE_MENU_OWNER = 'inventory'
+local GIVE_MENU_ID = 'inventory.giveOffer'
+
+-- The offer on screen: its token and the menu handle, or nil.
+local offered = nil
+
+-- Calls one function of the menu contract, answering its value or nil.
+local function menuCall(name, ...)
+	local api = OPX.Api.Get('menu')
+	if api == nil or type(api[name]) ~= 'function' then return nil end
+	local ran, answer = pcall(api[name], ...)
+	if not ran or type(answer) ~= 'table' or answer.ok ~= true then return nil end
+	return answer.value or answer
+end
+
+-- Takes the offer's menu down, if it is up.
+local function closeOffer()
+	local shown = offered and offered.handle or nil
+	if offered ~= nil then offered.handle = nil end
+	if shown ~= nil then menuCall('Close', shown, 'offer') end
+end
+
+-- Sends the answer once and forgets the offer.
+local function answerOffer(accepted)
+	if offered == nil then return end
+	local token = offered.token
+	closeOffer()
+	offered = nil
+	TriggerServerEvent(M.Event.GIVE_ANSWER, token, accepted == true)
+end
+
+-- The menu's rows. Shape-checked: the menu raises every action on its bus too.
+local function onOfferMenu(payload)
+	if type(payload) ~= 'table' or payload.owner ~= GIVE_MENU_OWNER or payload.menu ~= GIVE_MENU_ID then
+		return
+	end
+	if offered == nil or payload.handle ~= offered.handle then return end
+	if payload.action == 'close' then
+		-- Closed without a choice is a no: the giver is not left waiting on a
+		-- card nobody can see any more.
+		offered.handle = nil
+		return answerOffer(false)
+	end
+	if payload.action ~= 'select' or type(payload.data) ~= 'table' then return end
+	answerOffer(payload.data.accept == true)
+end
+
+local SIDE_KEYS = {
+	ahead = 'inventory.ui.sideAhead', behind = 'inventory.ui.sideBehind',
+	left = 'inventory.ui.sideLeft', right = 'inventory.ui.sideRight',
+}
+
+-- Puts an offer in front of the player. The server's words only: nothing here
+-- is read off a name.
+local function onGiveOffer(token, info)
+	token = math.tointeger(tonumber(token))
+	if token == nil or token < 1 or type(info) ~= 'table' then return end
+	local item = type(info.item) == 'string' and OPX.Text.Clean(info.item, 64, '...') or nil
+	local count = math.tointeger(tonumber(info.count))
+	if item == nil or count == nil or count < 1 then return end
+	local distance = tonumber(info.distance)
+	distance = OPX.Math.IsFinite(distance) and distance or 0
+	local where = SIDE_KEYS[info.side] ~= nil
+		and locale('inventory.offer.where', { side = locale(SIDE_KEYS[info.side]),
+			distance = ('%.1f'):format(distance) })
+		or locale('inventory.offer.nearby', { distance = ('%.1f'):format(distance) })
+
+	-- A newer offer replaces an unanswered one; the server withdrew it.
+	closeOffer()
+	offered = { token = token }
+	OPX.Toast.Show({ id = 'inventory.offer', kind = 'info',
+		message = locale('inventory.offer.toast', { count = count, item = item }) })
+	local opened = menuCall('Open', {
+		owner = GIVE_MENU_OWNER,
+		id = GIVE_MENU_ID,
+		title = locale('inventory.offer.title'),
+		on = onOfferMenu,
+		cursor = 'accept',
+		items = {
+			{ id = 'what', label = locale('inventory.offer.what', { count = count, item = item }),
+				icon = 'box', disabled = true, description = where },
+			{ id = 'accept', label = locale('inventory.offer.accept'), icon = 'plus',
+				data = { accept = true } },
+			{ id = 'refuse', label = locale('inventory.offer.refuse'), icon = 'ban',
+				data = { accept = false } },
+		},
+	})
+	if opened ~= nil and offered ~= nil and offered.token == token then
+		offered.handle = opened.handle
+	end
+end
+
+-- The server withdrew the offer: it expired, or the giver left.
+local function onGiveWithdrawn(token)
+	token = math.tointeger(tonumber(token))
+	if offered == nil or offered.token ~= token then return end
+	closeOffer()
+	offered = nil
+	OPX.Toast.Show({ id = 'inventory.offer', kind = 'info', message = locale('inventory.offer.withdrawn') })
+end
+
 --- Registers the handlers the server pushes to.
 local function registerEvents()
+	RegisterNetEvent(M.Event.CATALOG, receiveCatalog)
+	RegisterNetEvent(M.Event.GIVE_OFFER, onGiveOffer)
+	RegisterNetEvent(M.Event.GIVE_WITHDRAWN, onGiveWithdrawn)
 	RegisterNetEvent(M.Event.ANSWER, function(requestId, ok, code, data)
 		local entry = waiting[requestId]
 		if not entry then return end
@@ -551,18 +705,9 @@ local function registerEvents()
 		if type(payload) ~= 'table' then return end
 		if payload.close ~= false then Screen.Close() end
 
-		-- The needs contract is optional: with none the item is still consumed and
-		-- the animation still plays, and only what it would have moved is lost.
-		local needs = M.Contracts.needs
-		if needs and type(payload.status) == 'table' and next(payload.status) ~= nil then
-			local moved = needs.AddNeeds(payload.status)
-			if moved ~= nil and moved.ok ~= true then
-				-- A need this item names that the operator has not declared is the
-				-- ordinary case; it costs the move, not the use.
-				Open77.log.debug('[inventory] the needs of a use were refused: '
-					.. tostring(moved.error))
-			end
-		end
+		-- NO NEEDS ARE MOVED HERE. The server adds the item's status when it
+		-- consumes the unit and sends the new values to the needs module; this
+		-- half only plays the gesture.
 
 		local animation = payload.animation
 		if type(animation) == 'table' and type(animation.name) == 'string' then
@@ -717,8 +862,8 @@ function ensureSurface()
 	return true
 end
 
---- One pass: expires unanswered requests, drains the catalogue, closes a screen
---- the player may no longer have up.
+--- One pass: expires unanswered requests and closes a screen the player may no
+--- longer have up.
 local function pass()
 	local now = OPX.Now()
 	for requestId, entry in pairs(waiting) do
@@ -727,7 +872,6 @@ local function pass()
 			settle(entry, false, 'timeout', {})
 		end
 	end
-	drainCatalog()
 
 	-- A SCREEN MARKED UP THAT WAS NEVER DRAWN, and a recovery that does not need
 	-- the player to die. `usable()` below goes false only when they are down or
@@ -780,7 +924,6 @@ end
 -- @author dop42
 function M.Start()
 	M.Contracts.downed = OPX.Api.Get('downed')
-	M.Contracts.needs = OPX.Api.Get('needs')
 	M.Contracts.target = OPX.Api.Get('target')
 
 	registerEvents()
@@ -795,6 +938,15 @@ function M.Start()
 		Open77.log.error('[inventory] there is no surface: the screen can never be drawn')
 	end
 
+	-- A FRESH RESUME BEFORE THE KEYS, AND ANOTHER BEFORE THE WORLD ROWS. This runs
+	-- on the client boot thread, and a page that mounted before the modules hands
+	-- its latched `inventory:ready` to the handler wired just above -- config and
+	-- all, right here. With the keys and the world rows (the eye checks every row
+	-- it is given) that came to ~5,100 VM instructions in one resume, 6,500 on the
+	-- budget meter: the dearest of the boot, where an overrun unwinds the thread
+	-- and every module after this one. `Start` may yield; under pcall for a caller
+	-- that is not on a thread.
+	pcall(Wait, 0)
 	-- THE KEYS BEFORE THE WORLD ROWS, and the order is load-bearing rather than
 	-- tidy. `Wire` registers rows with the target module, and a raise anywhere in
 	-- there aborts this function -- so with the two the other way round, one bad
@@ -804,6 +956,7 @@ function M.Start()
 	-- Nothing in `Register` needs a world row, so it goes first and survives.
 	M.Keys.Register()
 	M.Slotbar.Wire()
+	pcall(Wait, 0)
 	M.World.Wire()
 
 	OPX.Scheduler.Every('inventory.screen', 500, pass)
@@ -816,6 +969,8 @@ end
 -- is worse than any state this module could be leaving behind.
 -- @author dop42
 function M.Stop()
+	closeOffer()
+	offered = nil
 	open = false
 	pageReady = false
 	handle = nil

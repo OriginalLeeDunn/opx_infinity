@@ -12,8 +12,8 @@
 local EN = {
 	['clothing.title'] = 'CLOTHING',
 
-	['clothing.key.use'] = 'Browse clothing',
-	['clothing.prompt'] = 'Browse clothing',
+	['clothing.key.use'] = 'Open fitting room',
+	['clothing.prompt'] = 'Open fitting room',
 
 	['clothing.refused'] = 'That could not be done.',
 
@@ -21,7 +21,7 @@ local EN = {
 	['clothing.noPosition'] = 'Your position could not be read.',
 	['clothing.captureFailed'] = 'That store could not be saved.',
 	['clothing.noWardrobe'] = 'The fitting room is unavailable on this server.',
-	['clothing.wardrobeRefused'] = 'The fitting room could not be opened: {reason}',
+	['clothing.wardrobeRefused'] = 'The fitting room cannot open right now.',
 
 	['clothing.help.add'] = 'Put a clothing store marker where you are standing.',
 	['clothing.help.addKey'] = 'durable name for the store, e.g. store_jinguji',
@@ -34,16 +34,16 @@ local EN = {
 local FR = {
 	['clothing.title'] = 'VÊTEMENTS',
 
-	['clothing.key.use'] = 'Parcourir les vêtements',
-	['clothing.prompt'] = 'Parcourir les vêtements',
+	['clothing.key.use'] = "Ouvrir la cabine d'essayage",
+	['clothing.prompt'] = "Ouvrir la cabine d'essayage",
 
 	['clothing.refused'] = "Cela n'a pas pu être fait.",
 
 	['clothing.noSuchStore'] = "Il n'y a pas de boutique de vêtements ici.",
 	['clothing.noPosition'] = "Votre position n'a pas pu être lue.",
 	['clothing.captureFailed'] = "Cette boutique n'a pas pu être enregistrée.",
-	['clothing.noWardrobe'] = 'La cabine est indisponible sur ce serveur.',
-	['clothing.wardrobeRefused'] = "La cabine n'a pas pu être ouverte : {reason}",
+	['clothing.noWardrobe'] = "La cabine d'essayage est indisponible sur ce serveur.",
+	['clothing.wardrobeRefused'] = "La cabine d'essayage ne peut pas s'ouvrir pour le moment.",
 
 	['clothing.help.add'] = 'Place un marqueur de boutique de vêtements là où vous êtes.',
 	['clothing.help.addKey'] = 'nom durable de la boutique, ex. store_jinguji',

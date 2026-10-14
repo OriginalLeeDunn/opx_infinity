@@ -333,6 +333,9 @@ end
 --- The key actually bound to the drop, as the host answered it.
 local dropKey = nil
 
+--- The crate the drop hint was last timed for, so it is timed once a carry.
+local liftedFor = nil
+
 -- Whether X may put the crate down now: only once the lift has played out, and
 -- never while a bar (the load into a vehicle) is running.
 local dropReady = false
@@ -340,14 +343,12 @@ local dropReady = false
 --- Puts the carried crate down. The server decides; this only asks.
 -- The owner: "pendant qu'on carry ont peux faire x pour la drop".
 local function onDropKey()
+	-- A key typed into a text field is not a key pressed in the world, and a
+	-- press another feature on X owns is not this one's. Asked FIRST, before the
+	-- crate is, because the contest is decided by whichever mapping asks first.
+	if OPX.Spots.Captured() or not OPX.Spots.Key.Owns('hauling_drop') then return end
 	-- The owner: "pendant qu'on load dans la voiture le joueur peux plus faire x".
 	if carrying == nil or not dropReady or bar ~= nil then return end
-	-- A key typed into a text field is not a key pressed in the world.
-	local input = Open77.input
-	if type(input) == 'table' and type(input.isCaptured) == 'function' then
-		local read, taken = pcall(input.isCaptured)
-		if read and taken == true then return end
-	end
 	local yaw, groundZ = nil, nil
 	local character = Open77.character
 	if type(character) == 'table' and type(character.yaw) == 'function' then
@@ -377,6 +378,10 @@ local function registerDropKey()
 	if type(RegisterKeyMapping) ~= 'function' then
 		return OPX.Note('hauling', 'this host has no RegisterKeyMapping: a crate cannot be put down')
 	end
+	-- `hauling_drop`, NOT `opx.hauling.drop`, AND IT STAYS THAT WAY. It is the
+	-- one mapping id outside the `opx.<module>.<verb>` pattern, but a player's
+	-- rebind is stored under the id: renaming it would silently put every
+	-- rebound drop key back on X. The owner's call, 2026-10.
 	local called, ok, answer = pcall(RegisterKeyMapping, 'hauling_drop',
 		locale('hauling.key.drop'), Access.DROP_KEY, onDropKey)
 	if not called or (ok ~= true and type(ok) ~= 'string') then
@@ -385,6 +390,15 @@ local function registerDropKey()
 	end
 	dropKey = type(ok) == 'string' and ok ~= '' and ok
 		or (type(answer) == 'string' and answer ~= '' and answer) or Access.DROP_KEY
+	-- X is shared with the progress cancel, a call's decline and hang-up and the
+	-- emote stop. A crate in the arms holds the press for its whole carry --
+	-- during the lift too, where the drop itself still waits -- so the same X
+	-- neither ends the call nor stops the carry pose under the crate.
+	OPX.Spots.Key.Contend({ tag = 'hauling', id = 'hauling_drop', default = Access.DROP_KEY,
+		wants = function()
+			if carrying ~= nil then return OPX.Spots.Key.Rank('CARRY') end
+			return nil
+		end })
 end
 
 --- Wires the rows, the wire and the bar. No job is registered here on purpose.
@@ -449,16 +463,28 @@ function M.Start()
 	end)
 
 	RegisterNetEvent(M.Event.ANSWER, function(ok, reason, held)
-		local was = carrying
 		carrying = propId(held) or nil
 		blockHands(carrying ~= nil)
 		-- AFTER THE LIFT, NOT AT THE PICKUP. The owner: "la notification qui dit X
 		-- pour drop faut qu'elle soit apres le load du carry de l'objet". The key
 		-- goes live at the same moment, so the hint never offers a press that the
 		-- lift would swallow.
+		-- AND AFTER THE LIFT MEANS AFTER THE CRATE IS CARRIED. `held` comes back
+		-- from the BEGIN of a pickup too -- the claim is theirs for the length of
+		-- the kneel -- so timing the hint from the first id it named put "Press
+		-- X to put the crate down" up two and a half seconds into a four-second
+		-- bar, for a crate still on the floor and one a cancel would never give
+		-- them. The server announces the crate CARRIED before it answers the
+		-- finish, so the list already says so when this runs.
+		local lifted = carrying ~= nil and crates[carrying] ~= nil
+			and crates[carrying].where == Where.CARRIED
 		if carrying == nil then
 			dropReady = false
-		elseif was == nil then
+			liftedFor = nil
+		elseif not lifted then
+			dropReady = false
+		elseif liftedFor ~= carrying then
+			liftedFor = carrying
 			dropReady = false
 			local held = carrying
 			CreateThread(function()
@@ -466,7 +492,10 @@ function M.Start()
 				if carrying ~= held then return end
 				dropReady = true
 				if dropKey ~= nil then
-					OPX.Toast.Locale('hauling.hint.drop', { key = dropKey }, 'info', 'box')
+					-- The key it is bound to NOW: a player who rebound the drop
+					-- was told the default they had moved it away from.
+					OPX.Toast.Locale('hauling.hint.drop',
+						{ key = OPX.Lib.Input.KeyFor('hauling_drop') or dropKey }, 'info', 'box')
 				end
 			end)
 		end

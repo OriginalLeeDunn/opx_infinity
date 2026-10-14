@@ -6,6 +6,14 @@
 -- characters whose stored row predates it. `MIN` and `MAX` bound it on both
 -- halves, and `DECAY_PER_MINUTE` is optional -- a need without one only moves
 -- when something moves it.
+--
+-- THE SERVER OWNS EVERY VALUE (the owner's ruling, 2026-10). The decay below is
+-- charged by the server, on its own clock, while the character is loaded; a need
+-- goes up only when an item's `USE.STATUS` is consumed, through
+-- `/opx.needs.set` (ACL `command.opx.needs.set`), or through the creator
+-- exports `AddNeeds` / `SetNeeds` (EXPORTS.WRITERS). The client draws what the
+-- server sends and cannot send a value back. Nothing happens to a body whose
+-- need reaches MIN.
 
 OPX.Config.MODULES.needs = {
 	enabled = true,
@@ -25,13 +33,10 @@ OPX.Config.MODULES.needs = {
 		streetCred = { MIN = 0, MAX = 100000, DEFAULT = 0 },
 	},
 
-	-- Milliseconds between two decay charges, and between two throttled pushes.
+	-- Milliseconds between two decay charges on the server. Each charge is a
+	-- `values` event to the player, so this is also how often the gauges move.
 	DECAY_MS = 60000,
-	PUSH_MS = 120000,
 
-	-- A move this large on any need pushes at once instead of waiting.
-	PUSH_DELTA = 5,
-
-	-- Milliseconds between two server writes of the pushes it holds.
+	-- Milliseconds between two server writes of the values it holds.
 	AUTOSAVE_MS = 300000,
 }

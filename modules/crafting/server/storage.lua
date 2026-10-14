@@ -49,6 +49,15 @@ M.Storage = {}
 -- ON DELETE CASCADE, because an order belongs to a character: a deleted
 -- character's unfinished crafts are not somebody else's to collect, and the
 -- citizen id is reissued to nobody.
+-- `token` on a table that predates it, and the key it is found by.
+M.Storage.COLUMNS = {
+	{ TABLE = 'opx77_crafting_orders', COLUMN = 'token',
+		DEFINITION = 'VARCHAR(40) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL' },
+}
+M.Storage.INDEXES = {
+	{ TABLE = 'opx77_crafting_orders', NAME = 'idx_opx77_crafting_token', COLUMNS = { 'token' } },
+}
+
 M.Storage.SCHEMA = {
 	[[
 CREATE TABLE IF NOT EXISTS opx77_crafting_orders (
@@ -58,7 +67,9 @@ CREATE TABLE IF NOT EXISTS opx77_crafting_orders (
     recipe VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     ready_at DATETIME NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    token VARCHAR(40) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL,
     KEY idx_opx77_crafting_shelf (citizen_id, bench, ready_at, id),
+    KEY idx_opx77_crafting_token (token),
     CONSTRAINT fk_opx77_crafting_character
         FOREIGN KEY (citizen_id) REFERENCES opx77_characters (citizen_id)
         ON DELETE CASCADE
@@ -128,19 +139,57 @@ SELECT id, recipe, TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), ready_at) AS remaining
 	return Result.Ok(out)
 end
 
---- Files a new order, ready `seconds` from now.
+--- Files a new order, ready `seconds` from now -- IF the shelf has room.
+--
+-- THE CAP IS IN THE STATEMENT. It used to be read by `Shelf` and filed here,
+-- two round trips apart, so two orders placed in the same breath both read the
+-- same count and both landed: a queue of three held four. The count and the
+-- insert are one statement now, `INSERT ... SELECT ... WHERE count < queue`;
+-- InnoDB reads the shelf rows under shared locks for an INSERT ... SELECT, so
+-- two racing inserts cannot both go through on the same count -- one waits or
+-- is rolled back as a deadlock, which `Storage` answers as a failure and the
+-- caller compensates like any other.
 -- @author dop42
 -- @param citizenId CitizenId
 -- @param bench string
 -- @param recipe string
 -- @param seconds integer
--- @return Result integer the order id
-function M.Storage.Place(citizenId, bench, recipe, seconds)
-	return Storage.Insert([[
-INSERT INTO opx77_crafting_orders (citizen_id, bench, recipe, ready_at)
-VALUES (@citizen, @bench, @recipe, DATE_ADD(UTC_TIMESTAMP(), INTERVAL @seconds SECOND))
+-- @param queue integer how many orders this bench may hold for one character
+-- @param token string|nil this placement's own name, for `Placed`
+-- @return Result integer|nil the order id, or nil when the shelf was full
+function M.Storage.Place(citizenId, bench, recipe, seconds, queue, token)
+	local inserted = Storage.Insert([[
+INSERT INTO opx77_crafting_orders (citizen_id, bench, recipe, ready_at, token)
+SELECT @citizen, @bench, @recipe, DATE_ADD(UTC_TIMESTAMP(), INTERVAL @seconds SECOND), @token
+  FROM DUAL
+ WHERE (SELECT COUNT(*) FROM opx77_crafting_orders
+         WHERE citizen_id = @citizen AND bench = @bench) < @queue
 ]], { ['@citizen'] = citizenId, ['@bench'] = bench, ['@recipe'] = recipe,
-		['@seconds'] = seconds })
+		['@seconds'] = seconds, ['@queue'] = queue, ['@token'] = token })
+	if not inserted.ok then return inserted end
+	-- No row means no id: the bridge answers 0 (or nothing) for an insert that
+	-- the WHERE turned away.
+	local id = inserted.value
+	if type(id) == 'table' then id = id.insertId end
+	id = math.tointeger(tonumber(id))
+	if id == nil or id <= 0 then return Result.Ok(nil) end
+	return Result.Ok(id)
+end
+
+--- Whether a placement went in, read by its token. The question asked when
+--- `Place` failed: an answer lost AFTER the insert committed looks exactly like
+--- an insert that never ran, and refunding the first is an order AND its price.
+-- @author dop42
+-- @param citizenId CitizenId
+-- @param token string
+-- @return Result integer|nil the order id, or nil when there is no such order
+function M.Storage.Placed(citizenId, token)
+	local read = Storage.Single([[
+SELECT id FROM opx77_crafting_orders WHERE citizen_id = @citizen AND token = @token
+]], { ['@citizen'] = citizenId, ['@token'] = token })
+	if not read.ok then return read end
+	if type(read.value) ~= 'table' then return Result.Ok(nil) end
+	return Result.Ok(math.tointeger(tonumber(read.value.id)))
 end
 
 --- Reads one order a character owns, without claiming it.

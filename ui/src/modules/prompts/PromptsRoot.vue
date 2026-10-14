@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef } from 'vue'
 import { emit } from '@/bridge/channel'
-import { list, num, text } from '@/bridge/types'
+import { list, num, text, records } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
 import { useLocale } from '@/composables/useLocale'
@@ -113,32 +113,34 @@ useBridge('opx:prompts:config', (payload: Payload) => {
 })
 
 useBridge('opx:prompts:frame', (payload: Payload) => {
-  const seenGroups: Record<string, boolean> = {}
+  const seenGroups = new Set<string>()
   const next: Group[] = []
   // One budget across the whole frame, not per group: the strip is bounded by the screen
   // it sits on, and eight groups of eight rows is a wall, not a hint.
   let rowBudget = MAX_ROWS
 
-  for (const raw of list<Payload>(payload.groups)) {
+  for (const raw of records(payload.groups)) {
     if (next.length >= MAX_GROUPS || rowBudget <= 0) break
     const key = text(raw.key)
-    if (!key || seenGroups[key]) continue
+    if (!key || seenGroups.has(key)) continue
 
-    const seenRows: Record<string, boolean> = {}
+    const seenRows = new Set<string>()
     const rows: Row[] = []
-    for (const rawRow of list<Payload>(raw.rows)) {
+    for (const rawRow of records(raw.rows)) {
       if (rowBudget <= 0) break
       const rowKey = text(rawRow.key)
-      if (!rowKey || seenRows[rowKey]) continue
+      if (!rowKey || seenRows.has(rowKey)) continue
       const caps = capsOf(rawRow)
       // A prompt with no key to name says nothing. Lua drops these too; the page repeats
       // the rule because the bus it listens on is shared with every other resource.
       if (caps.length === 0) continue
-      seenRows[rowKey] = true
+      seenRows.add(rowKey)
       rows.push({
         key: rowKey,
         caps,
-        label: t(text(rawRow.label)),
+        // Keys, translated in the template: a frame that beat the catalogue kept the
+        // raw key until the next frame that changed. `t()` there is reactive.
+        label: text(rawRow.label),
         value: text(rawRow.value),
         // `rawRow.hold` is deliberately not read: nothing draws it any more.
         dim: rawRow.dim === true
@@ -148,8 +150,8 @@ useBridge('opx:prompts:frame', (payload: Payload) => {
     // An empty group is a title and no information.
     if (rows.length === 0) continue
 
-    seenGroups[key] = true
-    next.push({ key, title: t(text(raw.title)), rows })
+    seenGroups.add(key)
+    next.push({ key, title: text(raw.title), rows })
   }
 
   groups.value = next
@@ -186,14 +188,13 @@ onMounted(() => {
            sits on is the group's, not each row's -- one rotation per group instead of
            one per row. -->
       <div v-for="group in groups" :key="group.key" class="group">
-        <div v-if="group.title" class="title op-truncate">{{ group.title }}</div>
+        <div v-if="group.title" class="title op-truncate">{{ t(group.title) }}</div>
 
         <div
-          v-for="(row, at) in group.rows"
+          v-for="row in group.rows"
           :key="row.key"
           class="row"
           :class="{ dim: row.dim }"
-          :style="`--op-slot: ${at}`"
         >
           <span class="caps">
             <span v-for="cap in row.caps" :key="cap.key" class="key">
@@ -201,7 +202,7 @@ onMounted(() => {
               <kbd class="cap op-cap" data-augmented-ui="tr-clip border">{{ cap.label }}</kbd>
             </span>
           </span>
-          <span class="label op-truncate">{{ row.label }}</span>
+          <span class="label op-truncate">{{ t(row.label) }}</span>
           <span v-if="row.value" class="value">{{ row.value }}</span>
         </div>
       </div>
@@ -492,6 +493,8 @@ onMounted(() => {
 
 .strip.open .row {
   animation: prompt-in var(--op-enter-ms) var(--op-stutter) backwards;
-  animation-delay: calc(var(--slot, 0) * 28ms + 40ms);
+  /* NO STAGGER, on the owner's word: rows land together, as the menu's buttons and
+     the eye's rows do. A per-row delay read as the rows trickling in. */
+  animation-delay: 40ms;
 }
 </style>

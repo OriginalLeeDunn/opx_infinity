@@ -230,15 +230,32 @@ end
 -- @param source Source
 function World.SendDrops(source)
 	local list = Options.DROPS and World.DropList() or {}
+	local at = World.Position(source)
 	local first = 1
 	repeat
 		local last = math.min(#list, first + DROPS_PART - 1)
 		local part = {}
 		for index = first, last do part[#part + 1] = list[index] end
+		-- The first part also says which bucket the player is in, so the
+		-- client can draw only that bucket's piles (see `World.SendBucket`).
 		TriggerClientEvent(M.Event.DROPS, source,
-			{ first = first == 1, done = last >= #list, drops = part })
+			{ first = first == 1, done = last >= #list, drops = part,
+				bucket = first == 1 and at and at.bucket or nil })
 		first = last + 1
 	until first > #list
+end
+
+--- Tells one player which routing bucket they are in now.
+-- THE CLIENT HAS NO READ OF ITS OWN BUCKET, which is why every bucket's piles
+-- are sent to everybody and why filtering at send time is wrong: a player
+-- changes bucket with no hello. So the bucket is said instead, from the server's
+-- own position read, whenever the host reports a move, and the client filters.
+-- @author dop42
+-- @param source Source
+function World.SendBucket(source)
+	local at = World.Position(source)
+	if at == nil then return end
+	TriggerClientEvent(M.Event.BUCKET, source, at.bucket)
 end
 
 --- The pile record of a container id, or nil.
@@ -273,16 +290,18 @@ end
 -- @param source Source
 -- @param citizenId CitizenId
 -- @return boolean
+-- @return string|nil why not: `too_fast` for the cooldown, `drop_limit` for a cap
 function World.MayCreateDrop(source, citizenId)
 	if OPX.Now() - (lastDrop[source] or -math.huge) < Options.DROP_COOLDOWN_MS then
-		return false
+		return false, 'too_fast'
 	end
 	local total, own = 0, 0
 	for _, drop in pairs(drops) do
 		total = total + 1
 		if drop.citizenId == citizenId then own = own + 1 end
 	end
-	return total < Options.DROP_MAX and own < Options.DROP_MAX_PER_CHARACTER
+	if total < Options.DROP_MAX and own < Options.DROP_MAX_PER_CHARACTER then return true end
+	return false, 'drop_limit'
 end
 
 --- How long a pile lives, in milliseconds. Read at the moment of use.
@@ -432,9 +451,13 @@ function World.Stash(name, size, anchor, title)
 	if not container then return nil, reason end
 	if anchor then container.anchor = anchor end
 	if title then container.title = title end
-	-- Opened in front of a player, so it is no longer only a name another
-	-- resource reached: the idle sweep of `Containers.SweepExternal` lets go.
-	container.external = nil
+	-- ON THE IDLE SWEEP LIKE ANY OTHER, once nobody has it open. It used to be
+	-- taken off it for good here, so every stash a player ever opened -- a
+	-- housing resource's one per character, say -- stayed in memory for the
+	-- life of the process. `Containers.SweepExternal` never unloads one that is
+	-- open, and counts the idle time from the last pass that saw it open.
+	container.external = true
+	container.externalAt = OPX.Now()
 
 	-- SAID HERE RATHER THAN INFERRED IN `WithinReach`. A stash with no anchor is
 	-- in reach from anywhere, for as long as the server runs, for anybody who is
@@ -559,6 +582,14 @@ function World.SweepReach()
 		local container = Containers.Get(view.id)
 		if not container or (not view.staff and not World.WithinReach(view.source, container)) then
 			Containers.CloseSecondary(view.source, true)
+			-- A LOCK IS SAID. Walking off or getting in closes a trunk the player
+			-- can see they left; the owner locking the car shut it under their
+			-- hands, and a panel that just vanished read as a bug. Once: the view
+			-- is gone, so the next sweep does not find it again.
+			if container and container.kind == KIND.TRUNK and container.vehicleId
+				and World.TrunkLocked(container.vehicleId) then
+				OPX.Refuse(view.source, 'inventory.error.locked', M.Operation.VEHICLE)
+			end
 		end
 	end
 end

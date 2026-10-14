@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
@@ -65,6 +65,49 @@ function inlineSurface(): Plugin {
   }
 }
 
+/**
+ * The three augmented-ui tokens `design-system/shapes.css` draws, and nothing else.
+ *
+ * The library is gone (#112): shapes.css carries a hand-written copy of the polygons
+ * it resolved to for `tr-clip`, `bl-clip` and `border`, which are the only tokens
+ * any template ever used. A template asking for a fourth -- `tl-clip`, `br-round` --
+ * would get a plain rectangle and no warning, so the build refuses it instead.
+ *
+ * The static attribute is read whole. The bound one is an expression
+ * (`dragging ? undefined : 'tr-clip border'`), so only its quoted strings count.
+ */
+const AUGMENTED_TOKENS = new Set(['tr-clip', 'bl-clip', 'border'])
+
+function guardAugmented(): Plugin {
+  return {
+    name: 'opx-guard-augmented',
+    buildStart() {
+      const unknown: string[] = []
+      const walk = (dir: string): void => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const path = resolve(dir, entry.name)
+          if (entry.isDirectory()) walk(path)
+          else if (/\.(vue|ts)$/.test(entry.name)) {
+            const source = readFileSync(path, 'utf8')
+            for (const match of source.matchAll(/(:?)data-augmented-ui="([^"]*)"/g)) {
+              const values = match[1] ? [...match[2].matchAll(/'([^']*)'/g)].map((m) => m[1]) : [match[2]]
+              for (const value of values) {
+                for (const word of value.split(/\s+/).filter(Boolean)) {
+                  if (!AUGMENTED_TOKENS.has(word)) unknown.push(`${entry.name}: ${word}`)
+                }
+              }
+            }
+          }
+        }
+      }
+      walk(resolve(here, 'ui/src'))
+      if (unknown.length) {
+        throw new Error(`guardAugmented: shapes.css draws only tr-clip, bl-clip and border -- ${unknown.join(', ')}`)
+      }
+    }
+  }
+}
+
 /** The probe ships as-is. Running it through the bundler would defeat its whole purpose. */
 function copyProbe(): Plugin {
   return {
@@ -82,7 +125,14 @@ export default defineConfig(() => {
     root: resolve(here, 'ui'),
     // Relative, so nothing in the output can ever name an origin.
     base: './',
-    plugins: [vue(), inlineSurface(), copyProbe()],
+    plugins: [guardAugmented(), vue(), inlineSurface(), copyProbe()],
+    // Every component is `<script setup>`; nothing uses `data()`, `methods` or `this`.
+    // Left at its default (true) the Options API resolver ships in the runtime anyway.
+    define: {
+      __VUE_OPTIONS_API__: 'false',
+      __VUE_PROD_DEVTOOLS__: 'false',
+      __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false'
+    },
     resolve: {
       // Array form, and `@fontsource` FIRST: aliases are matched by prefix in order, so
       // a bare `@` sitting ahead of it would rewrite `@fontsource/...` to `ui/src/fontsource/...`.

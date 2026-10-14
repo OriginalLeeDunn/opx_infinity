@@ -66,6 +66,12 @@ M.Event = {
 	-- choose from.
 	OPENED = OPX.Event(NET, 'spawn', 'opened'),
 
+	-- Client to server. "The join is still busy ahead of the menu" -- the name
+	-- form or the fitting room is up -- so the hold is not run out under it. See
+	-- `M.Waiting`: it extends the hold, never past a hard cap, and never once
+	-- the menu itself is up.
+	WAITING = OPX.Event(NET, 'spawn', 'waiting'),
+
 	-- THIS MODULE'S OWN STATE, ON THE LOCAL BUS, and the reason the header above
 	-- is wrong about there being nothing to watch. It was: this menu only ever
 	-- had to WAIT on somebody, and `entry` published what it was waiting behind.
@@ -135,6 +141,11 @@ M.Operation = {
 	CHOOSE = 'spawn',
 }
 
+-- The id of the "where I left off" card. Not a configured place -- it has no
+-- coordinates, the character's own row does -- and a configured place may not
+-- take it (see `validName`'s caller below).
+M.RESUME_ID = 'resume'
+
 -- Bounds on one configured entry. The catalogue is authored by hand, so these
 -- exist to catch a typo rather than an attacker -- but a bad entry is skipped
 -- rather than fatal, because losing the menu is not worth losing the world.
@@ -168,6 +179,11 @@ local function normalize(raw, index)
 	local id = raw.id
 	if not validName(id, MAX_ID) then
 		Open77.log.warn(('[spawn] location %d has no usable id and is dropped'):format(index))
+		return nil
+	end
+	if id == M.RESUME_ID then
+		Open77.log.warn(('[spawn] location %d is named %q, which is the "where I left off" card; ' ..
+			'it is dropped'):format(index, id))
 		return nil
 	end
 

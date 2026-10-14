@@ -19,12 +19,12 @@
 -- Markers are engine primitives, so nothing is redrawn per frame: one is created
 -- when an entrance comes into range and removed when it leaves. A marker whose
 -- LOCK STATE changed is removed and remade, because the style is fixed at
--- creation -- that is the one case `reconcile` cannot handle by leaving a marker
--- alone.
+-- creation -- the set's `variant` is the lock state, and a marker drawn for the
+-- other one is remade.
 --
--- Creation is guarded: `Open77.markers` may not be installed at all, and a raise
--- inside the scan would take the whole pass down with it and leave the last set
--- of markers on screen for ever.
+-- The set is `OPX.Spots.Markers` (`lib/client/spots.lua`), which every spot
+-- module shares: creation is guarded -- `Open77.markers` may not be installed at
+-- all -- and capped per pass, and a raise cannot take the scan down.
 
 local M = OPX.Modules.Get('teleports')
 local Access = M.Access
@@ -37,13 +37,28 @@ local OWNER = 'teleports'
 local GROUP = 'teleport'
 
 -- The entrances as the server last sent them, by `key|leg`, and the markers
--- drawn for them. `drawn` remembers the lock state each marker was created
--- with, because the style cannot be changed afterwards.
-local entrances, markers, drawn = {}, {}, {}
+-- drawn for them. The lock state is the set's `variant`: a marker's style is
+-- fixed when it is created, so one drawn red for an entrance the player may now
+-- take is remade.
+local entrances = {}
+local markers = OPX.Spots.Markers.New({
+	tag = 'teleports',
+	look = function(entrance) return Access.Marker(not entrance.allowed) end,
+	maxDistance = function() return Access.MaxDistance() end,
+	variant = function(entrance) return entrance.allowed end,
+})
 
 -- The entrance the player is standing on, whether its row is up, and whether a
 -- trip this client asked for is still unanswered.
 local nearest, shown, asking = nil, false, false
+-- The squared distance to `nearest` the last scan measured, for the key's claim.
+local nearestSq = nil
+
+-- When `asking` was set, and how long it may stay set without an answer: the
+-- server's own `FLIGHT_MAX_MS`. A latch only an answer could open was a latch a
+-- lost event or a restarted server module shut for the rest of the session.
+local askedAtMs = 0
+local ASK_LATCH_MS = 45000
 
 -- Whether the key mapping answered.
 local keyRegistered = false
@@ -51,15 +66,15 @@ local keyRegistered = false
 -- Whether each failure has already been logged. A marker that cannot be drawn
 -- and a row that cannot be posted are different problems, and whoever reads the
 -- log wants to know which one they have.
-local reportedMarkers, reportedStrip = false, false
+local reportedStrip = false
 
 -- Scheduler handles, so Stop can cancel them.
 local scanJob, askJob = nil, nil
 
 -- Every refusal code the server can send, mapped to the sentence a player reads.
--- A code with no entry falls through to the generic line with the code in it,
--- which is deliberately ugly: an unmapped refusal should look like a bug,
--- because it is one.
+-- A code with no entry falls through to the generic line, and the code goes to
+-- the log: an unmapped refusal is a bug, but the player is not the one who can
+-- fix it, and the line used to print the code itself at them.
 local SENTENCES = {
 	rate_limited = 'error.tooFast',
 	in_flight = 'teleports.inFlight',
@@ -82,6 +97,11 @@ local SENTENCES = {
 	invalid_position = 'teleports.badDestination',
 	settle_timeout = 'teleports.neverArrived',
 	no_promise = 'teleports.unavailable',
+	-- The server's own two catch-alls (`refused` for a gate it will not explain,
+	-- `failed` for a move that did not happen), which used to reach the
+	-- generic line as "That trip was refused: failed".
+	refused = 'teleports.locked',
+	failed = 'teleports.unavailable',
 }
 
 -- Reads the key declaration, with the shipped value as the fallback so a config
@@ -104,15 +124,8 @@ local function playerAt()
 	return { x = x, y = y, z = z }
 end
 
--- Whether another surface holds the keyboard. Kept module-local rather than
--- folded into `OPX.Keys.IsCaptured`, which answers captured when the read itself
--- raises where this answers free.
-local function captured()
-	local input = Open77.input
-	if type(input) ~= 'table' or type(input.isCaptured) ~= 'function' then return false end
-	local read, answer = pcall(input.isCaptured)
-	return read and answer == true
-end
+-- Whether another surface holds the keyboard; see `lib/client/spots.lua`.
+local captured = OPX.Spots.Captured
 
 --- Whether a timed action is running on this client.
 -- @author dop42
@@ -140,96 +153,13 @@ local function busy()
 	return type(answer.value) == 'table' and answer.value.open == true
 end
 
--- ── the markers ─────────────────────────────────────────────────────────────
-
--- Creates one marker, or answers why it could not be. Never raises.
-local function createMarker(entrance)
-	local api = Open77.markers
-	if type(api) ~= 'table' or type(api.create) ~= 'function' then
-		return nil, 'world.markers is unavailable'
-	end
-	local look = Access.Marker(not entrance.allowed)
-	local read, id, reason = pcall(api.create, {
-		-- The declared height plus the look's own lift: a marker left at floor
-		-- height is co-planar with the floor and draws nothing at all.
-		position = { x = entrance.x, y = entrance.y, z = entrance.z + look.lift },
-		shape = look.shape,
-		style = look.style,
-		radius = look.radius,
-		maxDistance = Access.MaxDistance(),
-	})
-	if not read then return nil, tostring(id) end
-	if id == nil then return nil, tostring(reason or 'refused') end
-	return id, nil
-end
-
--- Removes one marker without raising.
-local function removeMarker(id)
-	local api = Open77.markers
-	if type(api) ~= 'table' or type(api.remove) ~= 'function' then return end
-	pcall(api.remove, id)
-end
-
--- Brings the drawn set in line with what is in range and what its lock state is.
-local function reconcile(at)
-	local limit = Access.MaxDistance()
-	local reach = limit * limit
-
-	for id, entrance in pairs(entrances) do
-		local flat = nil
-		if at ~= nil then flat = Access.FlatDistanceSquared(entrance, at.x, at.y) end
-		local wanted = flat ~= nil and flat <= reach
-		-- A MARKER WHOSE LOCK STATE CHANGED IS REMADE. The style is fixed when the
-		-- marker is created, so a promotion that arrives on the poll would leave a
-		-- red ring on a shortcut the player may now take -- which reads as the
-		-- server refusing them, and is the exact opposite of the truth.
-		if wanted and markers[id] ~= nil and drawn[id] ~= entrance.allowed then
-			removeMarker(markers[id])
-			markers[id], drawn[id] = nil, nil
-		end
-		if wanted and markers[id] == nil then
-			local created, failure = createMarker(entrance)
-			if created == nil then
-				if not reportedMarkers then
-					reportedMarkers = true
-					Open77.log.warn(('[teleports] no marker is drawn: %s'):format(tostring(failure)))
-				end
-			else
-				markers[id], drawn[id] = created, entrance.allowed
-			end
-		elseif not wanted and markers[id] ~= nil then
-			removeMarker(markers[id])
-			markers[id], drawn[id] = nil, nil
-		end
-	end
-
-	-- An entrance the server no longer names loses its marker here rather than
-	-- being left behind: it may have been removed while it was in range.
-	for id, marker in pairs(markers) do
-		if entrances[id] == nil then
-			removeMarker(marker)
-			markers[id], drawn[id] = nil, nil
-		end
-	end
-end
-
--- Drops every marker this module drew.
-local function clearMarkers()
-	for id, marker in pairs(markers) do
-		removeMarker(marker)
-		markers[id], drawn[id] = nil, nil
-	end
-end
-
 -- ── the strip ───────────────────────────────────────────────────────────────
 
 -- Names the key the row is bound to, or nil when it is off or was refused -- a
 -- row with no key to name says nothing, which is why `RegisterKeyMapping`'s
 -- answer is kept rather than assumed.
 local function keyLabel()
-	if not keyRegistered then return nil end
-	local declared = keySettings()
-	return OPX.Lib.Input.KeyFor(declared.ID) or declared.DEFAULT
+	return OPX.Spots.Key.Label(keyRegistered, keySettings())
 end
 
 -- Brings the strip in line with where the player is standing.
@@ -240,7 +170,10 @@ end
 -- key that does nothing and guessing why -- which is how "the teleport is
 -- broken" gets reported about a teleport that is working exactly as configured.
 local function syncPrompt()
-	local want = nearest ~= nil and keyLabel() ~= nil and not captured()
+	-- The claim on the shared key is filed every scan, row or no row, and the
+	-- row is drawn only when no other feature on that key would take the press.
+	local wins = OPX.Spots.Key.Shows(keySettings().ID)
+	local want = nearest ~= nil and keyLabel() ~= nil and not captured() and wins
 	local label = nearest ~= nil and nearest.label or nil
 	local locked = nearest ~= nil and not nearest.allowed
 	local wanted = want and (label .. (locked and '\1locked' or '')) or nil
@@ -312,7 +245,8 @@ local function refusalText(code, reason)
 	end
 	local key = SENTENCES[code]
 	if key ~= nil then return locale(key) end
-	return locale('teleports.refused', { reason = tostring(code) })
+	Open77.log.warn(('[teleports] a refusal with no sentence: %s'):format(tostring(code)))
+	return locale('teleports.refused')
 end
 
 -- ── the door ────────────────────────────────────────────────────────────────
@@ -327,8 +261,6 @@ function Runtime.Use(origin)
 	local result = { source = origin or 'key' }
 	if captured() then
 		result.ok, result.error = false, 'error.noPermission'
-	elseif busy() then
-		result.ok, result.error = false, 'teleports.busy'
 	elseif nearest == nil then
 		result.ok, result.error = false, 'teleports.noSuchTeleport'
 		-- NOT A WORD, WHEN THE KEY IS WHAT ASKED. `E` is a contextual key and four
@@ -348,7 +280,13 @@ function Runtime.Use(origin)
 			publish(result)
 			return result
 		end
-	elseif asking then
+	elseif busy() then
+		-- AFTER THE SPOT, NOT BEFORE IT. Asked first, this answered "you are
+		-- busy" to every E pressed during any progress bar anywhere in the city
+		-- -- the silence above never got its turn. Busy is only news to a player
+		-- standing at a teleport.
+		result.ok, result.error = false, 'teleports.busy'
+	elseif asking and OPX.Now() - askedAtMs < ASK_LATCH_MS then
 		-- The client's own half of the one-trip-at-a-time rule. The server keeps
 		-- the real lock; this only stops a key held down from filling the request
 		-- window with duplicates of a trip already under way.
@@ -360,6 +298,7 @@ function Runtime.Use(origin)
 			result.ok, result.error, result.reason = false, 'teleports.refused', tostring(reason)
 		else
 			asking = true
+			askedAtMs = OPX.Now()
 			result.ok = true
 			publish(result)
 			return result
@@ -367,7 +306,7 @@ function Runtime.Use(origin)
 	end
 
 	publish(result)
-	say('error', locale(result.error, { reason = result.reason or '' }))
+	say(OPX.Result.Kind(result.error, 'error'), locale(result.error, { reason = result.reason or '' }))
 	return result
 end
 
@@ -391,7 +330,7 @@ end
 function Runtime.Report()
 	return {
 		entrances = OPX.Table.Count(entrances),
-		markers = OPX.Table.Count(markers),
+		markers = markers.Count(),
 		nearest = nearest and nearest.key or nil,
 		leg = nearest and nearest.leg or nil,
 		allowed = nearest and nearest.allowed or nil,
@@ -411,12 +350,12 @@ local function scan()
 	if at == nil then
 		nearest = nil
 		syncPrompt()
-		reconcile(nil)
+		markers.Reconcile(entrances, nil, nil)
 		return
 	end
-	nearest = Access.Nearest(entrances, at.x, at.y, at.z)
+	nearest, nearestSq = Access.Nearest(entrances, at.x, at.y, at.z)
 	syncPrompt()
-	reconcile(at)
+	markers.Reconcile(entrances, at.x, at.y)
 end
 
 -- ── the phases ──────────────────────────────────────────────────────────────
@@ -424,43 +363,26 @@ end
 --- Clears everything this half holds. Never yields.
 -- @author dop42
 function Runtime.Init()
-	entrances, markers, drawn = {}, {}, {}
+	entrances = {}
+	markers.Reset()
 	nearest, shown, asking, keyRegistered = nil, nil, false, false
-	reportedMarkers, reportedStrip = false, false
+	reportedStrip = false
 	scanJob, askJob = nil, nil
 end
 
 --- Declares the key and wires the two server events.
 -- @author dop42
 function Runtime.Start()
-	-- The mapping's name is translated at registration and its id is stable,
-	-- because a player's rebind is stored under the id.
-	local declared = keySettings()
-	if declared.DEFAULT ~= false then
-		local called, ok, answer = pcall(RegisterKeyMapping, declared.ID, locale(declared.NAME),
-			declared.DEFAULT, function()
-				if captured() then return end
-				local ran, failure = pcall(Runtime.Use, 'key')
-				if not ran then
-					Open77.log.error(('[teleports] key %s: %s'):format(declared.ID, tostring(failure)))
-				end
-			end)
-		-- Two answer shapes are documented for the host call: the effective key,
-		-- or `true, key`. Reading only the second logged a working mapping as
-		-- refused.
-		local effective = nil
-		if called then
-			effective = type(ok) == 'string' and ok ~= '' and ok
-				or (ok == true and type(answer) == 'string' and answer ~= '' and answer) or nil
-		end
-		if not called or (ok ~= true and effective == nil) then
-			Open77.log.warn(('[teleports] key mapping %s (%s) not registered: %s')
-				:format(declared.ID, tostring(declared.DEFAULT),
-					tostring(called and answer or ok)))
-		else
-			keyRegistered = true
-		end
-	end
+	-- The key, and the silent press: see `OPX.Spots.Key.Register`.
+	keyRegistered = OPX.Spots.Key.Register({
+		tag = 'teleports',
+		declared = keySettings(),
+		onPress = Runtime.Use,
+		wants = function(x, y)
+			if nearest == nil then return nil end
+			return OPX.Spots.Key.Rank('SPOT'), OPX.Spots.Key.Reach(nearest, x, y, nearestSq)
+		end,
+	})
 
 	-- The strip redraws a rebound key itself; this only re-reads whether the row
 	-- should be up at all.
@@ -501,7 +423,7 @@ function Runtime.Start()
 			say('success', locale('teleports.arrived',
 				{ place = type(reason) == 'string' and reason or '' }))
 		else
-			say('error', refusalText(code, reason))
+			say(OPX.Result.Kind(code, 'error'), refusalText(code, reason))
 		end
 		-- A refusal that was about the GATE means the client's copy of `allowed`
 		-- disagreed with the server's, so re-ask rather than wait out the poll.
@@ -548,7 +470,7 @@ function Runtime.Shutdown()
 		OPX.Scheduler.Cancel(askJob)
 		askJob = nil
 	end
-	clearMarkers()
+	markers.Clear()
 	local api = OPX.Api.Get('prompts')
 	if shown ~= nil and shown ~= false and api ~= nil and type(api.Hide) == 'function' then
 		pcall(api.Hide, OWNER, GROUP)

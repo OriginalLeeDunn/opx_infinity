@@ -1,6 +1,7 @@
 import CallHolo from '@/modules/calls/HoloRoot.vue'
 import ChatInput from '@/modules/chat/ChatInput.vue'
 import ChatLog from '@/modules/chat/ChatLog.vue'
+import DoorlockView from '@/modules/doorlock/DoorlockView.vue'
 import DownedView from '@/modules/downed/DownedView.vue'
 import FormView from '@/modules/form/FormView.vue'
 import HudRoot from '@/modules/hud/HudRoot.vue'
@@ -46,7 +47,9 @@ import SurfaceRoot from './SurfaceRoot.vue'
 // `modules/loading` says a load is up they are taken off screen and kept mounted, and
 // each comes back exactly as its own module last left it.
 registerModule({ id: 'hud', surface: 'overlay', component: HudRoot, hideWhileLoading: true })
-registerModule({ id: 'notify', surface: 'overlay', component: NotifyRoot, hideWhileLoading: true })
+// Toasts on a layer of their own ABOVE the modal one: most of them answer something the
+// player just did on a modal view, and under it they were dimmed by that view's scrim.
+registerModule({ id: 'notify', surface: 'notice', component: NotifyRoot, hideWhileLoading: true })
 registerModule({ id: 'prompts', surface: 'overlay', component: PromptsRoot, hideWhileLoading: true })
 registerModule({ id: 'progress', surface: 'overlay', component: ProgressRoot, hideWhileLoading: true })
 
@@ -83,6 +86,11 @@ registerModule({ id: 'inventory', surface: 'modal', component: InventoryView })
 registerModule({ id: 'menu', surface: 'modal', component: MenuView })
 registerModule({ id: 'form', surface: 'modal', component: FormView })
 registerModule({ id: 'panel', surface: 'modal', component: PanelView })
+// ox_doorlock's staff panel, a view of its own rather than a menu or a panel spec: a
+// table with search and pages and a tabbed settings form are more than either contract
+// draws. On `modal` for the cursor; it hides itself (and gives the focus back) while the
+// staff member aims at a door for "Pick in world". See `modules/doorlock/client/panel.lua`.
+registerModule({ id: 'doorlock', surface: 'modal', component: DoorlockView })
 // The eye is on `modal` for its pointer, and HUD-like for the loading hide: its rows are
 // about the body or the door it landed on, and neither is there over a loading screen.
 registerModule({ id: 'target', surface: 'modal', component: TargetView, hideWhileLoading: true })
@@ -117,7 +125,7 @@ registerModule({ id: 'skills-tree', surface: 'modal', component: SkillTree })
 // same as no clinic -- while the keyboard stays with the game, which is what
 // keeps the E that works the chair alive while it is up.
 registerModule({ id: 'ripperdoc', surface: 'modal', component: Ripperdoc })
-// THE LOADING COVER, on a layer of its own above the other two: it is drawn over the
+// THE LOADING COVER, on a layer of its own above all the others: it is drawn over the
 // game's own loading screen during a load in play, and over everything this page has.
 // Never a pointer -- a load is nothing the player drives.
 registerModule({ id: 'loading', surface: 'cover', component: LoadingCover })

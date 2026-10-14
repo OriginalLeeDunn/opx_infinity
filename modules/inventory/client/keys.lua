@@ -20,7 +20,7 @@ local registered = {}
 -- Two answer shapes are documented for `RegisterKeyMapping` -- the key guide
 -- answers `true, key` and the API reference answers the key alone -- and either
 -- is a registration. `false` or nil with a reason is a refusal.
-local function register(id, name, key, onPressed)
+local function register(id, name, key, onPressed, wants)
 	if key == false then return false end
 	if type(RegisterKeyMapping) ~= 'function' then
 		Open77.log.warn(('[inventory] key mapping %s not registered: this client build has no ' ..
@@ -33,6 +33,7 @@ local function register(id, name, key, onPressed)
 		-- form, the pause menu -- does nothing here, so that typing an `I` into a
 		-- text field does not open a screen behind it.
 		if OPX.Lib.Input.IsCaptured() then return end
+		if not OPX.Spots.Key.Owns(id) then return end
 		local ran, failure = pcall(onPressed)
 		if not ran then Open77.log.error(('[inventory] key %s: %s'):format(id, tostring(failure))) end
 	end
@@ -52,6 +53,9 @@ local function register(id, name, key, onPressed)
 		return false
 	end
 	registered[id] = effective or key
+	if wants ~= nil then
+		OPX.Spots.Key.Contend({ tag = 'inventory', id = id, default = key, wants = wants })
+	end
 	return true
 end
 
@@ -119,7 +123,12 @@ function Keys.Register()
 			Options.KEYS_HOTBAR[index], function() pressHotbar(index) end)
 	end
 
-	register('opx.inventory.peek', locale('inventory.key.peek'), Options.KEY_PEEK, pressPeek)
+	-- IN THE CONTEST FOR Y, AND NEVER WANTING IT: the peek has nothing to win
+	-- a press with, so it acts only when nobody else on its key does -- and a
+	-- call ringing (Y answers) is somebody. The owner: the peek stays silent
+	-- while a call rings.
+	register('opx.inventory.peek', locale('inventory.key.peek'), Options.KEY_PEEK, pressPeek,
+		function() return nil end)
 
 	-- Nothing in the catalogue depends on a key, so a rebind only resends the
 	-- configuration.

@@ -37,22 +37,19 @@ local recent = {}
 -- Event prefixes whose info entries are never collapsed: six purchases in eight
 -- seconds are six answers, and collapsing them would destroy the record. A
 -- refusal under these prefixes is collapsed anyway, by its severity.
-local LEDGER_PREFIXES = { 'money.', 'character.' }
+--
+-- `export.` IS A LEDGER TOO. `core/server/exports.lua` writes one line per write
+-- another resource makes -- money, items, a job -- and those entries carry no
+-- player source, so they were all keyed on `-`: ten `AddItem` calls in ten
+-- seconds, to ten different players, became one line and `[+9 suppressed]`.
+-- That file promises "a write is audited with its caller", and the record of
+-- what a third-party resource did is exactly the one an operator reads later.
+local LEDGER_PREFIXES = { 'money.', 'character.', 'export.' }
 
---- Byte length of the first characters, bounded at four bytes each.
-local function span(text, maximum)
-	local size = math.min(#text, maximum * 4)
-	local characters = 0
-	for index = 1, size do
-		-- A byte outside the 0x80..0xBF continuation range starts a character.
-		local byte = text:byte(index)
-		if byte < 0x80 or byte > 0xBF then
-			if characters >= maximum then return index - 1 end
-			characters = characters + 1
-		end
-	end
-	return size
-end
+-- The character-boundary cut is `OPX.Text.Span`, a shared script loaded before
+-- this one. It was a private copy here, line for line the same loop, which is
+-- one copy too many of the one routine whose job is not to split a character.
+local span = OPX.Text.Span
 
 --- Turns a value into text without control characters, truncated.
 local function bounded(value, maximum)
@@ -187,7 +184,8 @@ end
 -- @author dop42
 --
 -- The first entry written after a closed window carries `[+N suppressed]`.
--- @param entry table event, severity, message, data, source, citizenId, userId
+-- @param entry table event, severity, message, data, source, citizenId, userId, and
+--   owner: who the dedupe window belongs to when no player does (never printed)
 --
 -- IT CANNOT TAKE ITS CALLER DOWN. Every audit call sits inside somebody else's
 -- net handler, and this whole body used to be unprotected: `('player=%d')
@@ -205,7 +203,11 @@ function OPX.Audit.Log(entry)
 		entry.message = entry.message ~= nil and bounded(entry.message, MAX_MESSAGE) or nil
 
 		if not isLedger(entry) then
-			local owner = tostring(entry.source or entry.citizenId or '-')
+			-- `owner` names who the dedupe window belongs to when there is no
+			-- player: a caller resource, say. Without it every such entry shared
+			-- the one `-` window, so one resource looping on a refusal swallowed
+			-- every other resource's refusals of the same event.
+			local owner = tostring(entry.owner or entry.source or entry.citizenId or '-')
 			local again, carried = repeated(entry.event .. '\1' .. owner, owner)
 			if again then return end
 			if carried > 0 then

@@ -38,7 +38,32 @@ local REFUSAL = {
 	resource_stopped = 'animations.error.unavailable',
 	not_sent = 'animations.error.notSent',
 	presentation_failed = 'animations.error.presentationFailed',
+	-- An emote with a nearby player.
+	no_player_nearby = 'animations.duo.nobody',
+	duo_busy = 'animations.duo.busy',
+	duo_unavailable = 'animations.duo.unavailable',
+	too_far = 'animations.duo.tooFar',
+	player_reserved = 'animations.duo.busy',
+	animation_busy = 'animations.duo.busy',
+	-- What the coordinator itself answers (its guide, "Failure handling").
+	wrong_bucket = 'animations.duo.tooFar',
+	position_unavailable = 'animations.duo.tooFar',
+	interactions_unavailable = 'animations.duo.unavailable',
+	paired_animation_fixed = 'animations.duo.unavailable',
+	stale_preparation = 'animations.error.timeout',
 }
+
+-- The server's notices about an emote with a nearby player that are not
+-- refusals, and the key each reads.
+local DUO_NOTICES = {
+	sent = 'animations.duo.sent',
+	accepted = 'animations.duo.accepted',
+	declined = 'animations.duo.declined',
+	expired = 'animations.duo.expired',
+}
+
+-- The toast kinds a notice may carry.
+local KINDS = { info = true, success = true, warning = true, error = true }
 
 -- Origins that end a playback for the platform, not for the player.
 local SYSTEM_ORIGINS = { presenter = true, owner_stopped = true }
@@ -54,6 +79,29 @@ local lock = nil
 
 -- Offered variants per name as the server said, or nil before the offer lands.
 local offer = nil
+
+-- The offered entries by category and all of them in picker order, built once
+-- per offer rather than walked per screen: with the platform's catalogue that
+-- is a hundred-odd entries, and the root alone asks for every category.
+local shelves = nil
+
+-- The parts of the offer being assembled: its serial, its part count and the
+-- rows of each part that has landed.
+local incoming = nil
+
+-- What the server offers with a nearby player: paired-kind ids, shortcuts and
+-- whether any two profiles may be asked for. Nothing until the offer lands.
+local NO_DUOS = { kinds = {}, pairs = {}, any = false }
+local duos = NO_DUOS
+
+-- WORK UNITS BETWEEN TWO YIELDS while an offer is taken in. A row costs four
+-- units and one more per clip it carries: adopting a profile checks and
+-- indexes every clip, so `chair` (37 clips) is ten times `wave` (one), and a
+-- fixed row count either yields for nothing or lets three big rows overrun the
+-- resume. Twenty-four units stay under 3,000 instructions on the budget meter
+-- (`OPX_BUDGET_METER`) and under 2,000 by tests/run.lua's exact count.
+local COMMIT_UNITS = 24
+local units = 0
 
 -- The scheduler handle of the sweep, so Stop can cancel it.
 local sweepJob = nil
@@ -112,7 +160,7 @@ function Runtime.Refuse(code)
 		end
 		return Runtime.Notify('warning', 'animations.error.menuNotRunning')
 	end
-	Runtime.Notify('warning', REFUSAL[code or ''] or 'animations.error.refused')
+	Runtime.Notify(OPX.Result.Kind(code, 'warning'), REFUSAL[code or ''] or 'animations.error.refused')
 end
 
 --- Answers an offered entry and its variant set, or nil.
@@ -164,29 +212,69 @@ function Runtime.Listing(entry)
 	end
 	return {
 		name = entry.name,
-		label = locale('animations.name.' .. entry.name),
+		label = Catalogue.Label(entry),
 		category = entry.category,
 		categoryLabel = locale('animations.category.' .. entry.category),
 		prop = entry.prop,
 		placement = entry.placement,
+		-- `layer` keeps the player's own walking; `workspot` holds them still.
+		kind = entry.kind,
+		platform = not entry.written,
 		variants = variants,
 	}
 end
 
---- Answers every offered entry, optionally in one category.
+--- Answers every offered entry, optionally in one category, in picker order.
+--- The answer is the cached list itself: a caller reads it and never writes.
 -- @author dop42
 -- @param category string|nil
 -- @return table[]
 function Runtime.Entries(category)
+	if shelves ~= nil then
+		if category == nil then return shelves.all end
+		return shelves.byCategory[category] or {}
+	end
+	-- Before the offer: the written rows less DISABLED, fifteen at most.
 	local rows = {}
 	local entries = Catalogue.Entries()
-	for index = 1, #entries do
-		local entry = entries[index]
+	for position = 1, #entries do
+		local entry = entries[position]
 		if (category == nil or entry.category == category) and Runtime.Offered(entry.name) then
 			rows[#rows + 1] = entry
 		end
 	end
 	return rows
+end
+
+--- Answers what the server offers with a nearby player: `kinds` (paired-kind
+--- ids, in the server's order), `pairs` (`{ id, actor, target }` shortcuts)
+--- and `any` (whether any two offered profiles may be asked for). Read only.
+-- @author dop42
+-- @return table
+function Runtime.Duos()
+	return duos
+end
+
+--- Whether a request for an emote with a nearby player names something the
+--- server offered. The server checks it again; this only spares a round trip.
+-- @author dop42
+-- @param spec any
+-- @return boolean
+function Runtime.IsDuo(spec)
+	if type(spec) ~= 'table' then return false end
+	if spec.kind ~= nil then
+		for position = 1, #duos.kinds do
+			if duos.kinds[position] == spec.kind then return true end
+		end
+		return false
+	end
+	if spec.pair ~= nil then
+		for position = 1, #duos.pairs do
+			if duos.pairs[position].id == spec.pair then return true end
+		end
+		return false
+	end
+	return duos.any and Runtime.Offered(spec.actor) ~= nil and Runtime.Offered(spec.target) ~= nil
 end
 
 -- Raises a verdict locally, and toasts a refusal the player asked for.
@@ -201,6 +289,20 @@ local function remember(action, origin, owner)
 	if serial > M.MAX_REQUEST_ID then serial = 1 end
 	pending[serial] = { action = action, origin = origin, owner = owner, atMs = OPX.Now() }
 	return serial
+end
+
+--- Whether the local player has something for the stop key to end: a playback
+--- of their own on the mirror, or a play this client asked for and the server
+--- has not answered yet.
+-- @author dop42
+-- @return boolean
+function Runtime.Playing()
+	local own = Presenter.State()
+	if type(own) == 'table' and own.active == true then return true end
+	for _, request in pairs(pending) do
+		if request.action == 'play' then return true end
+	end
+	return false
 end
 
 --- Whether the local player's playback may not be stopped by the player.
@@ -282,7 +384,9 @@ function Runtime.Play(name, options, origin, owner)
 		return { ok = false, error = 'invalid_options', animation = entry.name }
 	end
 	local cancelable = options.cancelable ~= false
-	local loops = loop == 'loop' or (loop == 'default' and Opt.LOOP_BY_DEFAULT)
+	-- A one-shot gesture plays once by default whatever LOOP_BY_DEFAULT says;
+	-- the server schedules it for its measured clip.
+	local loops = loop == 'loop' or (loop == 'default' and Opt.LOOP_BY_DEFAULT and not entry.once)
 	if not cancelable and loops and duration == 0 then
 		return { ok = false, error = 'invalid_options', animation = entry.name }
 	end
@@ -331,23 +435,172 @@ function Runtime.Stop(origin, owner)
 	return { ok = true, queued = true, requestId = id }
 end
 
--- Takes the offer the server sent, dropping what the catalogue lacks.
-local function onOffer(list)
-	if type(list) ~= 'table' or #list > 256 then return end
+--- Asks the server to invite the nearest player to an emote together.
+-- @author dop42
+-- @param spec table `{ kind }`, `{ pair }` or `{ actor, target }`
+-- @return table
+function Runtime.Duo(spec)
+	if not Runtime.IsDuo(spec) then return { ok = false, error = 'unknown_animation' } end
+	if Runtime.Locked() then return { ok = false, error = 'animation_locked' } end
+	-- Only the fields the server reads, so nothing else rides along.
+	local sent, reason = TriggerServerEvent(M.Event.DUO, { kind = spec.kind, pair = spec.pair,
+		actor = spec.actor, target = spec.target })
+	if sent == false then
+		Open77.log.warn('[animations] invitation not sent: ' .. tostring(reason))
+		return { ok = false, error = 'not_sent' }
+	end
+	return { ok = true, queued = true }
+end
+
+--- Sends the answer to an invitation from a nearby player.
+-- @author dop42
+-- @param inviteId integer
+-- @param accepted boolean
+-- @return table
+function Runtime.Reply(inviteId, accepted)
+	local sent, reason = TriggerServerEvent(M.Event.REPLY, inviteId, accepted == true)
+	if sent == false then
+		Open77.log.warn('[animations] answer not sent: ' .. tostring(reason))
+		return { ok = false, error = 'not_sent' }
+	end
+	return { ok = true, queued = true }
+end
+
+-- Spends work units, giving the frame back once COMMIT_UNITS are spent.
+local function breathe(spent)
+	units = units + spent
+	if units < COMMIT_UNITS then return end
+	units = 0
+	if type(Wait) == 'function' and coroutine.isyieldable() then Wait(0) end
+end
+
+-- What one row of the offer costs to take in, in work units.
+local function rowUnits(row)
+	local clips = type(row) == 'table' and type(row.clips) == 'table' and #row.clips or 0
+	return 4 + math.min(clips, 64)
+end
+
+-- Takes one row of the offer into `built`, adopting a platform definition.
+local function take(row, built)
+	if type(row) ~= 'table' then return end
+	if row.clips ~= nil then
+		-- A platform profile: every clip it carries is offered.
+		local entry = Catalogue.Entry(row.name)
+		if entry == nil then entry = Catalogue.Adopt(row) end
+		if entry ~= nil and not entry.written then
+			local set = {}
+			for position = 1, #entry.clips do set[position] = true end
+			built[entry.name] = set
+		end
+		return
+	end
+	local entry = Catalogue.Entry(row.name)
+	if entry ~= nil and entry.written and type(row.variants) == 'table' then
+		local set, any = {}, false
+		for position = 1, math.min(#row.variants, 64) do
+			local variant = Common.Integer(row.variants[position], 1, #entry.clips)
+			if variant ~= nil then set[variant], any = true, true end
+		end
+		if any then built[entry.name] = set end
+	end
+end
+
+-- Builds the picker's index of an offer: by category, then all of them in
+-- category order.
+local function indexOf(built)
+	local byCategory = {}
+	local entries = Catalogue.Entries()
+	for position = 1, #entries do
+		local entry = entries[position]
+		if built[entry.name] ~= nil then
+			local rows = byCategory[entry.category] or {}
+			byCategory[entry.category] = rows
+			rows[#rows + 1] = entry
+		end
+		breathe(1)
+	end
+	local all = {}
+	for position = 1, #Catalogue.CATEGORIES do
+		local rows = byCategory[Catalogue.CATEGORIES[position]] or {}
+		table.move(rows, 1, #rows, #all + 1, all)
+	end
+	return { all = all, byCategory = byCategory }
+end
+
+-- Takes a whole offer in, on its own thread: a hundred-odd definitions
+-- adopted and indexed in one resume is past the client's instruction budget.
+-- What the picker reads is swapped in at the end, never half-built.
+local function commit(assembled)
+	shelves, units = nil, 0
+	Catalogue.Forget()
 	local built = {}
-	for index = 1, #list do
-		local row = list[index]
-		local entry = type(row) == 'table' and Catalogue.Entry(row.name) or nil
-		if entry ~= nil and type(row.variants) == 'table' then
-			local set, any = {}, false
-			for position = 1, math.min(#row.variants, 64) do
-				local variant = Common.Integer(row.variants[position], 1, #entry.clips)
-				if variant ~= nil then set[variant], any = true, true end
-			end
-			if any then built[entry.name] = set end
+	for part = 1, #assembled.rows do
+		local rows = assembled.rows[part]
+		for position = 1, #rows do
+			take(rows[position], built)
+			breathe(rowUnits(rows[position]))
 		end
 	end
-	offer = built
+	local indexed = indexOf(built)
+	offer, shelves, duos = built, indexed, assembled.duos
+	if Runtime.OnOffered then Runtime.OnOffered() end
+end
+
+-- Reads the duo half of the offer, keeping only what is well formed: a paired
+-- kind this build of the resource knows, a shortcut with a word id and two
+-- profile names, and the `any` flag.
+local function duoOffer(extra)
+	local read = { kinds = {}, pairs = {}, any = extra.any == true }
+	local kinds = type(extra.kinds) == 'table' and extra.kinds or {}
+	for position = 1, math.min(#kinds, #Catalogue.DUO_KINDS) do
+		if Catalogue.DuoKind(kinds[position]) ~= nil then read.kinds[#read.kinds + 1] = kinds[position] end
+	end
+	local shortcuts = type(extra.pairs) == 'table' and extra.pairs or {}
+	for position = 1, math.min(#shortcuts, 32) do
+		local row = shortcuts[position]
+		if type(row) == 'table' and Common.Text(row.id, 32) and row.id:match('^[%l%d_]+$')
+			and Common.Text(row.actor, 64) and Common.Text(row.target, 64) then
+			read.pairs[#read.pairs + 1] = { id = row.id, actor = row.actor, target = row.target }
+		end
+	end
+	return read
+end
+
+-- Takes one part of the offer. A part of an older offer than the one being
+-- assembled is dropped; the last part to land starts the commit.
+local function onOffer(number, part, parts, rows, extra)
+	number = Common.Integer(number, 1, M.MAX_REQUEST_ID)
+	part = Common.Integer(part, 1, 64)
+	parts = Common.Integer(parts, 1, 64)
+	if number == nil or part == nil or parts == nil or part > parts or type(rows) ~= 'table'
+		or #rows > 256 then
+		return
+	end
+	if incoming == nil or incoming.serial ~= number or incoming.parts ~= parts then
+		incoming = { serial = number, parts = parts, rows = {}, landed = 0, duos = NO_DUOS }
+	end
+	if incoming.rows[part] ~= nil then return end
+	incoming.rows[part] = rows
+	incoming.landed = incoming.landed + 1
+	if type(extra) == 'table' then incoming.duos = duoOffer(extra) end
+	if incoming.landed < parts then return end
+	local assembled = incoming
+	incoming = nil
+	if type(CreateThread) == 'function' then
+		CreateThread(function() commit(assembled) end)
+	else
+		commit(assembled)
+	end
+end
+
+-- Says what the server answered about an emote with a nearby player.
+local function onNotice(kind, code)
+	if not KINDS[kind] then kind = 'info' end
+	code = Common.Code(code)
+	if code == nil then return end
+	local key = DUO_NOTICES[code]
+	if key ~= nil then return Runtime.Notify(kind, key) end
+	Runtime.Refuse(code)
 end
 
 -- Resolves a pending request with the server's verdict and publishes it. A
@@ -458,6 +711,7 @@ end
 -- @author dop42
 function Runtime.Init()
 	pending, owners, offer, lock, serial, sweepJob = {}, {}, nil, nil, 0, nil
+	shelves, incoming, duos = nil, nil, NO_DUOS
 	-- Posted here rather than at load: the presenter only calls them from its
 	-- tick, which starts later, and this keeps it from depending on Runtime.
 	Presenter.OnOwnChanged = onOwnChanged
@@ -469,6 +723,7 @@ end
 function Runtime.Start()
 	RegisterNetEvent(M.Event.OFFER, onOffer)
 	RegisterNetEvent(M.Event.ANSWER, onAnswer)
+	RegisterNetEvent(M.Event.NOTICE, onNotice)
 	RegisterNetEvent(M.Event.CANCEL, function()
 		if Runtime.Locked() then return end
 		Presenter.ReleaseOwn()

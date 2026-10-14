@@ -385,6 +385,17 @@ Options.REMOVE_UNBACKED = weapons.REMOVE_UNBACKED ~= false
 Options.WEAPON_SCAN_MS = bounded('WEAPONS.SCAN_MS', weapons.SCAN_MS, 1000, 600000, 5000)
 Options.AMMO_SYNC_MS = bounded('WEAPONS.AMMO_SYNC_MS', weapons.AMMO_SYNC_MS, 500, 60000, 2000)
 
+--- Item name -> percentage of maximum health a use restores (`HEALING`).
+Options.HEALING = {}
+for name, percent in pairs(section(Config.HEALING, 'HEALING')) do
+	local amount = tonumber(percent)
+	if type(name) ~= 'string' or amount == nil or amount ~= amount or amount <= 0 or amount > 100 then
+		problem(('HEALING.%s must be a percentage above 0 and at most 100'):format(tostring(name)))
+	else
+		Options.HEALING[name] = amount
+	end
+end
+
 local nearby = section(Config.NEARBY, 'NEARBY')
 Options.NEARBY_MAX = bounded('NEARBY.MAX', nearby.MAX, 0, 12, 4)
 Options.NEARBY_SCAN_MS = bounded('NEARBY.SCAN_MS', nearby.SCAN_MS, 250, 10000, 1000)

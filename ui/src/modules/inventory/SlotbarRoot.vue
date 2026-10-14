@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, shallowRef } from 'vue'
+import { computed, onUnmounted, ref, shallowRef } from 'vue'
 import { list, num, table, text } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
 import { useLocale } from '@/composables/useLocale'
 import { imageFromFile, monogram } from './format'
+import { corners } from '@/stores/corners'
 
 /**
  * THE HOTBAR PEEK -- what is in slots one to five, for a few seconds.
@@ -89,6 +90,8 @@ useBridge('opx:inventory:slotbar', (payload: Payload) => {
   fall = setTimeout(() => { open.value = false }, holdMs)
 })
 
+onUnmounted(clearFall)
+
 function onBroken(name: string): void {
   broken.value = { ...broken.value, [name]: true }
 }
@@ -105,7 +108,14 @@ const cells = computed(() =>
 </script>
 
 <template>
-  <div v-if="open" class="slotbar">
+  <!-- ABOVE THE DIAL WHILE DRIVING. Both sit on the bottom centre, and the dial
+       publishes how high it reaches (`stores/corners.ts`); the peek stands on that
+       rather than over it, and comes back to its own inset when the car is left. -->
+  <div
+    v-if="open"
+    class="slotbar"
+    :style="corners.bottomCenter > 0 ? { bottom: `max(var(--op-inset-y), ${corners.bottomCenter}px)` } : undefined"
+  >
     <span
       v-for="cell in cells"
       :key="cell.slot"

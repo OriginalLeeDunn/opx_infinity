@@ -41,9 +41,10 @@ local MAX_DATA_BYTES = 2048
 
 -- The fields a definition keeps; anything else is dropped. `onSelect` runs when
 -- the row is chosen, `canInteract` decides whether it is listed at all, and
--- `checked` answers true or false to draw a box.
+-- `checked` answers true or false to draw a box. `confirm` asks for a second
+-- click before `onSelect` runs; a `danger` row asks unless it says `confirm = false`.
 local FIELDS = { 'id', 'label', 'onSelect', 'canInteract', 'checked', 'description', 'group', 'icon',
-	'enabled', 'networked', 'allowSelf', 'selfOnly', 'danger', 'distance', 'order', 'types', 'records',
+	'enabled', 'networked', 'allowSelf', 'selfOnly', 'danger', 'confirm', 'distance', 'order', 'types', 'records',
 	'entities', 'spheres', 'data' }
 
 -- Largest radius of one sphere, in metres.
@@ -204,16 +205,40 @@ function Model.New(alive)
 	--- Forgets the rows of owners that stopped, or that reloaded under a new
 	--- generation.
 	-- @author dop42
-	function registry.Sweep()
+	--
+	-- With `census`, the same walk also counts the surviving rows -- the total,
+	-- the owner's own and the owner's tokens by id -- which is what a batch
+	-- needs for its limits; a second walk was the other half of a batch's cost.
+	-- The verdicts are remembered per owner, with the generation they answered
+	-- for, rather than under a key string built for every row.
+	local function sweep(census, owner)
 		-- ONE question per owner generation, not per row. Each is a host read, and
 		-- a registry of a hundred rows held by four owners is four reads, not a
 		-- hundred. This is the loop that made the difference.
-		local verdicts = {}
+		local verdicts, asked = {}, {}
 		for token, row in pairs(rows) do
-			local key = row.owner .. '#' .. tostring(row.generation)
-			if verdicts[key] == nil then verdicts[key] = alive(row.owner, row.generation) end
-			if not verdicts[key] then rows[token] = nil end
+			local name, generation = row.owner, row.generation
+			local ok
+			if asked[name] == generation and verdicts[name] ~= nil then
+				ok = verdicts[name]
+			else
+				ok = alive(name, generation) == true
+				asked[name], verdicts[name] = generation, ok
+			end
+			if not ok then
+				rows[token] = nil
+			elseif census ~= nil then
+				census.total = census.total + 1
+				if name == owner then
+					census.own = census.own + 1
+					census.byId[row.id] = token
+				end
+			end
 		end
+	end
+
+	function registry.Sweep()
+		sweep(nil, nil)
 	end
 
 	--- Forgets every row of one owner.
@@ -232,9 +257,12 @@ function Model.New(alive)
 	-- @param generation any
 	-- @param definition table
 	-- @param swept boolean|nil whether the caller already swept, as a batch does once for all
+	-- @param census table|nil the batch's running count: `total`, `own` and the
+	-- owner's tokens by id, so a batch walks the registry once and not once a row
+	-- @param undo table|nil the batch's log of what each store replaced
 	-- @return string|nil the token
 	-- @return string|nil the refusal
-	function registry.Register(owner, generation, definition, swept)
+	function registry.Register(owner, generation, definition, swept, census, undo)
 		if not swept then registry.Sweep() end
 		if not Model.Name(owner) or not alive(owner, generation) then return nil, 'invalid_owner' end
 
@@ -257,7 +285,7 @@ function Model.New(alive)
 		if d.description ~= nil and not Model.Text(d.description, 180) then return nil, 'invalid_description' end
 		if d.group ~= nil and not Model.Text(d.group, 40) then return nil, 'invalid_group' end
 		if d.icon ~= nil and not Model.ICONS[d.icon] then return nil, 'invalid_icon' end
-		for _, field in ipairs({ 'enabled', 'networked', 'allowSelf', 'selfOnly', 'danger' }) do
+		for _, field in ipairs({ 'enabled', 'networked', 'allowSelf', 'selfOnly', 'danger', 'confirm' }) do
 			if d[field] ~= nil and type(d[field]) ~= 'boolean' then return nil, 'invalid_' .. field end
 		end
 		local distance = d.distance or 3.0
@@ -284,17 +312,24 @@ function Model.New(alive)
 		if not plainData(d.data) then return nil, 'invalid_data' end
 
 		local total, own, previous = 0, 0, nil
-		for token, row in pairs(rows) do
-			total = total + 1
-			if row.owner == owner then
-				own = own + 1
-				if row.id == d.id then previous = token end
+		if census ~= nil then
+			total, own, previous = census.total, census.own, census.byId[d.id]
+		else
+			for token, row in pairs(rows) do
+				total = total + 1
+				if row.owner == owner then
+					own = own + 1
+					if row.id == d.id then previous = token end
+				end
 			end
 		end
 		if previous == nil and (total >= Model.MAX_TOTAL or own >= Model.MAX_PER_OWNER) then
 			return nil, 'option_limit'
 		end
-		if previous ~= nil then rows[previous] = nil end
+		if previous ~= nil then
+			if undo ~= nil then undo[#undo + 1] = { token = previous, row = rows[previous] } end
+			rows[previous] = nil
+		end
 
 		local kept = {}
 		for _, field in ipairs(FIELDS) do kept[field] = copy(d[field]) end
@@ -307,8 +342,16 @@ function Model.New(alive)
 			checked = checked, types = types, records = records, distance = distance, order = order,
 			enabled = d.enabled ~= false, networked = d.networked, allowSelf = d.allowSelf == true,
 			selfOnly = d.selfOnly == true, danger = d.danger == true,
+			confirm = d.confirm == true or (d.danger == true and d.confirm ~= false),
 			entities = copy(d.entities), spheres = copy(d.spheres), data = copy(d.data), definition = kept,
 		}
+		if undo ~= nil then undo[#undo + 1] = { token = token } end
+		if census ~= nil then
+			if previous == nil then
+				census.total, census.own = census.total + 1, census.own + 1
+			end
+			census.byId[d.id] = token
+		end
 		return token
 	end
 
@@ -328,14 +371,26 @@ function Model.New(alive)
 		end
 		-- Once for the whole batch, and every Register below is told so: a batch of
 		-- sixteen rows used to be sixteen sweeps, each of them a host read per owner.
-		registry.Sweep()
-		local before, count = {}, sequence
-		for token, row in pairs(rows) do before[token] = row end
+		--
+		-- ONE WALK FOR THE BATCH, and an undo log instead of a copy. Every row
+		-- used to count the whole registry for the limits, and the batch copied
+		-- the whole registry for its rollback: at a full registry that was most of
+		-- what a staff batch cost, inside the one resume the caller gave it. The
+		-- census is counted in the sweep's own walk and kept up to date as the
+		-- batch stores; a refusal puts back exactly what the batch replaced and
+		-- removes what it added.
+		local census = { total = 0, own = 0, byId = {} }
+		sweep(census, owner)
+		local undo, count = {}, sequence
 		local tokens = {}
 		for _, d in ipairs(definitions) do
-			local token, reason = registry.Register(owner, generation, d, true)
+			local token, reason = registry.Register(owner, generation, d, true, census, undo)
 			if token == nil then
-				rows, sequence = before, count
+				for index = #undo, 1, -1 do
+					local change = undo[index]
+					rows[change.token] = change.row
+				end
+				sequence = count
 				return nil, reason
 			end
 			tokens[#tokens + 1] = token
@@ -438,8 +493,15 @@ function Model.New(alive)
 	-- @param row table
 	-- @param context table
 	-- @return boolean
+	--
+	-- CHEAPEST TEST FIRST. Every test here is a pure predicate of the row and the
+	-- context, so their order changes the cost and never the answer -- and this
+	-- runs for every registered row on every hover and every pick, inside the
+	-- scheduler's shared resume. The owner check (a lookup through the module
+	-- registry) and the entity and sphere walks used to come before the plain
+	-- field compares that turn most rows away; they now come after.
 	function registry.Matches(row, context)
-		if not row.enabled or not alive(row.owner, row.generation) then return false end
+		if not row.enabled then return false end
 		local target = type(context.target) == 'table' and context.target or { kind = 'world', networked = false }
 		if target.kind == 'sky' then
 			-- Empty space is opt-in, never a surface at distance zero.
@@ -448,6 +510,12 @@ function Model.New(alive)
 			or context.playerDistance > row.distance then
 			return false
 		end
+		if target.isLocalPlayer and not row.allowSelf then return false end
+		if row.selfOnly and target.isLocalPlayer ~= true then return false end
+		if row.types ~= nil and row.types[target.kind] ~= true then return false end
+		if row.records ~= nil and row.records[target.record] ~= true then return false end
+		if row.networked ~= nil and row.networked ~= target.networked then return false end
+		if not alive(row.owner, row.generation) then return false end
 		if row.entities ~= nil then
 			local named = false
 			for _, entry in ipairs(row.entities) do
@@ -471,11 +539,7 @@ function Model.New(alive)
 			end
 			if not inside then return false end
 		end
-		if target.isLocalPlayer and not row.allowSelf then return false end
-		if row.selfOnly and target.isLocalPlayer ~= true then return false end
-		if row.types ~= nil and row.types[target.kind] ~= true then return false end
-		if row.records ~= nil and row.records[target.record] ~= true then return false end
-		return row.networked == nil or row.networked == target.networked
+		return true
 	end
 
 	--- Every row matching a context, in display order.

@@ -33,10 +33,11 @@ local EN = {
 	['hauling.refused.already_carrying'] = 'Your hands are full.',
 	['hauling.refused.stale_revision'] = 'That crate moved. Try it again.',
 	['hauling.refused.claim_expired'] = 'You took too long, so the crate went back.',
-	['hauling.refused.carry_dropped'] = 'You cannot get in with that. Load it into the trunk.',
-	['hauling.refused.too_soon'] = 'That was too quick to be real.',
+	['hauling.refused.carry_dropped'] = 'You put the crate down to get in. Load it into the trunk to take it along.',
+	['hauling.refused.carry_ended'] = 'You are no longer carrying the crate.',
+	['hauling.refused.too_soon'] = 'Too fast. Try again.',
 	['hauling.refused.too_far'] = 'You are too far away.',
-	['hauling.refused.wrong_bucket'] = 'That is not really in front of you.',
+	['hauling.refused.wrong_bucket'] = 'That is not here.',
 	['hauling.refused.no_position'] = 'Your position could not be read.',
 	['hauling.refused.not_carrying'] = 'You are not carrying anything.',
 	['hauling.refused.no_such_vehicle'] = 'That vehicle is not there.',
@@ -59,7 +60,7 @@ local EN = {
 	['hauling.refused.nothing_running'] = 'You were not doing anything.',
 	['hauling.refused.busy'] = 'Not while you are loading it.',
 	['hauling.refused.rate_limited'] = 'Slow down and try again in a moment.',
-	['hauling.refused.no_character'] = 'Your record could not be read.',
+	['hauling.refused.no_character'] = 'Your character is not loaded yet. Try again in a moment.',
 	['hauling.refused.job_required'] = 'You do not hold the job this site asks for.',
 	['hauling.refused.grade_too_low'] = 'Your grade is too low for this site.',
 	-- The two codes the shared job gate can answer that this module's own copy of
@@ -68,7 +69,7 @@ local EN = {
 	['hauling.refused.off_duty'] = 'You would have to be on duty.',
 	['hauling.refused.job_stale'] = 'Your record could not be read. Try again.',
 	['hauling.refused.no_such_site'] = 'No such site.',
-	['hauling.refused.no_carry_config'] = 'This server has not said how a crate is carried.',
+	['hauling.refused.no_carry_config'] = 'Hauling is not set up on this server.',
 }
 
 local FR = {
@@ -76,14 +77,14 @@ local FR = {
 	['hauling.row.pickupHint'] = 'Lourde. À mettre dans un véhicule.',
 	['hauling.row.load'] = 'Charger la caisse',
 	['hauling.row.sell'] = 'Vendre les caisses',
-	['hauling.key.drop'] = 'Hauling : poser la caisse',
+	['hauling.key.drop'] = 'Transport : poser la caisse',
 	['hauling.hint.drop'] = 'Appuyez sur {key} pour poser la caisse.',
 
-	['hauling.bar.pickup'] = 'Soulèvement de la caisse',
+	['hauling.bar.pickup'] = 'Levage de la caisse',
 	['hauling.bar.load'] = 'Chargement de la caisse',
 	['hauling.bar.deliver'] = 'Vente des caisses',
 
-	['hauling.paid'] = '{count} caisse(s) vendue(s) à {dropoff}. Payé {amount}.',
+	['hauling.paid'] = '{count} caisse(s) vendue(s) à {dropoff}. Vous touchez {amount}.',
 
 	['hauling.refused.generic'] = "Cela n'a pas fonctionné.",
 	['hauling.refused.no_such_crate'] = "Cette caisse n'est plus là.",
@@ -91,13 +92,15 @@ local FR = {
 	['hauling.refused.already_carrying'] = 'Vous avez déjà les mains prises.',
 	['hauling.refused.stale_revision'] = 'Cette caisse a bougé. Réessayez.',
 	['hauling.refused.claim_expired'] = 'Vous avez trop attendu : la caisse est repartie.',
-	['hauling.refused.carry_dropped'] = 'Impossible de monter avec. Chargez-la dans le coffre.',
-	['hauling.refused.too_soon'] = "C'était trop rapide pour être vrai.",
+	['hauling.refused.carry_dropped'] = "Vous posez la caisse pour monter. Chargez-la dans le coffre pour l'emporter.",
+	['hauling.refused.carry_ended'] = 'Vous ne portez plus la caisse.',
+
+	['hauling.refused.too_soon'] = 'Trop rapide. Réessayez.',
 	['hauling.refused.too_far'] = 'Vous êtes trop loin.',
-	['hauling.refused.wrong_bucket'] = "Ce n'est pas vraiment devant vous.",
+	['hauling.refused.wrong_bucket'] = "Ce n'est pas ici.",
 	['hauling.refused.no_position'] = "Votre position n'a pas pu être lue.",
 	['hauling.refused.not_carrying'] = 'Vous ne portez rien.',
-	['hauling.refused.no_such_vehicle'] = "Ce véhicule n'existe pas.",
+	['hauling.refused.no_such_vehicle'] = "Ce véhicule n'est plus là.",
 	['hauling.refused.trunk_full'] = 'Le coffre est plein.',
 	['hauling.refused.not_your_trunk'] = "Ce coffre n'est pas à vous.",
 	['hauling.refused.no_trunk'] = "Ce véhicule n'a pas de coffre.",
@@ -112,13 +115,13 @@ local FR = {
 	['hauling.refused.nothing_running'] = 'Vous ne faisiez rien.',
 	['hauling.refused.busy'] = 'Pas pendant le chargement.',
 	['hauling.refused.rate_limited'] = 'Ralentissez et réessayez dans un instant.',
-	['hauling.refused.no_character'] = "Votre fiche n'a pas pu être lue.",
+	['hauling.refused.no_character'] = "Votre personnage n'est pas encore chargé. Réessayez dans un instant.",
 	['hauling.refused.job_required'] = "Vous n'exercez pas le métier demandé sur ce site.",
 	['hauling.refused.grade_too_low'] = 'Votre grade est trop bas pour ce site.',
 	['hauling.refused.off_duty'] = 'Il faudrait être en service.',
 	['hauling.refused.job_stale'] = "Votre fiche n'a pas pu être lue. Réessayez.",
 	['hauling.refused.no_such_site'] = "Ce site n'existe pas.",
-	['hauling.refused.no_carry_config'] = "Ce serveur n'a pas dit comment une caisse se porte.",
+	['hauling.refused.no_carry_config'] = "Le transport n'est pas configuré sur ce serveur.",
 }
 
 OPX.Locale.Register('en', EN)

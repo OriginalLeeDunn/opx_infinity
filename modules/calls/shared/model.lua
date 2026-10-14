@@ -114,11 +114,18 @@ Model.REASONS = {
 	noSuchInvite = true,
 	expired = true,
 
-	-- sharing a contact
+	-- sharing a contact, and calling only who you have shared with
 	tooFar = true,
+	contactTooSoon = true,
+	notContact = true,
 
 	-- a host read this module needs and did not get
 	unreadable = true,
+
+	-- the contact list: a contact not connected (a row status, not a refusal
+	-- of anything asked), and a list with no room for one more
+	offline = true,
+	contactsFull = true,
 }
 
 --- The invite kinds, as a closed set. `call` opens one, `join` adds to one,
@@ -310,6 +317,15 @@ function Model.New(options)
 		if wanted ~= nil and wanted ~= 'contact' then return nil, 'badRequest' end
 		if sender == target then return nil, 'self' end
 
+		-- WHERE THE TWO BODIES ARE COMES FIRST FOR A CONTACT, before anything is
+		-- said about the target. The reach used to be the LAST question, so a
+		-- contact offer aimed at any id on the server answered `targetNotAlive`,
+		-- `targetNotReady`, `targetPending` or `targetInCall` from across the
+		-- map: a stranger could poll whether a given player was down, still
+		-- loading or on a call, one id at a time. Out of reach, the only answer
+		-- is `tooFar`, which says nothing the asker cannot see for themselves.
+		if wanted == 'contact' and not near(sender, target) then return nil, 'tooFar' end
+
 		local ok, reason = admits(sender, 'caller')
 		if not ok then return nil, reason end
 		ok, reason = admits(target, 'target')
@@ -325,12 +341,11 @@ function Model.New(options)
 		local kind = wanted or (callOf[sender] ~= nil and 'join' or 'call')
 
 		if kind == 'contact' then
-			-- The one rule about where the two bodies are, and the only one.
-			-- Handing somebody your number is something you do standing in
-			-- front of them; a CALL is the opposite -- reaching somebody who is
-			-- not there is the whole point of the feature -- so no other kind
-			-- asks this question.
-			if not near(sender, target) then return nil, 'tooFar' end
+			-- The one rule about where the two bodies are, and the only one,
+			-- asked at the top. Handing somebody your number is something you do
+			-- standing in front of them; a CALL is the opposite -- reaching
+			-- somebody who is not there is the whole point of the feature -- so
+			-- no other kind asks this question.
 			if incoming[sender] ~= nil then return nil, 'alreadyPending' end
 			return kind
 		end

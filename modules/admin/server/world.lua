@@ -167,7 +167,7 @@ function World.Register()
 			{ name = 'location', help = 'admin.help.locationName' } },
 		handler = function(source, args, raw)
 			if count(args) ~= 2 then return answer(source, raw, false, 'admin.usage.send') end
-			local playerId = Server.Target(source, raw, args[1])
+			local playerId = Server.Target(source, raw, args[1], 'admin.player.send')
 			if playerId == nil then return end
 			local location = locations[tostring(args[2]):lower()]
 			if location == nil then return refuse(source, raw, 'unknown_location') end
@@ -221,6 +221,9 @@ function World.Register()
 		end,
 	})
 
+	-- When the last announcement went out, from anybody. See the floor below.
+	local lastAnnounced = nil
+
 	Server.Command(Command.WORLD_ANNOUNCE, {
 		help = 'admin.help.announce', params = { { name = 'text', help = 'admin.help.announceText' } },
 		handler = function(source, args, raw)
@@ -228,6 +231,19 @@ function World.Register()
 			local text = M.Trimmed(Text.Rest(args, 1),
 				math.floor(M.Bounded('ANNOUNCE.MAX_CHARACTERS', settings.MAX_CHARACTERS, 1, 2000, 240)))
 			if text == nil then return refuse(source, raw, 'empty_text') end
+
+			-- ONE ANNOUNCEMENT AT A TIME, server-wide. The only floor used to be the
+			-- per-operator action floor (400ms), so one operator could put two and a
+			-- half full-screen messages a second on every player, each with two
+			-- stingers and a chat line, and two operators twice that. The console is
+			-- not held to it: an operator at the console is the server.
+			local floorMs = math.floor(M.Bounded('ANNOUNCE.COOLDOWN_MS', settings.COOLDOWN_MS,
+				0, 600000, 10000))
+			local now = Server.NowMs()
+			if source > 0 and lastAnnounced ~= nil and now - lastAnnounced < floorMs then
+				return refuse(source, raw, 'too_fast')
+			end
+			lastAnnounced = now
 
 			local lifetime = math.floor(OPX.Tune.Number('ADMIN_ANNOUNCE_MS', 1000))
 			local title = locale('admin.announce.title')

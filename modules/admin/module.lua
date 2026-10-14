@@ -133,6 +133,20 @@ M.NETWORKED_DOORS = 'open77_doors'
 --- The opener command, whose grant is what makes a player staff.
 M.OPENER = 'opx.admin'
 
+-- STAFF IMMUNITY, two raw ACL rights (not commands, so `command.*` grants
+-- neither). A player holding IMMUNE is shielded from every harmful staff action
+-- -- kick, ban, kill, health, armour, freeze, model, bring, send, teleport,
+-- observe, wardrobe, holster, stripping their bag or weapons, renaming or
+-- deleting their character -- unless the operator holds OVERRIDE. The console
+-- is exempt. See `Server.Protected`.
+M.IMMUNE = 'opx.admin.immune'
+M.OVERRIDE = 'opx.admin.override'
+
+-- A raw ACL right: the vehicle commands that take a typed id act on any live
+-- vehicle, in any instance and at any distance. Without it the vehicle must be
+-- in the operator's instance and within VEHICLES.REACH (or carry them).
+M.VEHICLE_ANYWHERE = 'opx.admin.vehicle.anywhere'
+
 --- Every command name, in one place, so a rename is followed here and nowhere
 --- else. The VALUE is what the operator writes in `acl.jsonc` as `command.<name>`.
 M.Command = {
@@ -206,7 +220,7 @@ M.Command = {
 	VEHICLE_FLAG = 'opx.admin.vehicle.flag',
 	-- A KEY TO ONE PRECISE VEHICLE, into the operator's own bag. Under
 	-- `opx.admin.vehicle.*` like the rest of the vehicle tools, so a role written
-	-- the way README.md writes one already holds it; revoked alone, it takes the
+	-- the way docs/MANUAL.md writes one already holds it; revoked alone, it takes the
 	-- eye row and the menu row with it and nothing else.
 	VEHICLE_KEY = 'opx.admin.vehicle.key',
 

@@ -22,7 +22,7 @@
 --                         spelling the runtime still accepts; the catalogued name
 --                         is this one, and `players.stats.read` likewise covers
 --                         getHealth. `open77_validate` asks for the damage.*
---                         spellings anyway -- a false positive, see README
+--                         spellings anyway -- a false positive, see CONTRIBUTING.md
 --   player.cyberware.read `Open77.appearance.captureBody` needs it ALONGSIDE
 --                         player.appearance.read. Without it every other
 --                         player's body goes undrawn, and the static validator
@@ -37,7 +37,7 @@
 -- calls it. `Open77.players.all` still needs no permission.
 
 resource "opx_infinity"
-version "0.1.2"
+version "0.2.0"
 -- `>=0.0.1`, which is what all 29 shipped system resources and all 21 of the old
 -- opx77_* resources declare -- every resource that has ever installed on this
 -- platform. A real range with build metadata (`>=2.31.13+op77.67`) is accepted by
@@ -63,6 +63,10 @@ shared_script "core/shared/glyphs.lua"
 shared_script "core/shared/channels.lua"
 shared_script "core/shared/registry.lua"
 shared_script "core/shared/lifecycle.lua"
+-- The creator surfaces' shared gate and answer shapes, read by
+-- `core/server/exports.lua` and `core/client/exports.lua` at the foot of this
+-- file. Nothing in it runs at load beyond defining functions.
+shared_script "core/shared/exports.lua"
 
 shared_script "config/shared.lua"
 server_script "config/server.lua"
@@ -142,6 +146,10 @@ shared_script "config/crafting.lua"
 -- same rows.
 shared_script "config/gunsmith.lua"
 shared_script "config/hauling.lua"
+-- Shared: the client reads the stations, the reach, the key and the prices it
+-- draws here, and the server re-derives every one of them. Before the blips
+-- config, which pins its stations. See modules/fuel/module.lua.
+shared_script "config/fuel.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -200,6 +208,7 @@ shared_script "lib/shared/citizenid.lua"
 
 server_script "lib/server/storage.lua"
 server_script "lib/server/audit.lua"
+server_script "lib/server/life.lua"
 
 -- FIRST in the core server block, because it is the far end of a wire the client
 -- half wants available before anything else: `core/client/note.lua` says why a
@@ -218,11 +227,18 @@ server_script "core/server/publish.lua"
 
 client_script "lib/client/lib.lua"
 client_script "lib/client/surface.lua"
+-- The client half of a placed spot: markers and the key, shared by every spot
+-- module. After `lib/shared/spots.lua`, which it extends.
+client_script "lib/client/spots.lua"
 -- Before anything a module can reach, so `OPX.Note` is already there for a module
 -- that fails while it is still coming up.
 client_script "core/client/note.lua"
 client_script "core/client/scheduler.lua"
 client_script "core/client/ui.lua"
+-- What `menu`, `form` and `panel` share: the id checks, the payload bound, the
+-- slider step, the focus responder and the lifecycle around one open view.
+-- After `ui.lua`, whose focus calls it answers with, and before all three.
+client_script "lib/client/modal.lua"
 client_script "core/client/notify.lua"
 
 shared_script "modules/diagnostics/module.lua"
@@ -534,6 +550,9 @@ shared_script "modules/animations/shared/common.lua"
 shared_script "modules/animations/shared/catalogue.lua"
 shared_script "modules/animations/shared/settings.lua"
 server_script "modules/animations/server/service.lua"
+-- After `service.lua`, whose offer and rate window it uses; before `commands.lua`,
+-- which answers `/e accept` through it.
+server_script "modules/animations/server/duo.lua"
 server_script "modules/animations/server/commands.lua"
 server_script "modules/animations/server/main.lua"
 client_script "modules/animations/client/walk.lua"
@@ -541,6 +560,7 @@ client_script "modules/animations/client/presenter.lua"
 client_script "modules/animations/client/main.lua"
 client_script "modules/animations/client/keys.lua"
 client_script "modules/animations/client/picker.lua"
+client_script "modules/animations/client/duo.lua"
 client_script "modules/animations/client/prompt.lua"
 client_script "modules/animations/client/exports.lua"
 
@@ -551,6 +571,8 @@ client_script "modules/animations/client/exports.lua"
 shared_script "modules/progress/module.lua"
 shared_script "modules/progress/locales.lua"
 client_script "modules/progress/client/main.lua"
+-- The server's door onto a player's bar, which times the client's answer itself.
+server_script "modules/progress/server/main.lua"
 
 shared_script "modules/elevators/module.lua"
 shared_script "modules/elevators/locales.lua"
@@ -599,10 +621,11 @@ shared_script "modules/vehiclekeys/locales.lua"
 server_script "modules/vehiclekeys/server/main.lua"
 client_script "modules/vehiclekeys/client/main.lua"
 
--- Door locks. After `character`, `inventory`, `target`, `prompts`, `menu`,
--- `form` and `progress`, every one of them optional and every one ordered
--- above, so the file reads in the order it runs. Before `admin`, whose World
--- screen opens its panel by command. `world.doors` is already declared below
+-- Door locks, ox_doorlock's port. After `character`, `inventory`, `target`,
+-- `prompts`, `form` and `progress`, every one of them optional and every one
+-- ordered above, so the file reads in the order it runs. Before `admin`, whose
+-- World screen opens the panel by command; the panel itself is the Vue view
+-- `ui/src/modules/doorlock`, driven by `client/panel.lua`. `world.doors` is already declared below
 -- for the staff door switch; the server half calls `open77_doors` through
 -- `Open77.exports.call`, which needs no permission of its own.
 shared_script "modules/doorlock/module.lua"
@@ -612,8 +635,21 @@ server_script "modules/doorlock/server/storage.lua"
 server_script "modules/doorlock/server/backend.lua"
 server_script "modules/doorlock/server/main.lua"
 client_script "modules/doorlock/client/main.lua"
-client_script "modules/doorlock/client/staff.lua"
+client_script "modules/doorlock/client/panel.lua"
 client_script "modules/doorlock/client/exports.lua"
+
+-- Fuel, ox_fuel's port onto the platform's `fuel` bag field. After `character`,
+-- `inventory`, `progress`, `target`, `prompts` and `menu`, every one optional
+-- and every one ordered above. `world.vehicles` (the engine cut) and
+-- `state.write` (the bag) are declared below already; the client reads the bag
+-- and the seat under `vehicles.read`. `blips` pins its stations and `hud` draws
+-- its gauge, both through the module at run time, so neither order matters.
+shared_script "modules/fuel/module.lua"
+shared_script "modules/fuel/locales.lua"
+shared_script "modules/fuel/shared/model.lua"
+server_script "modules/fuel/server/tanks.lua"
+server_script "modules/fuel/server/main.lua"
+client_script "modules/fuel/client/main.lua"
 
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before
@@ -1121,6 +1157,15 @@ permissions {
   "players.animations.control",
   "animations.presentation",
 
+  -- `Open77.playerInteractions.request` and `cancel`, the platform's two-player
+  -- coordinator, in `modules/animations/server/duo.lua` alone: an emote with a
+  -- nearby player, started once the invited player has accepted. The card for
+  -- `request` (since 2.31.13+op77.63) names this exact permission for both
+  -- calls. The reads (`get`, `current`) would need `players.interactions.read`;
+  -- nothing here calls them. Needs `open77_player_interactions` running on the
+  -- server; without it the native is absent and the feature says so once.
+  "players.interactions.control",
+
   "world.elevators",
   "elevators.read",
 
@@ -1176,11 +1221,10 @@ permissions {
   "ui.vanilla.map",
 
   -- The plate above a head. The platform draws it labelled with the displayName
-  -- the Master vouches for -- the account gamertag -- and nothing here ever
-  -- overrode it, so a player who had just named their character still walked
-  -- around under their account name, on the first connection and on the
-  -- hundredth. `modules/character/client/state.lua` sets the override from the
-  -- name the server already publishes on the state bag.
+  -- the Master vouches for -- the account gamertag -- and for a while this
+  -- resource replaced it with the character's name. Neither belongs over a
+  -- stranger's head: never a name to a stranger, the owner's decision.
+  -- `modules/character/client/state.lua` hides every remote plate instead.
   --
   -- CLIENT permission: a refusal lands in the player's own log and the server
   -- journal says nothing. Verified in the game, or not verified.

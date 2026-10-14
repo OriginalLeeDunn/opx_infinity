@@ -7,6 +7,7 @@
 OPX.Schema = OPX.Schema or {}
 
 local statements = {}
+local columns = {}
 local indexes = {}
 
 --- Adds `CREATE TABLE IF NOT EXISTS` statements, in foreign-key order. Modules
@@ -15,6 +16,16 @@ local indexes = {}
 -- @param list string[]
 function OPX.Schema.Add(list)
 	for index = 1, #list do statements[#statements + 1] = list[index] end
+end
+
+--- Adds columns a table that already exists may be missing, applied after every
+--- table and before the indexes. Each is `{ TABLE = name, COLUMN = name,
+--- DEFINITION = sql }`. Unlike an index, a column the code writes is not
+--- optional: one that will not go on fails the schema like a table would.
+-- @author dop42
+-- @param list table[]
+function OPX.Schema.AddColumns(list)
+	for index = 1, #list do columns[#columns + 1] = list[index] end
 end
 
 --- Adds indexes a table that already exists may be missing, applied after every
@@ -42,6 +53,16 @@ function OPX.Schema.Apply()
 	if #statements > 0 then
 		local applied = OPX.Storage.ApplySchema(statements)
 		if not applied.ok then return false, applied.detail or applied.error end
+	end
+	for index = 1, #columns do
+		local spec = columns[index]
+		local ensured = OPX.Storage.EnsureColumn(spec.TABLE, spec.COLUMN, spec.DEFINITION)
+		if not ensured.ok then
+			Open77.log.error(('[storage] column %s on %s could not be added: %s')
+				:format(tostring(spec.COLUMN), tostring(spec.TABLE),
+					tostring(ensured.detail or ensured.error)))
+			return false, ('%s.%s'):format(tostring(spec.TABLE), tostring(spec.COLUMN))
+		end
 	end
 	-- AN INDEX THAT WILL NOT GO ON IS A WARNING, NOT A BOOT FAILURE: every read
 	-- it speeds up still answers without it, by walking the table.

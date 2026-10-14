@@ -477,6 +477,11 @@ function glyphOf(branch: Branch, node: Node): string[] {
 }
 
 /** Whether a node is the legend: the last node of the apex trunk. */
+/** A locked tile is drawn without the frame (see the tile's `data-augmented-ui`). */
+function isLocked(node: Node): boolean {
+  return node.state === 'locked'
+}
+
 function isLegend(lane: Lane, node: Node): boolean {
   return lane.apex && lane.branch.nodes[lane.branch.nodes.length - 1] === node
 }
@@ -780,7 +785,7 @@ onUnmounted(() => {
       <div class="sizer" :style="plane.sizer">
         <div
           class="unit op-bay op-arete op-interlace"
-          data-augmented-ui="tl-clip br-clip border"
+          data-augmented-ui="tr-clip bl-clip border"
           :style="plane.unit"
         >
           <!-- THE TOP BAR: what the character is, what it holds to spend. -->
@@ -861,7 +866,7 @@ onUnmounted(() => {
                               || isLegend(lane, lane.cells[tier - 1].node!))
                             && lane.cells[tier - 1].node!.state !== 'locked'
                         }"
-                        :data-augmented-ui="lane.cells[tier - 1].node!.state === 'locked' ? undefined : 'tr-clip border'"
+                        :data-augmented-ui="isLocked(lane.cells[tier - 1].node!) ? undefined : 'tr-clip border'"
                         :style="{ '--op-slot': Math.min(12, bi + tier) }"
                         @click="select(lane.branch, lane.cells[tier - 1].node!)"
                       >

@@ -3,10 +3,11 @@ import { computed, nextTick, onUnmounted, onMounted, ref } from 'vue'
 import { emit } from '@/bridge/channel'
 import { report } from '@/bridge/diag'
 import { acquireFocus } from '@/bridge/focus'
-import { list, num, table, text } from '@/bridge/types'
+import { list, num, table, text, own } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
-import { setInputHeight, setInputOpen } from './state'
+import { useLocale } from '@/composables/useLocale'
+import { inputDrop, setFieldHeight, setInputHeight, setInputOpen } from './state'
 
 /**
  * THE CHAT INPUT LINE -- the modal half of the box.
@@ -41,6 +42,8 @@ const ANCHORS: Record<string, string> = {
   'top-center': 'anchor-top-center'
 }
 
+const { t } = useLocale()
+
 const open = ref(false)
 const draft = ref('')
 const maxLength = ref(240)
@@ -70,6 +73,7 @@ let stash = ''
 const HISTORY_CAP = 50
 
 const box = ref<HTMLElement | null>(null)
+const row = ref<HTMLElement | null>(null)
 const field = ref<HTMLInputElement | null>(null)
 let release: (() => void) | null = null
 let caretTimer: ReturnType<typeof setInterval> | null = null
@@ -218,6 +222,10 @@ function holdFocus(hold: boolean): void {
 function measure(): void {
   const element = box.value
   setInputHeight(element === null ? 0 : Math.round(element.getBoundingClientRect().height))
+  // The field row on its own, which is what decides how far the block drops clear of
+  // the log (`inputDrop` in state.ts). Measured in the same task the box opens in,
+  // before the first paint, so the block is never drawn at the old line first.
+  setFieldHeight(row.value === null ? 0 : Math.round(row.value.getBoundingClientRect().height))
 }
 
 function startSizing(): void {
@@ -226,6 +234,9 @@ function startSizing(): void {
     if (element === null) return
     measure()
     if (typeof ResizeObserver === 'undefined') return
+    // A second `open` while the box is up would otherwise orphan the first observer,
+    // still firing `measure` for the rest of the session.
+    if (sizer !== null) sizer.disconnect()
     sizer = new ResizeObserver(measure)
     sizer.observe(element)
   })
@@ -235,6 +246,7 @@ function stopSizing(): void {
   if (sizer !== null) sizer.disconnect()
   sizer = null
   setInputHeight(0)
+  setFieldHeight(0)
 }
 
 function show(): void {
@@ -467,7 +479,7 @@ useBridge('opx:chat:view', (payload: Payload) => {
     case 'config':
       maxLength.value = num(payload.maxLength, 240)
       placeholder.value = text(payload.placeholder)
-      anchor.value = ANCHORS[text(payload.anchor)] ?? 'anchor-bottom-left'
+      anchor.value = own(ANCHORS, text(payload.anchor)) ?? 'anchor-bottom-left'
       offset.value = num(payload.offset, 155)
       width.value = num(payload.width, 620)
       break
@@ -516,11 +528,11 @@ onUnmounted(() => {
     ref="box"
     class="chat-input"
     :class="anchor"
-    :style="{ '--chat-offset': `${offset}px`, '--chat-width': `${width}px` }"
+    :style="{ '--chat-offset': `${offset}px`, '--chat-width': `${width}px`, '--chat-drop': `${inputDrop}px` }"
   >
     <ul
       v-if="matches.length > 0"
-      class="chat-suggestions op-frame"
+      class="chat-suggestions"
       :class="{ 'is-signature': signature }"
       data-augmented-ui="tr-clip border"
     >
@@ -563,7 +575,11 @@ onUnmounted(() => {
          wall took the same way out: `HudVoice.vue` ("THE BLOOM IS NOT THE
          ANSWER") and `DownedView.vue` ("NO FILTER, ANYWHERE"). The frame, the
          arete and the 2px border are what say this box is live. -->
-    <div class="chat-field op-frame op-arete" data-augmented-ui="tr-clip border">
+    <!-- NOT `.op-frame`, though it is drawn like one: that preset carries the house
+         hover, and the field is under the cursor for as long as the chat is open --
+         a pointer resting on it dropped the lit 2px arete to the 1.5px hover frame.
+         The cut and the type colour it gave are restated below. -->
+    <div ref="row" class="chat-field op-arete" data-augmented-ui="tr-clip border">
       <span class="chat-caret" aria-hidden="true">&gt;</span>
       <input
         ref="field"
@@ -581,9 +597,9 @@ onUnmounted(() => {
            `212/240`: a budget is read when it starts to bind, not before. -->
       <span v-if="crowded" class="chat-count">{{ maxLength - draft.length }}</span>
       <span class="chat-hints">
-        <kbd v-if="matches.length > 0" class="cap op-cap" data-augmented-ui="tr-clip border">Tab</kbd>
-        <kbd class="cap op-cap" data-augmented-ui="tr-clip border">Enter</kbd>
-        <kbd class="cap op-cap" data-augmented-ui="tr-clip border">Esc</kbd>
+        <kbd v-if="matches.length > 0" class="cap op-cap" data-augmented-ui="tr-clip border">{{ t('chat.key.tab') }}</kbd>
+        <kbd class="cap op-cap" data-augmented-ui="tr-clip border">{{ t('chat.key.enter') }}</kbd>
+        <kbd class="cap op-cap" data-augmented-ui="tr-clip border">{{ t('chat.key.escape') }}</kbd>
       </span>
     </div>
   </div>
@@ -635,9 +651,12 @@ onUnmounted(() => {
     0 0 6px rgba(0, 0, 0, 0.65);
 }
 
+/* `--chat-drop` is how far the field row overruns the room the log leaves for it
+   (see `inputDrop` in state.ts): the input hangs that much lower so the log does
+   not have to move when the box opens (#120). Only bottom anchors take it. */
 .anchor-bottom-left {
   left: var(--op-inset-x);
-  bottom: calc(var(--chat-offset) - var(--op-space-6));
+  bottom: calc(var(--chat-offset) - var(--op-space-6) - var(--chat-drop, 0px));
 }
 
 /* Centred on the screen's axis rather than pinned to the left inset, so the box
@@ -646,7 +665,7 @@ onUnmounted(() => {
 .anchor-bottom-center {
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--chat-offset) - var(--op-space-6));
+  bottom: calc(var(--chat-offset) - var(--op-space-6) - var(--chat-drop, 0px));
 }
 
 /* AT THE TOP THE INPUT LINE SITS ON THE OFFSET ITSELF and the log is pushed
@@ -693,6 +712,8 @@ onUnmounted(() => {
      the street behind it is moving. It is the one surface where the ground is
      worth more than the openness. */
   background: rgba(var(--op-plate-rgb), 0.92);
+  color: var(--op-red-text);
+  --aug-tr: var(--op-cut-sm);
   --aug-border-all: 2px;
 }
 
@@ -744,6 +765,10 @@ onUnmounted(() => {
      would square the chamfer back up; augmented-ui clips the element, so the
      ground is the cut shape and nothing has to be painted into a sprite. */
   background: var(--op-plate);
+  /* What `.op-frame` gave it, without the hover: a list of completions is not
+     pressed, so it does not light under the pointer as a button would. */
+  color: var(--op-red-text);
+  --aug-tr: var(--op-cut-sm);
 }
 
 /* Nothing is filled, so the marked row is marked by its leading rule going lit

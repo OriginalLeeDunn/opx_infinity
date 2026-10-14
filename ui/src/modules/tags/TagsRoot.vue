@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef } from 'vue'
 import { report } from '@/bridge/diag'
-import { bool, list, num, table, text } from '@/bridge/types'
+import { bool, list, num, table, text, records } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
 
@@ -202,7 +202,7 @@ useBridge('opx:admin:tags', (payload: Payload) => {
       staffLabel.value = text(payload.staffLabel)
       break
     case 'rows':
-      rows.value = list<Payload>(payload.rows)
+      rows.value = records(payload.rows)
         .map((raw) => ({
           anchor: text(raw.anchor),
           playerId: Math.round(num(raw.playerId)),

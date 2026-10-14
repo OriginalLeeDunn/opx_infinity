@@ -77,11 +77,15 @@ OPX.Config.MODULES.target = {
 	-- THE OWNER: "en gors avec alt sur un joeuru tu peux recup c'est identifiant
 	-- donc id serveur est id perso c'est tous".
 	--
-	-- One row on another player that answers with their two identifiers and puts
-	-- them on the clipboard. Two, because they are different things and both get
-	-- asked for: the SERVER id is the number in the journal and in every staff
-	-- command, and it is only that player's until they disconnect; the CHARACTER
-	-- id is durable and identifies a person for as long as the character exists.
+	-- One row on another player that answers with their SERVER id and puts it on
+	-- the clipboard: the number in the journal and in every staff command, only
+	-- that player's until they disconnect -- what a report to staff needs.
+	--
+	-- THE CHARACTER ID WAS THE SECOND HALF, AND IT IS GONE. It is durable and
+	-- names a person for as long as the character exists, which is exactly what a
+	-- stranger must not be handed: never a name to a stranger, the owner's later
+	-- decision (#91), and a citizen id is a name with fewer letters. Staff read it
+	-- on the staff name tags and in every staff tool, behind the ACL.
 	--
 	-- IT IS THE EYE'S OWN ROW AND NOT THE CHARACTER MODULE'S, and that is forced
 	-- rather than chosen: `character` cannot depend on `target`, because `target`
@@ -90,9 +94,8 @@ OPX.Config.MODULES.target = {
 	-- The eye already starts after the character module for the same reason, so it
 	-- can read the contract with no ordering of its own.
 	--
-	-- NOTHING PRIVATE CROSSES ANYTHING. Both values are already on this client:
-	-- the character id is replicated on the player's own state bag, which is what
-	-- draws their nameplate. This row reads what is already here and copies it.
+	-- NOTHING CROSSES THE WIRE FOR IT. The server id is what the eye already
+	-- resolved for the body under the crosshair.
 	IDENTIFY = {
 		-- Whether the row is offered at all.
 		ENABLED = true,

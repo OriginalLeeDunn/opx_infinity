@@ -58,3 +58,29 @@ export function table(value: unknown): Record<string, unknown> {
     ? (value as Record<string, unknown>)
     : {}
 }
+
+/**
+ * A list of RECORDS: `list()` plus `table()` on every element.
+ *
+ * `records()` only proves the outer value is an array. A Lua sequence with a hole
+ * in it arrives as `[a, null, b]`, and the first `row.id` on the null throws halfway
+ * through an apply -- after some fields are already written, so the view is left
+ * half-updated (or, on an open, invisible while Lua believes it is up). Each element is
+ * coerced in place rather than filtered out, so a row keeps its index: several views
+ * address rows by the position Lua gave them.
+ */
+export function records(value: unknown): Payload[] {
+  return list(value).map(table)
+}
+
+/**
+ * `map[key]`, but only for the map's OWN keys.
+ *
+ * Every closed lookup table here is an object literal, and an object literal inherits
+ * from `Object.prototype`: a Lua string of `"constructor"` or `"toString"` reads back a
+ * FUNCTION instead of `undefined`, slips past the `?? fallback`, and the first string
+ * method called on it throws in the middle of a render.
+ */
+export function own<T>(map: Record<string, T>, key: string): T | undefined {
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined
+}

@@ -36,11 +36,14 @@ end
 -- @param nameKey string catalogue key of the pause menu name
 -- @param key string|false
 -- @param onPressed function
+-- @param wants function|nil enters the mapping into the contest for its key;
+--   see `OPX.Spots.Key.Owns`
 -- @return boolean
-function Keys.Register(id, nameKey, key, onPressed)
+function Keys.Register(id, nameKey, key, onPressed, wants)
 	if key == false then return false end
 	local function pressed()
 		if captured() then return end
+		if not OPX.Spots.Key.Owns(id) then return end
 		local ran, failure = pcall(onPressed)
 		if not ran then
 			Open77.log.error(('[animations] key %s: %s'):format(id, tostring(failure)))
@@ -58,6 +61,9 @@ function Keys.Register(id, nameKey, key, onPressed)
 		return false
 	end
 	registered[id] = effective or key
+	if wants ~= nil then
+		OPX.Spots.Key.Contend({ tag = 'animations', id = id, default = key, wants = wants })
+	end
 	return true
 end
 

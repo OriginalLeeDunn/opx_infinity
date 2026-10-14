@@ -237,17 +237,6 @@ function Access.PreviewFromDefinition(key, raw)
 	return Access.AttachPreview(spot, raw)
 end
 
---- Normalises one preview point off the wire.
--- @author XEROX710
--- @param raw any
--- @return table|nil
--- @return string|nil
-function Access.PreviewFromWire(raw)
-	local spot, why = OPX.Spots.FromWire(PREVIEW_SPEC, raw)
-	if spot == nil then return nil, why end
-	return Access.AttachPreview(spot, raw)
-end
-
 --- Hangs the two fields the shared record knows nothing about onto a preview.
 -- @author XEROX710
 --
@@ -276,17 +265,6 @@ function Access.AttachPreview(spot, raw)
 	spot.dealer = dealer
 	spot.entry = entry
 	return spot
-end
-
---- The fields of one preview point as the wire carries them.
--- @author XEROX710
--- @param spot table
--- @return table
-function Access.PreviewWire(spot)
-	local wire = OPX.Spots.Serialise(spot)
-	wire.dealer = spot.dealer
-	wire.entry = spot.entry
-	return wire
 end
 
 --- Builds a key -> preview table from a block of `PREVIEW.POINTS` definitions.

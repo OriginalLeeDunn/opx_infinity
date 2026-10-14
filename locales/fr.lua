@@ -3,12 +3,21 @@
 
 OPX.Locale.Register('fr', {
 	['error.unavailable'] = "Ce n'est pas disponible pour le moment.",
-	['error.badRequest'] = "Cette requete n'a pas pu etre lue.",
-	['error.payloadRefused'] = 'Cette reponse etait trop volumineuse pour etre affichee.',
+	['error.badRequest'] = "Cette requête n'a pas pu être lue.",
+	['error.payloadRefused'] = 'Cette réponse était trop volumineuse pour être affichée.',
 	['error.rpc_timeout'] = 'Cela a pris trop de temps. Réessayez.',
 	['error.rpc_failed'] = "Cela n'a pas abouti.",
 	['error.tooFast'] = 'Doucement.',
 	['error.noPermission'] = 'Vous ne pouvez pas faire cela.',
+	['error.incapacitated'] = 'Pas pendant que vous êtes à terre.',
+	['money.amount'] = '{amount} {currency}',
+	['money.separator'] = ' ',
+	['money.type.EDDIES'] = '€$',
+	['money.type.BANK'] = '€$ (banque)',
+	['notify.kind.info'] = 'INFO',
+	['notify.kind.success'] = 'FAIT',
+	['notify.kind.warning'] = 'ATTENTION',
+	['notify.kind.error'] = 'ÉCHEC',
 })
 
 -- The creator surface: what an export answers another resource when it refuses.
@@ -21,6 +30,9 @@ OPX.Locale.Register('fr', {
 	['export.badValue'] = "Cette valeur n'est pas une donnée simple : booléens, nombres, texte et tables de ceux-ci.",
 	['export.tooLarge'] = "Cette valeur dépasse la taille que ce serveur accorde à une ressource.",
 	['export.notSubscribable'] = "Cet événement n'est pas de ceux auxquels une autre ressource peut s'abonner.",
+	['export.ownerTaken'] = "Cette ressource porte le nom d'un module de ce serveur, dont elle partagerait les lignes.",
+	['export.duplicate'] = "Ce message exact vient d'être montré à ce joueur.",
+	['export.usableTaken'] = "Un autre propriétaire gère déjà l'utilisation de cet objet.",
 })
 
 -- Weather: the status line a player reads, the command usage lines and every

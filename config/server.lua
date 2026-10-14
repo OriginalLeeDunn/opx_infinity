@@ -14,12 +14,16 @@ OPX.Config.SERVER = {
 	-- written to the audit log with the name it came from.
 	--
 	--   READ     who may ASK: GetPlayerData, GetMoney, HasJob, HasItem, IsStaff
-	--            and the other reads. '*' is every resource on the host -- the
-	--            answers are what the player state bag already publishes, plus a
-	--            balance and a bag count -- or a set: { my_hud = true }.
+	--            and the other reads. '*' is every resource on the host, or a
+	--            set: { my_hud = true }. The answers name characters, jobs, gangs
+	--            and balances: a resource that hands them on to clients hands
+	--            them to strangers, and never a name to a stranger is the owner's
+	--            rule -- the state bag stopped carrying any of it for that reason.
 	--   WRITERS  who may CHANGE something: money, items, stashes, chat lines,
-	--            keys, a vehicle's state, a job, a gang, duty, a revive, and
-	--            the caller's own character metadata. EMPTY OUT OF THE BOX, on purpose: a
+	--            keys, a vehicle's state, a job, a gang, duty, a revive, the
+	--            caller's own character metadata, a runtime item or use handler,
+	--            a vehicle row, a toast, a server-started bar and a crafting
+	--            bench. EMPTY OUT OF THE BOX, on purpose: a
 	--            write export is a money printer for whichever resource holds
 	--            it, and the operator is the one who decides which of the
 	--            resources they installed is trusted with that. The first refused
@@ -50,6 +54,11 @@ OPX.Config.SERVER = {
 		-- opx's own keys; these bound how much: the encoded size of one value,
 		-- how many keys, and the encoded size of all of them together.
 		METADATA = { MAX_BYTES = 4096, MAX_KEYS = 32, MAX_TOTAL_BYTES = 16384 },
+		-- WHAT `RegisterItem` LETS ONE RESOURCE ADD TO THE CATALOGUE while the
+		-- server runs: at most MAX_PER_CALLER items. A runtime item is never a
+		-- weapon, never replaces a config item or another resource's, and is not
+		-- persisted -- the resource registers it again on every start.
+		ITEMS = { MAX_PER_CALLER = 64 },
 	},
 
 	-- Short spellings, so `opx.admin.self.noclip` can also be typed `noclip`.

@@ -52,14 +52,11 @@ M.Event = {
 	-- anywhere.
 	OPEN = OPX.Event(NET, 'shops', 'open'),
 
-	-- Client to server. "I closed the room at this shop having changed these
-	-- slots." The slot list is the only part the client is believed about.
-	BILL = OPX.Event(NET, 'shops', 'bill'),
-
-	-- Server to client. A bill that could not be taken: put this look back on.
-	-- Carries the whole record rather than the slots, because the client's own
-	-- idea of what it walked in wearing is exactly what is in doubt by then.
-	RESTORE = OPX.Event(NET, 'shops', 'restore'),
+	-- `BILL` and `RESTORE` were here: the client reported the slots it changed
+	-- and the server charged them after the fact. The fitting room this module
+	-- opens is priced now, and `appearance` charges its save before writing it
+	-- (see `chargeFor` in server/main.lua); a refused charge puts the stored look
+	-- back through the clothing half's own restart.
 
 	-- Server to client. The ready-made looks this shop carries FOR THIS PLAYER
 	-- -- the job gate is applied before the list is sent, so a uniform nobody

@@ -47,6 +47,10 @@ local REFUSAL = {
 	no_position = 'elevators.noPosition',
 	wrong_bucket = 'elevators.wrongBucket',
 	too_far = 'elevators.tooFar',
+	-- The server's own down check. The sentence existed and was reached only by
+	-- the client's `player_down`, so a refusal from the server read as the
+	-- generic "the lift refused".
+	downed = 'elevators.downed',
 }
 
 -- The operator's REASON, or this module's wording for the code.
@@ -58,20 +62,21 @@ end
 
 -- Writes a refusal as a chat line when no toast is possible. Optional: without
 -- the chat contract it is a log line and nothing else.
-local function chatLine(message)
+local function chatLine(message, kind)
 	local chat = OPX.Api.Get('chat')
 	if chat == nil or type(chat.AddMessage) ~= 'function' then
 		Open77.log.info('[elevators] ' .. message)
 		return
 	end
-	chat.AddMessage({ kind = 'error', author = locale('elevators.title'), text = message })
+	chat.AddMessage({ kind = kind or 'error', author = locale('elevators.title'), text = message })
 end
 
 -- Shows a refusal as one replaced toast, or as a chat line otherwise.
-local function toast(message)
+local function toast(message, code)
+	local kind = OPX.Result.Kind(code, 'error')
 	local raised = OPX.Toast.Show({
 		id = 'opx.elevators.answer',
-		kind = 'error',
+		kind = kind,
 		title = locale('elevators.title'),
 		message = message,
 		durationMs = 5000,
@@ -81,7 +86,7 @@ local function toast(message)
 		notifyReported = true
 		Open77.log.warn('[elevators] no toast: refusals go to the chat box instead')
 	end
-	chatLine(message)
+	chatLine(message, kind)
 end
 
 -- Forward-declared: the menu spec carries this callback, and it is written below
@@ -117,6 +122,14 @@ end
 -- @param key string|nil
 -- @return table
 function Panel.Open(key)
+	-- WHERE FIRST, THEN WHETHER. The lift key is E, shared by every place in the
+	-- city, and the door keeps "no lift here" silent for a key press. Asked after
+	-- the down and menu checks, a press anywhere on the map while one of those
+	-- failed answered `player_down` or `menu_not_running` -- a toast about lifts
+	-- to a player standing nowhere near one.
+	local listing = Runtime.Floors(key)
+	if not listing.ok then return listing end
+
 	-- The down screen is the answer; a panel over it could not be worked anyway.
 	if isDown() then return { ok = false, error = 'player_down' } end
 
@@ -124,9 +137,6 @@ function Panel.Open(key)
 	if api == nil or type(api.Open) ~= 'function' then
 		return { ok = false, error = 'menu_not_running' }
 	end
-
-	local listing = Runtime.Floors(key)
-	if not listing.ok then return listing end
 	local elevator = Access.Elevator(listing.elevator)
 	if #listing.floors == 0 then
 		return { ok = false, error = 'no_floors_available', elevator = listing.elevator }
@@ -195,7 +205,7 @@ local function onDecision(payload)
 	if type(payload) ~= 'table' or openFor == nil or payload.elevator ~= openFor then return end
 	openFor = nil
 	if payload.ok == true then return end
-	toast(refusal(payload))
+	toast(refusal(payload), payload.error)
 end
 
 --- Clears the panel state.

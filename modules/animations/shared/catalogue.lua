@@ -8,6 +8,15 @@
 -- `STEM` is the part every clip of an entry shares; each `VARIANTS` line is
 -- appended to it and also renders the words shown beside "Variant n". The first
 -- line is the default variant.
+--
+-- THE WRITTEN ROWS ARE NOT THE WHOLE CATALOGUE. The platform ships its own --
+-- `RpAnimationCatalog` in open77_animations, a hundred-odd profiles on op77.123
+-- -- and the server reads it at runtime with `Open77.animations.list`, then
+-- ADOPTS every profile not written here (`Catalogue.Adopt`); the client adopts
+-- the same rows off the offer. It is read rather than copied so a profile a new
+-- build adds is offered without a release. A written row wins over the
+-- platform's profile of the same id: it carries a translated label, a walking
+-- pace and a curated variant list.
 
 local M = OPX.Modules.Get('animations')
 
@@ -15,8 +24,12 @@ M.Catalogue = {}
 local Catalogue = M.Catalogue
 
 --- Categories in the order the picker draws them.
-Catalogue.CATEGORIES = { 'gestures', 'social', 'emotions', 'relaxation', 'consumables',
-	'interactions' }
+--
+-- No category may share a name with a profile: `/e <word>` reads a category as
+-- "open the picker there", and the platform has profiles called `dance` and
+-- `seated`. Hence `music` and `sitting` rather than the platform's own words.
+Catalogue.CATEGORIES = { 'gestures', 'onthemove', 'social', 'emotions', 'postures',
+	'sitting', 'relaxation', 'music', 'consumables', 'work', 'interactions', 'other' }
 
 --- The glyph each category is drawn with, and the one every emote in it falls
 --- back to. A name outside `menu.M.ICONS` would REFUSE the whole picker screen
@@ -24,11 +37,35 @@ Catalogue.CATEGORIES = { 'gestures', 'social', 'emotions', 'relaxation', 'consum
 --- lands on.
 Catalogue.CATEGORY_ICONS = {
 	gestures = 'emote',
+	onthemove = 'arrow',
 	social = 'talk',
 	emotions = 'heart',
+	postures = 'person',
+	sitting = 'location',
 	relaxation = 'heal',
+	music = 'star',
 	consumables = 'drink',
+	work = 'tool',
 	interactions = 'interact',
+	other = 'list',
+}
+
+--- The platform's category words, mapped onto the picker's. A word missing
+--- here -- one a later build introduces -- files its profiles under `other`
+--- rather than dropping them.
+Catalogue.PLATFORM_CATEGORIES = {
+	gestures = 'gestures',
+	onthemove = 'onthemove',
+	social = 'social',
+	emotions = 'emotions',
+	postures = 'postures',
+	seated = 'sitting',
+	relaxation = 'relaxation',
+	dance = 'music',
+	music = 'music',
+	consumables = 'consumables',
+	work = 'work',
+	interactions = 'interactions',
 }
 
 -- The glyphs an entry's own ICON may name. A CLOSED set for the reason above,
@@ -47,7 +84,7 @@ local ENTRIES = {
 		STEM = 'stand__2h_on_sides__01__2h_clap__',
 		VARIANTS = { 'happy__01', 'broad__01', 'narrow__01' } },
 
-	{ NAME = 'dance', CATEGORY = 'social', PLACEMENT = 'standing', ICON = 'emote',
+	{ NAME = 'dance', CATEGORY = 'music', PLACEMENT = 'standing', ICON = 'emote',
 		STEM = 'stand__dance__02__',
 		VARIANTS = { 'dancing__02', 'dancing__03', 'dancing__04', 'dancing__05', 'dancing__07',
 			'dancing__08' } },
@@ -129,6 +166,9 @@ for index = 1, #ENTRIES do
 		byName[name] == nil then
 		local entry = {
 			name = name,
+			-- Written here, as opposed to adopted from the platform's list.
+			written = true,
+			kind = 'workspot',
 			category = row.CATEGORY,
 			-- The entry's own glyph where it has one worth having -- a cigarette
 			-- for `smoke`, a can for `drink` -- and its category's otherwise, so
@@ -192,11 +232,20 @@ function Catalogue.Entry(name)
 	return byName[name:lower()]
 end
 
---- Answers every entry, in category order then as written.
+-- Adopted platform entries, in the order the platform listed them, and the
+-- written entries followed by those, rebuilt only when asked after a change.
+local adopted, merged = {}, nil
+
+--- Answers every entry: the written ones as written, then the adopted ones as
+--- the platform listed them. The picker orders by category itself.
 -- @author dop42
 -- @return table[]
 function Catalogue.Entries()
-	return ordered
+	if merged == nil then
+		merged = table.move(ordered, 1, #ordered, 1, {})
+		table.move(adopted, 1, #adopted, #merged + 1, merged)
+	end
+	return merged
 end
 
 --- Whether a value names a category, without case.
@@ -216,4 +265,277 @@ function Catalogue.VariantOf(name, clip)
 	local entry = Catalogue.Entry(name)
 	if entry == nil or type(clip) ~= 'string' then return nil end
 	return entry.variantOf[clip]
+end
+
+-- ── the platform's own catalogue ────────────────────────────────────────────
+--
+-- Everything below turns one profile of `Open77.animations.list` into an entry
+-- the picker, the commands and the contract treat exactly like a written one.
+-- The server builds a DEFINITION from the profile and adopts it; the same
+-- definition travels to every client on the offer and is adopted there too, so
+-- both halves agree on what a name and a variant number mean.
+
+-- Clips an adopted entry keeps; the largest profile on op77.123 has 37.
+local MAX_CLIPS = 64
+
+-- A label is a short sentence; a category, a placement and a prop are words.
+local MAX_LABEL, MAX_WORD = 64, 32
+
+-- The words a `validation` field carries when the platform says a profile does
+-- NOT work. The guide documents none of them: every profile on op77.123 reads
+-- `asset_verified_runtime_pending` or `graph_verified_runtime_pending`, which
+-- it calls experimental, not unusable -- so those are offered. A later build
+-- that marks one failed or unsupported has it skipped without a release.
+local UNUSABLE = { 'fail', 'broken', 'unsupported', 'unusable', 'rejected', 'disabled',
+	'removed' }
+
+-- The glyph an adopted entry is drawn with, by the platform's prop word.
+local PROP_ICONS = { cigarette = 'smoke', cigar = 'smoke', can = 'drink', bottle = 'drink',
+	takeout = 'food', phone = 'talk', headphones = 'star', handpan = 'star', guitar = 'star' }
+
+-- Mode words of a layer that plays once rather than holding.
+local ONCE_MODES = { once = true, enter = true, exit = true }
+
+--- Whether a profile's `validation` word lets it be offered.
+-- @author dop42
+-- @param validation any
+-- @return boolean
+function Catalogue.Usable(validation)
+	if validation == nil then return true end
+	if type(validation) ~= 'string' then return false end
+	local lowered = validation:lower()
+	for index = 1, #UNUSABLE do
+		if lowered:find(UNUSABLE[index], 1, true) then return false end
+	end
+	return true
+end
+
+-- Cuts a clip prefix back to the boundary before its last `__` token:
+-- 'stand__rh_cigarette__01__' becomes 'stand__rh_cigarette__'.
+local function shorter(prefix)
+	local trimmed = prefix:gsub('_+$', '')
+	return trimmed:match('^(.*__)') or ''
+end
+
+--- Answers the variant words of a clip list: what follows the stem the clips
+--- share, read the way a written row's VARIANTS line is.
+-- @author dop42
+-- @param clips string[]
+-- @return string[]
+function Catalogue.WordsOf(clips)
+	local stem = #clips > 1 and (clips[1]:match('^(.*__)') or '') or ''
+	for index = 2, #clips do
+		local clip = clips[index]
+		while #stem > 0 and clip:sub(1, #stem) ~= stem do stem = shorter(stem) end
+	end
+	local spoken = {}
+	for index = 1, #clips do
+		local suffix = clips[index]:sub(#stem + 1)
+		spoken[index] = words(suffix ~= '' and suffix or clips[index])
+	end
+	return spoken
+end
+
+-- A short lower-case word, or nil.
+local function word(value)
+	if type(value) ~= 'string' or #value == 0 or #value > MAX_WORD then return nil end
+	return value:match('^[%l%d_]+$') and value or nil
+end
+
+--- Answers the definition of one platform profile, or nil and why not.
+-- Server side: the profile is a row of `Open77.animations.list`. A malformed
+-- one is refused rather than raised on, and so is one the platform says does
+-- not work.
+-- @author dop42
+-- @param profile any
+-- @return table|nil
+-- @return string|nil
+function Catalogue.Definition(profile)
+	if type(profile) ~= 'table' then return nil, 'malformed' end
+	local name = profile.id
+	if type(name) ~= 'string' or #name > MAX_NAME or not name:match('^[%l%d_]+$') then
+		return nil, 'malformed'
+	end
+	if not Catalogue.Usable(profile.validation) then return nil, 'unusable' end
+	local kind = profile.kind
+	if kind ~= 'layer' and kind ~= 'workspot' then return nil, 'unknown_kind' end
+	local source = type(profile.clips) == 'table' and profile.clips or profile.clipNames
+	if type(source) ~= 'table' then return nil, 'no_clips' end
+	local clips, seen = {}, {}
+	for index = 1, math.min(#source, MAX_CLIPS) do
+		local clip = source[index]
+		if M.Common.Text(clip, MAX_CLIP) and not seen[clip] then
+			seen[clip] = true
+			clips[#clips + 1] = clip
+		end
+	end
+	if #clips == 0 then return nil, 'no_clips' end
+	-- Measured per clip by the platform, and only for layers: what a one-shot
+	-- gesture is scheduled for instead of the configured ONE_SHOT_MS.
+	local durations = {}
+	if type(profile.clipDurationsMs) == 'table' then
+		for index = 1, #clips do
+			durations[index] = M.Common.Integer(profile.clipDurationsMs[clips[index]], 1,
+				M.SERVICE_MAX_MS)
+		end
+	end
+	return {
+		name = name,
+		label = M.Common.Text(profile.label, MAX_LABEL) and profile.label or name,
+		category = word(profile.category) or 'other',
+		kind = kind,
+		placement = word(profile.placement) or 'standing',
+		prop = word(profile.prop) or '',
+		mode = kind == 'layer' and word(profile.mode) or '',
+		clips = clips,
+		words = Catalogue.WordsOf(clips),
+		durations = durations,
+	}, nil
+end
+
+--- Registers one platform definition as an entry, answering it, or nil and
+--- why not. A name already taken -- a written row, or one adopted before --
+--- keeps what it was.
+-- @author dop42
+-- @param definition any a `Catalogue.Definition`, or the same off the wire
+-- @return table|nil
+-- @return string|nil
+function Catalogue.Adopt(definition)
+	if type(definition) ~= 'table' then return nil, 'malformed' end
+	local name = definition.name
+	if type(name) ~= 'string' or #name > MAX_NAME or not name:match('^[%l%d_]+$') then
+		return nil, 'malformed'
+	end
+	if byName[name] ~= nil then return nil, 'duplicate' end
+	local kind = definition.kind
+	if kind ~= 'layer' and kind ~= 'workspot' then return nil, 'malformed' end
+	if type(definition.clips) ~= 'table' or #definition.clips == 0
+		or #definition.clips > MAX_CLIPS then
+		return nil, 'malformed'
+	end
+	local source = word(definition.category) or 'other'
+	local category = Catalogue.PLATFORM_CATEGORIES[source] or 'other'
+	local prop = word(definition.prop)
+	local spoken = type(definition.words) == 'table' and definition.words or {}
+	local entry = {
+		name = name,
+		written = false,
+		kind = kind,
+		label = M.Common.Text(definition.label, MAX_LABEL) and definition.label or name,
+		category = category,
+		source = source,
+		icon = (prop and PROP_ICONS[prop]) or Catalogue.CATEGORY_ICONS[category] or 'emote',
+		prop = prop,
+		placement = word(definition.placement) or 'standing',
+		-- A layer keeps the player's own locomotion, so it needs no walking pace;
+		-- a workspot the platform cancels at half a metre gets none either.
+		walk = nil,
+		-- One gesture, then done: a wave is not held for ten seconds.
+		once = kind == 'layer' and ONCE_MODES[definition.mode] == true,
+		durations = type(definition.durations) == 'table' and definition.durations or {},
+		clips = {},
+		words = {},
+		variantOf = {},
+	}
+	for index = 1, #definition.clips do
+		local clip = definition.clips[index]
+		if not M.Common.Text(clip, MAX_CLIP) or entry.variantOf[clip] ~= nil then
+			return nil, 'malformed'
+		end
+		entry.clips[index] = clip
+		entry.variantOf[clip] = index
+		local said = spoken[index]
+		entry.words[index] = (type(said) == 'string' and #said <= MAX_LABEL
+			and not said:find('%c')) and said or ''
+	end
+	byName[name] = entry
+	adopted[#adopted + 1] = entry
+	merged = nil
+	return entry, nil
+end
+
+--- Answers an adopted entry's definition in the shape the offer carries it:
+--- no durations, which only the server schedules with.
+-- @author dop42
+-- @param entry table
+-- @return table
+function Catalogue.Wire(entry)
+	return {
+		name = entry.name,
+		label = entry.label,
+		category = entry.source,
+		kind = entry.kind,
+		placement = entry.placement,
+		prop = entry.prop or '',
+		mode = entry.once and 'once' or '',
+		clips = entry.clips,
+		words = entry.words,
+	}
+end
+
+--- Drops every adopted entry, so a fresh offer replaces them rather than
+--- adding to them. The written rows stay.
+-- @author dop42
+function Catalogue.Forget()
+	for index = 1, #adopted do byName[adopted[index].name] = nil end
+	adopted, merged = {}, nil
+end
+
+--- How many entries were adopted from the platform.
+-- @author dop42
+-- @return integer
+function Catalogue.AdoptedCount()
+	return #adopted
+end
+
+--- Answers the name a player reads for an entry. A written row, or a platform
+--- profile the locale files translate, reads its catalogue key; any other
+--- platform profile reads the platform's own label, which is English.
+-- @author dop42
+-- @param entry table
+-- @return string
+function Catalogue.Label(entry)
+	local key = 'animations.name.' .. entry.name
+	if entry.written or OPX.Locale.Exists(key) then return locale(key) end
+	return entry.label or entry.name
+end
+
+-- ── the platform's two-player presentations ─────────────────────────────────
+--
+-- `Open77.playerInteractions` drives five kinds. Four have a presentation of
+-- their own -- `give` and `heal` with their default profiles, `carry` and
+-- `escort` with a FIXED paired one that walks (the carried body follows the
+-- carrier; the coordinator rejects a profile override on either) -- and the
+-- fifth, `custom`, plays any catalogue profile on each body.
+--
+-- Each row here is one way to ask for one of the four, from the asker's side.
+-- `swap` means the asker is the coordinator's TARGET: "be carried" is a carry
+-- whose actor is the invited player. `mirror` is the row the invited player
+-- reads, which is the same interaction seen from the other body. `profiles`
+-- are the catalogue ids the presentation is made of: one in DISABLED withholds
+-- the row, and so does DISABLED naming the row's own id.
+Catalogue.DUO_KINDS = {
+	{ id = 'carry', kind = 'carry', swap = false, mirror = 'carried', profiles = { 'carry' } },
+	{ id = 'carried', kind = 'carry', swap = true, mirror = 'carry', profiles = { 'carry' } },
+	{ id = 'escort', kind = 'escort', swap = false, mirror = 'escorted', profiles = {} },
+	{ id = 'escorted', kind = 'escort', swap = true, mirror = 'escort', profiles = {} },
+	{ id = 'give', kind = 'give', swap = false, mirror = 'give', profiles = { 'give' } },
+	{ id = 'heal', kind = 'heal', swap = false, mirror = 'healed',
+		profiles = { 'examine', 'wounded' } },
+	{ id = 'healed', kind = 'heal', swap = true, mirror = 'heal',
+		profiles = { 'examine', 'wounded' } },
+}
+
+local duoKindById = {}
+for index = 1, #Catalogue.DUO_KINDS do
+	local row = Catalogue.DUO_KINDS[index]
+	duoKindById[row.id] = row
+end
+
+--- Answers the paired-kind row of an id, or nil.
+-- @author dop42
+-- @param id any
+-- @return table|nil
+function Catalogue.DuoKind(id)
+	return type(id) == 'string' and duoKindById[id] or nil
 end

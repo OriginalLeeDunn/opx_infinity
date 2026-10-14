@@ -89,9 +89,25 @@ CREATE TABLE IF NOT EXISTS opx77_inventory_items (
 }
 
 -- Item rows one INSERT carries inside a save. Past this the rows of one container
--- go out as several statements of the same transaction, which keeps each
--- statement's parameter list short.
-local ROWS_PER_INSERT = 50
+-- go out as several statements of the same transaction.
+--
+-- TWELVE, BECAUSE THE BRIDGE BINDS AT MOST 64 PARAMETERS A STATEMENT. The cards
+-- for `Open77.database.update` and `.transaction` (since op77.45) state it, and
+-- the bridge refuses the whole request before it leaves -- `.await` raises
+-- `too_many_parameters`. This was 50, five values a row: 250 parameters, so
+-- every container holding more than twelve stacks could never be written. The
+-- write failed, the container stayed dirty, the sweep retried it for ever and
+-- stopped at that batch -- taking every container batched with it down too --
+-- and a restart lost everything moved since the bag was loaded. 12 x 5 = 60.
+local VALUES_PER_ROW = 5
+local MAX_PARAMETERS = 64
+local ROWS_PER_INSERT = MAX_PARAMETERS // VALUES_PER_ROW
+
+-- Statements one transaction may carry, by the same cards: 1 to 64, refused
+-- whole (`invalid_transaction`) past that. A container is never split across
+-- two transactions -- half a container is not a state anything may read -- so a
+-- save of several containers goes out as several transactions instead.
+local MAX_STATEMENTS = 64
 
 -- Stacks one page of `Contents` reads. A page is bounded so a container nobody
 -- expected to be large cannot become one query that holds a connection.
@@ -224,7 +240,7 @@ SELECT slot, name, quantity, metadata FROM opx77_inventory_items
 	return Result.Ok(out)
 end
 
---- Rewrites every listed container's stacks as one unit.
+--- Rewrites every listed container's stacks, each container as one unit.
 -- A container is a DELETE, then the INSERTs, then the timestamp, all inside one
 -- transaction: half a container is not a state anything can read, and a container
 -- staged with no rows is a container that has been emptied.
@@ -237,21 +253,27 @@ end
 -- @param containers table[] each { id, rows }
 -- @return Result
 function Store.Save(containers)
-	local statements = {}
+	-- Each container's statements, kept together: they are one unit.
+	local groups = {}
 
-	local function add(query, values)
+	local function add(group, query, values)
 		local placeholders = 0
 		for _ in query:gmatch('%?') do placeholders = placeholders + 1 end
 		if placeholders ~= #values then
 			return ('%d placeholder(s) against %d value(s)'):format(placeholders, #values)
 		end
-		statements[#statements + 1] = { query = query, values = values }
+		if #values > MAX_PARAMETERS then
+			return ('%d value(s) in one statement, past the bridge\'s %d'):format(#values,
+				MAX_PARAMETERS)
+		end
+		group[#group + 1] = { query = query, values = values }
 		return nil
 	end
 
 	for c = 1, #containers do
 		local container = containers[c]
-		local wrong = add('DELETE FROM opx77_inventory_items WHERE inventory_id = ?',
+		local group = {}
+		local wrong = add(group, 'DELETE FROM opx77_inventory_items WHERE inventory_id = ?',
 			{ container.id })
 		if wrong then return Result.Err('bad-statement', wrong) end
 
@@ -267,18 +289,50 @@ function Store.Save(containers)
 				values[#values + 1] = row.count
 				values[#values + 1] = Storage.Nullable(row.metadata)
 			end
-			wrong = add('INSERT INTO opx77_inventory_items (inventory_id, slot, name, quantity, ' ..
-				'metadata) VALUES ' .. table.concat(placeholders, ', '), values)
+			wrong = add(group, 'INSERT INTO opx77_inventory_items (inventory_id, slot, name, ' ..
+				'quantity, metadata) VALUES ' .. table.concat(placeholders, ', '), values)
 			if wrong then return Result.Err('bad-statement', wrong) end
 		end
 
-		wrong = add('UPDATE opx77_inventories SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+		wrong = add(group, 'UPDATE opx77_inventories SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
 			{ container.id })
 		if wrong then return Result.Err('bad-statement', wrong) end
+
+		-- 744 stacks and more: no slot count this module hands out comes near
+		-- it, but a refusal named here beats one the bridge raises.
+		if #group > MAX_STATEMENTS then
+			return Result.Err('bad-statement', ('container %s needs %d statements, past %d')
+				:format(tostring(container.id), #group, MAX_STATEMENTS))
+		end
+		groups[#groups + 1] = group
 	end
 
-	if #statements == 0 then return Result.Ok(0) end
-	return Storage.Transaction(statements)
+	if #groups == 0 then return Result.Ok(0) end
+
+	-- Packed greedily into transactions of at most MAX_STATEMENTS. A failure
+	-- stops the save and is answered; the containers of a transaction that DID
+	-- commit before it are written again by the caller's retry, which rewrites
+	-- the same rows and costs nothing but the trip.
+	local batch = {}
+	local function flush()
+		if #batch == 0 then return nil end
+		local committed = Storage.Transaction(batch)
+		batch = {}
+		if not committed.ok then return committed end
+		return nil
+	end
+
+	for g = 1, #groups do
+		local group = groups[g]
+		if #batch + #group > MAX_STATEMENTS then
+			local failed = flush()
+			if failed then return failed end
+		end
+		for index = 1, #group do batch[#batch + 1] = group[index] end
+	end
+	local failed = flush()
+	if failed then return failed end
+	return Result.Ok(true)
 end
 
 --- Writes a container's slot count and weight limit.
@@ -579,9 +633,22 @@ function Store.Sweep()
 		for index = first, math.min(first + Options.SAVE_BATCH - 1, #due) do
 			batch[#batch + 1] = due[index]
 		end
-		-- A batch that failed because the database is not answering means the rest
-		-- of the pass would fail the same way; the sweep stops and tries again.
-		if not Store.Write(batch) then return end
+		-- ONE CONTAINER THAT CANNOT BE WRITTEN MUST NOT HOLD THE OTHERS HOSTAGE. A
+		-- batch is written as one save, so a single refused container -- a row a
+		-- purge removed under it, a value the database will not take -- failed
+		-- every container batched with it, and the `return` below then skipped
+		-- every later batch too, on every pass, for as long as that one stayed
+		-- dirty. A failed batch is retried one container at a time; only when
+		-- every one of those fails is it the database that is not answering, and
+		-- the rest of the pass would fail the same way.
+		if not Store.Write(batch) then
+			if #batch == 1 then return end
+			local wrote = false
+			for index = 1, #batch do
+				if Store.Write({ batch[index] }) then wrote = true end
+			end
+			if not wrote then return end
+		end
 	end
 end
 

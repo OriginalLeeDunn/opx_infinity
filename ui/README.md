@@ -10,9 +10,8 @@ block disagree, the style block is what ships and this file is out of date.
 **The stack is one direction, and only one:**
 
 ```
-augmented-ui          the shapes: every cut corner and every frame
-      ↓
-design-system/        the OPX vocabulary: tokens, presets, states, the plane
+design-system/        the shapes (every cut corner and every frame), then the OPX
+                      vocabulary on them: tokens, presets, states, the plane
       ↓
 modules/<name>/       what is true of THAT surface and of nothing else
 ```
@@ -36,7 +35,7 @@ perspective. It was drawn against IDEDARY/Bevypunk and settled on the menu.
 2. **A CONTROL IS A CLOSED BOX** -- a thin frame with the top-right corner chamfered.
    The converse is load-bearing: **what is not a control does not get a frame.** A
    readout is a line of type; a separator is a 1px rule. A frame means "press this".
-3. **augmented-ui DRAWS EVERY SHAPE.** One attribute, and the state is one custom
+3. **`shapes.css` DRAWS EVERY SHAPE.** One attribute, and the state is one custom
    property. See [The shapes](#the-shapes).
 4. **RED IS THE VOICE, SO RED CANNOT BE THE ALARM.** A red bar going redder inside a
    red frame says nothing. The escalation climbs in luminance and then leaves the hue:
@@ -64,8 +63,21 @@ perspective. It was drawn against IDEDARY/Bevypunk and settled on the menu.
 
 ## The shapes
 
-Every chamfer in the runtime is augmented-ui. An element says what it is with a
-preset class and asks for the border layer:
+Every chamfer in the runtime is drawn by the first block of `design-system/shapes.css`.
+It speaks augmented-ui's vocabulary -- the attribute, `--aug-tr`, `--aug-bl`,
+`--aug-border-all`, `--aug-border-bg` -- but the library itself is gone (#112): the
+templates only ever used three of its tokens, and its 130 kB core evaluated a polygon
+of some forty `calc()` points on every augmented element at every style recalc. The
+hand-written block is the same polygons for those three tokens, pixel for pixel, and
+the build refuses any other token (`guardAugmented` in `vite.config.ts`).
+
+| Token | What it draws |
+|---|---|
+| `tr-clip` | the top-right corner cut at 45deg, `--aug-tr` deep (15px if nothing sets it) |
+| `bl-clip` | the same at the bottom-left, `--aug-bl` |
+| `border` | the border layer on `::after`: a ring `--aug-border-all` wide, painted with `--aug-border-bg` |
+
+An element says what it is with a preset class and asks for the border layer:
 
 ```html
 <div class="row op-frame" data-augmented-ui="tr-clip border">
@@ -88,11 +100,14 @@ right-anchored surface. `.op-lift` is the bloom.
 
 ### What must be known before touching this
 
-- **A cut size is required.** An augmented element with no `--aug-tr` renders as a
-  plain rectangle and nothing warns you. Either carry a preset class or declare the
-  cut -- or inherit it from an ancestor, which is how `HudVitals` gives its gauge
-  track the same cut as its row.
-- **A clip shears an outset `box-shadow`.** augmented-ui clips the element, so a bloom
+- **Declare the cut on the element itself.** `tr-clip` sets `--aug-tr: 15px` on the
+  element it is written on, so an ancestor's `--aug-tr` never reaches it: carry a
+  preset class or declare the cut in the element's own rule. (`HudVitals` sets the
+  cut on the gauge row, and its track is drawn at the 15px default -- which is what
+  the owner signed off on, so it stays until someone decides otherwise.)
+- **One border width.** `--aug-border-all` is the only width there is; the library's
+  per-side `--aug-border-top` and friends were never used and are not implemented.
+- **A clip shears an outset `box-shadow`.** The element is clipped, so a bloom
   is `.op-lift` (a `drop-shadow`, which follows the cut) or it is nothing. Several
   files carried a written defence of `box-shadow` that was true only while they were
   unclipped; the defence went with the sprite.
@@ -147,8 +162,8 @@ exists**, so `theme.ts` is not loaded and no custom property ever reaches it —
 operator who changes `ACCENT` recolours everything except this page.
 
 It is therefore the one file allowed to declare tokens of its own: a hand copy in
-`:root`, labelled as a copy, listing only what the page uses. augmented-ui is inlined
-into it for the same reason, and because the client has no guaranteed internet.
+`:root`, labelled as a copy, listing only what the page uses. Its copy of augmented-ui is
+inlined into it for the same reason, and because the client has no guaranteed internet.
 
 Two consequences worth knowing before you touch it. **A change to `tokens.css` does not
 reach it** — mirror it by hand or the two drift. And `ui/public/` is a Vite public
@@ -188,7 +203,7 @@ keeps inside the path budget.
 
 `InventorySlot.vue` keeps a single SVG data URI, for the **drag** state: four corner
 brackets and no edges. That is a *shape class* change, not a colour change, and
-augmented-ui's border layer is a continuous ring around the clip path. The cell's
+the border layer is a continuous ring around the clip path. The cell's
 augmentation is therefore bound rather than static --
 `:data-augmented-ui="dragging ? undefined : 'tr-clip border'"` -- so the dragged cell
 is unclipped and its sprite paints the brackets whole.
@@ -215,6 +230,9 @@ under-stroke baked in because a `border-image` cannot take a shadow.
 **`overlay` vs `modal`** is declared per module in `boot/registry.ts` and decides
 style as much as behaviour. An overlay surface is never focused, takes no pointer, and
 has no backing of any kind; a modal surface takes focus and the cursor while open.
+Two more layers stack above them, neither taking a pointer: `notice` (the toasts, so a
+refusal is never dimmed under the scrim of the view that caused it) and `cover` (the
+loading cover, over everything).
 
 ---
 

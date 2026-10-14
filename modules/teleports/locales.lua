@@ -16,12 +16,12 @@ local EN = {
 
 	['teleports.key.use'] = 'Use teleport',
 	['teleports.prompt'] = 'Go to {place}',
-	['teleports.prompt.locked'] = '{place} (locked)',
+	['teleports.prompt.locked'] = 'Go to {place} (locked)',
 
 	['teleports.arrived'] = 'You arrived at {place}.',
 
-	['teleports.refused'] = 'That trip was refused: {reason}',
-	['teleports.locked'] = 'This teleport is not yours to use.',
+	['teleports.refused'] = 'That trip did not go through. Try again.',
+	['teleports.locked'] = 'You do not have access to this teleport.',
 	-- The operator's own sentence, shown instead of the line above whenever they
 	-- wrote one. It is what makes a locked teleport say why.
 	['teleports.lockedReason'] = '{reason}',
@@ -35,8 +35,8 @@ local EN = {
 	['teleports.inVehicle'] = 'Step out of the vehicle first.',
 	['teleports.notAlive'] = 'Not while you are dead.',
 	['teleports.notReady'] = 'You are not in the world yet.',
-	['teleports.badDestination'] = 'That destination is not a place. Tell an admin.',
-	['teleports.neverArrived'] = 'You did not arrive. Nothing was moved; tell an admin.',
+	['teleports.badDestination'] = 'That destination is not a place. Tell a staff member.',
+	['teleports.neverArrived'] = 'You did not arrive. Nothing was moved; tell a staff member.',
 	['teleports.unavailable'] = 'Teleports are unavailable on this server.',
 
 	['teleports.help.where'] = 'Show every teleport: both ends, its gate and how its trips ' ..
@@ -45,34 +45,34 @@ local EN = {
 }
 
 local FR = {
-	['teleports.title'] = 'TELEPORTATION',
+	['teleports.title'] = 'TÉLÉPORTATION',
 
-	['teleports.key.use'] = 'Utiliser la teleportation',
-	['teleports.prompt'] = 'Aller a {place}',
-	['teleports.prompt.locked'] = '{place} (verrouille)',
+	['teleports.key.use'] = 'Utiliser la téléportation',
+	['teleports.prompt'] = 'Aller à {place}',
+	['teleports.prompt.locked'] = 'Aller à {place} (verrouillé)',
 
-	['teleports.arrived'] = 'Vous etes arrive a {place}.',
+	['teleports.arrived'] = 'Vous êtes arrivé à {place}.',
 
-	['teleports.refused'] = 'Ce trajet a ete refuse : {reason}',
-	['teleports.locked'] = "Cette teleportation ne vous est pas ouverte.",
+	['teleports.refused'] = "Ce trajet n'a pas abouti. Réessayez.",
+	['teleports.locked'] = "Vous n'avez pas accès à cette téléportation.",
 	['teleports.lockedReason'] = '{reason}',
 
-	['teleports.noSuchTeleport'] = "Il n'y a pas de teleportation ici.",
-	['teleports.tooFar'] = "Vous n'etes pas sur la teleportation.",
-	['teleports.noPosition'] = "Votre position n'a pas pu etre lue.",
-	['teleports.inFlight'] = 'Vous etes deja en route.',
+	['teleports.noSuchTeleport'] = "Il n'y a pas de téléportation ici.",
+	['teleports.tooFar'] = "Vous n'êtes pas sur la téléportation.",
+	['teleports.noPosition'] = "Votre position n'a pas pu être lue.",
+	['teleports.inFlight'] = 'Vous êtes déjà en route.',
 	['teleports.busy'] = "Terminez d'abord ce que vous faites.",
-	['teleports.downed'] = 'Pas pendant que vous etes a terre.',
-	['teleports.inVehicle'] = "Sortez d'abord du vehicule.",
-	['teleports.notAlive'] = 'Pas pendant que vous etes mort.',
-	['teleports.notReady'] = "Vous n'etes pas encore dans le monde.",
-	['teleports.badDestination'] = "Cette destination n'est pas un lieu. Prevenez un admin.",
-	['teleports.neverArrived'] = "Vous n'etes pas arrive. Rien n'a bouge ; prevenez un admin.",
-	['teleports.unavailable'] = 'Les teleportations sont indisponibles sur ce serveur.',
+	['teleports.downed'] = 'Pas pendant que vous êtes à terre.',
+	['teleports.inVehicle'] = "Sortez d'abord du véhicule.",
+	['teleports.notAlive'] = 'Pas pendant que vous êtes mort.',
+	['teleports.notReady'] = "Vous n'êtes pas encore dans le monde.",
+	['teleports.badDestination'] = "Cette destination n'est pas un lieu. Prévenez un membre de l'équipe.",
+	['teleports.neverArrived'] = "Vous n'êtes pas arrivé. Rien n'a bougé ; prévenez un membre de l'équipe.",
+	['teleports.unavailable'] = 'Les téléportations sont indisponibles sur ce serveur.',
 
-	['teleports.help.where'] = 'Affiche chaque teleportation : ses deux extremites, son acces ' ..
+	['teleports.help.where'] = 'Affiche chaque téléportation : ses deux extrémités, son accès ' ..
 		'et ses trajets.',
-	['teleports.help.whereKey'] = 'une teleportation a afficher ; toutes si omis ({keys})',
+	['teleports.help.whereKey'] = 'une téléportation à afficher ; toutes si omis ({keys})',
 }
 
 OPX.Locale.Register('en', EN)

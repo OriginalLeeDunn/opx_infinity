@@ -45,8 +45,18 @@ local locked = nil
 
 local job = nil
 
+-- The id the server gave the bar that is up, when the server started it and
+-- wants to hear how it ended. Nil for every other bar.
+local serverBar = nil
+
 -- Whether the cancel key was declared to the host.
 local cancelKeyRegistered = false
+
+-- When the player last cancelled a bar with the key, or nil. Read through
+-- `State` by any other module bound to the same key, so that the press which
+-- cancelled the bar is not ALSO taken as theirs (see `calls`): the host fires
+-- every mapping on a key, in an order nobody promises.
+local cancelledAtMs = nil
 
 -- The cancel key declaration, with the shipped value as the fallback.
 local function cancelKey()
@@ -83,6 +93,10 @@ end
 -- being held and far better than no bar at all. The names come from `M.LOCKED`,
 -- which is the platform's own five-word vocabulary -- anything else answers
 -- `unknown_action`.
+-- Actions already reported as refused, so a refusal is said once a session and
+-- not once per bar.
+local refusedOnce = {}
+
 local function hold(on)
 	local input = Open77.input
 	if type(input) ~= 'table' or type(input.setActionBlocked) ~= 'function' then return end
@@ -91,12 +105,19 @@ local function hold(on)
 		locked = {}
 		for index = 1, #M.LOCKED do
 			local action = M.LOCKED[index]
-			local ok, reason = pcall(input.setActionBlocked, action, true)
-			if ok then
+			-- THE ANSWER IS READ, not only whether the call raised. The native
+			-- answers `false, reason` for a refusal -- `unknown_action`,
+			-- `action_not_blockable`, a missing `input.actions` -- and the pcall
+			-- status alone recorded every one of those as held, so nothing was
+			-- reported and the player could walk out of a bar the log said was
+			-- locked. The HUD's vanilla toggles read it the same way.
+			local called, ok, reason = pcall(input.setActionBlocked, action, true)
+			if called and ok == true then
 				locked[#locked + 1] = action
-			else
+			elseif not refusedOnce[action] then
+				refusedOnce[action] = true
 				Open77.log.warn(('[progress] %s could not be blocked: %s')
-					:format(action, tostring(reason)))
+					:format(action, tostring(called and reason or ok)))
 			end
 		end
 		return
@@ -261,19 +282,26 @@ end
 -- @author dop42
 -- @return table a Result
 function Runtime.State()
-	if live == nil then return OPX.Result.Ok({ open = false }) end
+	-- `cancelKey` and `cancelledAtMs` are for a module sharing the cancel key:
+	-- which key a cancelable bar is listening on, and when the last press on it
+	-- cancelled one.
+	if live == nil then return OPX.Result.Ok({ open = false, cancelledAtMs = cancelledAtMs }) end
 	return OPX.Result.Ok({
 		open = true,
 		owner = live.owner,
 		label = live.label,
 		remainingMs = math.max(0, live.untilMs - OPX.Now()),
+		cancelable = live.canCancel == true,
+		cancelKey = live.canCancel and cancelKeyLabel() or nil,
+		cancelledAtMs = cancelledAtMs,
 	})
 end
 
 --- Resets the state. Never yields.
 -- @author dop42
 function M.Init()
-	live, locked, job, cancelKeyRegistered = nil, nil, nil, false
+	live, locked, job, cancelKeyRegistered, serverBar = nil, nil, nil, false, nil
+	cancelledAtMs = nil
 end
 
 --- Publishes the contract.
@@ -300,7 +328,14 @@ function M.Start()
 	if declared.DEFAULT ~= false then
 		local called, ok, answer = pcall(RegisterKeyMapping, declared.ID, locale(declared.NAME),
 			declared.DEFAULT, function()
-				if live ~= nil and live.canCancel then finish(Ending.CANCELLED) end
+				-- A key typed into another surface is not a key pressed in the
+				-- world, and a press another feature on the same key owns is not
+				-- this one's: see `OPX.Spots.Key.Owns`.
+				if OPX.Spots.Captured() or not OPX.Spots.Key.Owns(declared.ID) then return end
+				if live ~= nil and live.canCancel then
+					cancelledAtMs = OPX.Now()
+					finish(Ending.CANCELLED)
+				end
 			end)
 		local effective = called and (
 			(type(ok) == 'string' and ok ~= '' and ok) or
@@ -310,6 +345,14 @@ function M.Start()
 				:format(declared.ID, tostring(declared.DEFAULT), tostring(called and answer or ok)))
 		else
 			cancelKeyRegistered = true
+			-- X is shared with a call's decline, a crate's drop and the emote
+			-- stop. A cancelable bar outranks every one of them: it is the only
+			-- one with a timer running out on the player.
+			OPX.Spots.Key.Contend({ tag = 'progress', id = declared.ID, default = declared.DEFAULT,
+				wants = function()
+					if live ~= nil and live.canCancel then return OPX.Spots.Key.Rank('PROGRESS') end
+					return nil
+				end })
 		end
 	end
 
@@ -318,11 +361,35 @@ function M.Start()
 		-- A server-sent bar is owned by the SERVER and not by whatever module
 		-- happens to be listening, so a client caller's `Stop` cannot take it
 		-- down. Same shape and same reason as the prompts module's prefix.
-		Runtime.Start('@server', spec)
+		local id = math.tointeger(spec.id)
+		local started = Runtime.Start('@server', {
+			label = spec.label, durationMs = spec.durationMs, cancelable = spec.cancelable,
+			animation = spec.animation,
+		})
+		-- A BAR THE SERVER NUMBERED IS ANSWERED, however it goes: refused here
+		-- (another bar is up, a bad duration), or ended later on `ON_DONE`. The
+		-- server times the answer itself and believes nothing in it but the
+		-- ending; see `modules/progress/server/main.lua`.
+		if id == nil then return end
+		if started.ok then
+			serverBar = id
+		else
+			TriggerServerEvent(M.Event.REPORT, id, 'refused')
+		end
 	end)
 
-	RegisterNetEvent(M.Event.CANCEL, function()
-		if live ~= nil and live.owner == '@server' then finish(Ending.STOPPED) end
+	RegisterNetEvent(M.Event.CANCEL, function(id)
+		if live == nil or live.owner ~= '@server' then return end
+		-- A stop for an older bar must not take down the one up now.
+		if id ~= nil and math.tointeger(id) ~= serverBar then return end
+		finish(Ending.STOPPED)
+	end)
+
+	AddEventHandler(M.Event.ON_DONE, function(payload)
+		if serverBar == nil or type(payload) ~= 'table' or payload.owner ~= '@server' then return end
+		local id = serverBar
+		serverBar = nil
+		TriggerServerEvent(M.Event.REPORT, id, payload.ending)
 	end)
 
 	-- A CHARACTER LEAVING TAKES THE BAR, and this is the path that would

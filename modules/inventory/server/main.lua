@@ -614,6 +614,67 @@ function M.GetItems()
 	return out
 end
 
+-- ── items another resource registers ─────────────────────────────────────────
+
+-- Items one `opx:net:inventory:catalog` carries. Small, because the client
+-- validates each one inside the resume that received them (see
+-- `Catalog.Register`): FOUR. An item at every bound the validator allows costs
+-- the client about 1,500 instructions, so eight of them (the first figure here)
+-- overran the ~10,000 a resume may spend and the client's handler was killed --
+-- every item in that event missing on that client while the server kept them.
+-- Four at the bounds is about 6,500; a long list simply arrives in more events.
+local RUNTIME_CHUNK = 4
+
+-- The ceiling on items one owner registers when the caller names none.
+local RUNTIME_DEFAULT_CAP = 64
+
+--- Sends runtime definitions to one client, or to every client with -1.
+local function sendRuntime(target, list)
+	for first = 1, #list, RUNTIME_CHUNK do
+		local part = {}
+		for index = first, math.min(#list, first + RUNTIME_CHUNK - 1) do
+			part[#part + 1] = list[index]
+		end
+		TriggerClientEvent(M.Event.CATALOG, target, part)
+	end
+end
+
+--- Adds an item to the catalogue at runtime, on both halves, or replaces one its
+--- own owner registered before.
+-- Validated by `Catalog.Register`, which every client runs on the same table, and
+-- sent to every connected client; a client that joins later is sent the whole
+-- runtime list on its hello. Never persisted: the owner registers it again on
+-- every start, and a stack of it in a bag waits for that.
+-- @author dop42
+-- @param name string
+-- @param definition table label, description, weight, stack, drop, category, image, model, use
+-- @param owner string who registers it, e.g. `ext:my_shop`
+-- @param cap integer|nil most items this owner may hold registered
+-- @return Result the item as a screen reads it
+function M.RegisterItem(name, definition, owner, cap)
+	if type(owner) ~= 'string' or owner == '' then return Result.Err('bad_argument', 'owner') end
+	local held = Catalog.Get(name)
+	if held == nil then
+		local ceiling = Common.Integer(cap, 0, 100000) or RUNTIME_DEFAULT_CAP
+		if Catalog.RuntimeCount(owner) >= ceiling then return Result.Err('item_cap') end
+	end
+	local registered, why = Catalog.Register(name, definition, owner)
+	if not registered then return Result.Err(why) end
+	sendRuntime(-1, { { name = name, owner = owner, definition = Common.Copy(definition) } })
+	return Result.Ok(Catalog.ViewOf(name))
+end
+
+--- Sends one client every item registered at runtime so far.
+-- @author dop42
+-- @param player Source
+function M.SendRuntimeItems(player)
+	local list = {}
+	for name, held in pairs(Catalog.Runtime()) do
+		list[#list + 1] = { name = name, owner = held.owner, definition = held.definition }
+	end
+	if #list > 0 then sendRuntime(player, list) end
+end
+
 --- Opens a stash beside a player's bag and raises their screen.
 -- The CALLER answers for whether this player may open this stash -- a job, a key,
 -- a code. This module only checks the reach, and only when a position is given: a
@@ -635,8 +696,41 @@ function M.OpenStash(playerId, name, options)
 			Common.Integer(options.maxWeight, 0, 4000000000),
 	}
 	if not size.slots or not size.maxWeight then return Result.Err('bad_argument', 'size') end
-	if not Players.GateOpen(playerId) then return Result.Err('not_ready') end
+	-- A CONFIGURED STASH IS MADE AT ITS CONFIGURED SIZE, whoever opens it first:
+	-- the size is written into the row on creation and kept for ever after, so a
+	-- caller's (or the default 50) would replace the operator's for good. The
+	-- same rule `withStash` and the stash marker follow.
+	local configured = configuredStash(name)
+	if configured ~= nil then
+		size = { slots = configured.slots, maxWeight = configured.maxWeight }
+	end
+	-- `MayAct`, not `GateOpen` alone: the one door `Players.MayAct` was written
+	-- to close -- "a player on the floor could empty their bag into a boot" --
+	-- stayed open here, through the armoury chests and every creator stash.
+	local may, refusal = Players.MayAct(playerId)
+	if not may then return Result.Err(refusal) end
 	if not Players.Bag(playerId) then return Result.Err('not_loaded') end
+
+	-- ANOTHER RESOURCE OPENS ONLY WHAT IT MAY NAME: a stash the operator listed,
+	-- or one in its own `<resource>.` namespace -- and a new one of those only
+	-- under the creation cap, the rule `AddToStash` keeps. Never a stash that
+	-- belongs to a module or to another resource, which would be a back door
+	-- into somebody else's storage.
+	if options.creator ~= nil then
+		local prefix = tostring(options.creator) .. '.'
+		local own = #name > #prefix and name:sub(1, #prefix) == prefix
+		if configuredStash(name) == nil and not own then
+			return Result.Err('stash_namespace', name)
+		end
+		if Containers.Find(M.KIND.STASH, name) == nil then
+			local found = M.Storage.Find(M.KIND.STASH, name)
+			if not found.ok then return Result.Err('unavailable', name) end
+			if found.value == nil then
+				local allowed, why = mayCreate(name, options)
+				if not allowed then return Result.Err(why, name) end
+			end
+		end
+	end
 
 	local anchor
 	if type(options.position) == 'table' then
@@ -699,6 +793,20 @@ function M.HolsterWeapon(playerId)
 	return Result.Ok({ name = held.name, serial = held.serial })
 end
 
+--- Whether a kind names one of the container kinds. A non-string used to
+--- raise on `:upper()` inside the caller instead of being refused.
+local function knownKind(kind)
+	return type(kind) == 'string' and M.KIND[kind:upper()] ~= nil
+end
+
+--- Unloads a container a contract call loaded itself, unless somebody now has
+--- it open or its owner is playing. Yields: an unload writes first.
+local function putBack(container)
+	if Containers.IsViewed(container.id) then return end
+	if container.kind == M.KIND.CHARACTER and Players.SourceOf(container.owner) then return end
+	Containers.Unload(container.id)
+end
+
 --- Changes a stored container's slot count and weight limit.
 -- `Ensure` only writes a size for the row that creates it, so a container keeps
 -- the size it was made with for ever; this is the one way that changes. The copy
@@ -710,7 +818,7 @@ end
 -- @param maxWeight integer
 -- @return Result
 function M.ResizeContainer(kind, owner, slots, maxWeight)
-	if M.KIND[kind:upper()] == nil then return Result.Err('bad_argument', 'kind') end
+	if not knownKind(kind) then return Result.Err('bad_argument', 'kind') end
 	owner = Common.Word(owner, 64, '^[%w_%-%.:]+$')
 	slots = Common.Integer(slots, 1, 200)
 	maxWeight = Common.Integer(maxWeight, 0, 4000000000)
@@ -720,20 +828,29 @@ function M.ResizeContainer(kind, owner, slots, maxWeight)
 
 	local held = Containers.Find(kind, owner)
 	local id = held and not held.transient and held.id or nil
+	local borrowed = false
 	if id == nil then
 		local loaded, reason = Containers.Load(kind, owner, slots, maxWeight)
 		if not loaded then return Result.Err(reason or 'not_found', owner) end
 		if loaded.transient then return Result.Err('not_found', owner) end
-		held, id = loaded, loaded.id
+		held, id, borrowed = loaded, loaded.id, true
 	end
 
 	local written = M.Storage.Resize(id, slots, maxWeight)
-	if not written.ok then return written end
+	if not written.ok then
+		if borrowed then putBack(held) end
+		return written
+	end
 	held.slots = slots
 	held.maxWeight = maxWeight
 	-- Stacks beyond the new slot count are kept, counted and removable; they are
 	-- simply not drawn and nothing new is put there.
 	Containers.Publish(held)
+	-- A CONTAINER THIS CALL LOADED IS PUT AWAY AGAIN. Resizing an offline bag or
+	-- a stash nobody had open used to leave it loaded for the life of the
+	-- resource: nothing else ever unloads a bag whose owner is not here, and a
+	-- stash loaded here was not marked for the idle sweep either.
+	if borrowed then putBack(held) end
 	OPX.Audit.Log({ event = 'inventory.resize', message = ('%s %s'):format(kind, owner),
 		data = { kind = kind, owner = owner, slots = slots, maxWeight = maxWeight } })
 	return Result.Ok(id)
@@ -748,7 +865,7 @@ end
 -- @param owner string
 -- @return Result
 function M.DeleteContainer(kind, owner)
-	if M.KIND[kind:upper()] == nil then return Result.Err('bad_argument', 'kind') end
+	if not knownKind(kind) then return Result.Err('bad_argument', 'kind') end
 	owner = Common.Word(owner, 64, '^[%w_%-%.:]+$')
 	if not owner then return Result.Err('bad_argument', 'owner') end
 
@@ -866,6 +983,10 @@ function M.Api()
 
 		RegisterUsable = Actions.RegisterUsable,
 		UnregisterUsable = Actions.UnregisterUsable,
+		UsableOwner = Actions.UsableOwner,
+		UnregisterUsables = Actions.UnregisterOwner,
+
+		RegisterItem = M.RegisterItem,
 
 		-- THE MONEY BRIDGE, and the only two functions that may move a balance
 		-- and a stack of notes in the same breath. Published so that a job, a

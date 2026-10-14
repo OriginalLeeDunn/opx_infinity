@@ -77,9 +77,16 @@ local DEFAULT_GROUND_OFFSET = 0.06
 -- @param value any
 -- @return number|nil
 function OPX.Spots.Coordinate(value)
-	local parsed = finiteNumber(value)
-	if parsed == nil or parsed > BOUND or parsed < -BOUND then return nil end
-	return parsed
+	-- INLINE AND NOT THROUGH `finiteNumber`: the bound already refuses both
+	-- infinities, so a number only has to be checked for NaN. This runs several
+	-- times for every spot on every list a server sends, and the two calls it
+	-- saved were most of what one cost.
+	if type(value) ~= 'number' then
+		value = tonumber(value)
+		if value == nil then return nil end
+	end
+	if value ~= value or value > BOUND or value < -BOUND then return nil end
+	return value
 end
 local coordinate = OPX.Spots.Coordinate
 
@@ -388,6 +395,30 @@ function OPX.Spots.FlatDistanceSquared(spot, x, y)
 	return dx * dx + dy * dy
 end
 
+--- The squared reach the SERVER allows for a radius the client draws: the radius
+--- plus `OPX.Config.SHARED.REACH_SLACK`, for the latency between the press and
+--- the position the server last observed. See `config/shared.lua`.
+-- @author dop42
+-- @param radius number metres, as the module's own USE_RADIUS
+-- @return number squared metres
+function OPX.Spots.ServerReachSq(radius)
+	local reach = OPX.Spots.ServerReach(radius)
+	return reach * reach
+end
+
+--- The reach the SERVER allows, in metres, for a radius the client draws or the
+--- eye row offers: the radius plus `OPX.Config.SHARED.REACH_SLACK`.
+-- @author dop42
+-- @param radius number metres
+-- @return number metres
+function OPX.Spots.ServerReach(radius)
+	local shared = OPX.Config and OPX.Config.SHARED
+	local slack = type(shared) == 'table' and shared.REACH_SLACK or nil
+	if type(slack) ~= 'number' or slack ~= slack then slack = 1.0 end
+	if slack < 0 then slack = 0 elseif slack > 4 then slack = 4 end
+	return (type(radius) == 'number' and radius == radius and radius or 0) + slack
+end
+
 --- Answers the spot a point stands on, or nil.
 -- The nearest wins; at equal distance the key decides, so `pairs` order never
 -- chooses between two markers a metre apart.
@@ -399,6 +430,11 @@ end
 --   is a number the module owns and not one this file may choose
 -- @return table|nil
 -- @return number|nil squared distance
+--
+-- THE POINT IS COERCED ONCE, NOT ONCE PER SPOT. This runs every scan of every
+-- spot module over the whole list, and `FlatDistanceSquared` re-coerced the
+-- player's position for each spot: ~85 VM instructions a spot, in a scheduler
+-- pass that shares one resume's budget (~10,000) with other jobs.
 function OPX.Spots.Nearest(spots, x, y, radiusSq)
 	-- THE POSITION IS COERCED ONCE, NOT ONCE PER SPOT. This runs on every scan of
 	-- every marker module, and on a client every resume is on a clock checked
@@ -406,7 +442,7 @@ function OPX.Spots.Nearest(spots, x, y, radiusSq)
 	-- instructions a spot, most of the budget of a scan over a long list. The
 	-- answer is the same -- the spots were coerced when they were read in.
 	x, y = coordinate(x), coordinate(y)
-	if x == nil or y == nil then return nil end
+	if x == nil or y == nil then return nil, nil end
 	local best, bestDistance
 	for _, spot in pairs(spots) do
 		local dx, dy = x - spot.x, y - spot.y

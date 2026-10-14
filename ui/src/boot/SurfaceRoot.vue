@@ -33,6 +33,7 @@ import { isLoadingHidden } from '@/stores/loading'
  */
 const overlay = modulesFor('overlay')
 const interactive = modulesFor('modal')
+const notice = modulesFor('notice')
 const cover = modulesFor('cover')
 </script>
 
@@ -52,6 +53,17 @@ const cover = modulesFor('cover')
     <div class="layer layer-modal" :class="{ 'is-live': isFocused }">
       <ModuleHost
         v-for="module in interactive"
+        v-show="!(module.hideWhileLoading && isLoadingHidden)"
+        :id="module.id"
+        :key="module.id"
+      >
+        <component :is="module.component" />
+      </ModuleHost>
+    </div>
+
+    <div class="layer layer-notice">
+      <ModuleHost
+        v-for="module in notice"
         v-show="!(module.hideWhileLoading && isLoadingHidden)"
         :id="module.id"
         :key="module.id"
@@ -100,12 +112,21 @@ const cover = modulesFor('cover')
   pointer-events: auto;
 }
 
+/* Over the modal layer, so a toast answering a form, a bag or the join screen is drawn
+   on top of that view's scrim instead of dimmed under it. Never a pointer: a toast is
+   read, not clicked, and this layer is full-screen. */
+.layer-notice {
+  pointer-events: none;
+  user-select: none;
+  z-index: 2;
+}
+
 /* Over everything, and never a pointer: the cover is drawn while the game is loading,
    and a load is nothing the player can click on. Empty -- and so free -- the rest of
    the time, because the cover renders nothing while it is down. */
 .layer-cover {
   pointer-events: none;
   user-select: none;
-  z-index: 2;
+  z-index: 3;
 }
 </style>

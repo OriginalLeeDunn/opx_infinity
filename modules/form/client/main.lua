@@ -15,9 +15,8 @@ local MAX_FIELDS = 8
 local MAX_OPTIONS = 64
 
 -- A caller's opaque table rides in the answer, and the host discards an event
--- carrying more than 1024 value nodes without a word.
-local MAX_DATA_NODES = 64
-local MAX_DATA_DEPTH = 4
+-- carrying more than 1024 value nodes without a word: it is held to
+-- `OPX.Modal.DATA_NODES` and `DATA_DEPTH`.
 
 local MAX_LABEL = 96
 local MAX_OPTION_LABEL = 48
@@ -75,9 +74,6 @@ local pendingOpen = false
 -- Wiring the channels builds the surface, so it waits for the first open.
 local wired = false
 
-local down = false
-local downHeard = 0
-
 -- ── text, names and the caller's data ───────────────────────────────────────
 
 -- Whether a value is a number that is neither NaN nor infinite. The one shared
@@ -85,11 +81,10 @@ local downHeard = 0
 -- for the same answer and the only thing it can ever do is drift.
 local finite = OPX.Math.IsFinite
 
---- Whether a value is a bounded identifier: word characters, `_`, `:`, `-`, `.`.
-local function validName(value, maximum)
-	return type(value) == 'string' and #value > 0 and #value <= maximum
-		and value:match('^[%w_:%-%.]+$') ~= nil
-end
+-- The id check and the payload bound are `OPX.Modal`'s, shared with `menu` and
+-- `panel`, and aliased here rather than wrapped.
+local validName = OPX.Modal.ValidName
+local dataFault = OPX.Modal.DataFault
 
 --- Display text with control characters blanked, REFUSED past a character
 --- count rather than cut. Nothing a caller sends comes back shorter than it
@@ -101,19 +96,6 @@ local function exact(value, maximum)
 	if #value <= maximum then return value end
 	if Text.Span(value, maximum) >= #value then return value end
 	return nil
-end
-
---- Counts a caller's opaque table against the payload budget.
-local function fitsInPayload(value, depth, budget)
-	budget.nodes = budget.nodes + 1
-	if budget.nodes > MAX_DATA_NODES then return false end
-	if type(value) ~= 'table' then return true end
-	if depth > MAX_DATA_DEPTH then return false end
-	for key, nested in pairs(value) do
-		if not fitsInPayload(key, depth + 1, budget) then return false end
-		if not fitsInPayload(nested, depth + 1, budget) then return false end
-	end
-	return true
 end
 
 -- ── patterns ────────────────────────────────────────────────────────────────
@@ -211,22 +193,17 @@ end
 -- ── the fields ──────────────────────────────────────────────────────────────
 
 --- Validates a slider and fills its defaults, clamping the starting value.
+-- The range is `OPX.Modal`'s; a suffix past its length is refused, not cut.
 local function normalizeSlider(slider)
-	if type(slider) ~= 'table' then return nil, 'invalid_slider' end
-	local low = finite(slider.min) and slider.min + 0.0 or 0.0
-	local high = finite(slider.max) and slider.max + 0.0 or 100.0
-	if high <= low then return nil, 'invalid_slider_range' end
-	local step = finite(slider.step) and math.abs(slider.step) + 0.0 or 1.0
-	if step <= 0 then step = 1.0 end
-	local value = finite(slider.value) and slider.value + 0.0 or low
-	if value < low then value = low end
-	if value > high then value = high end
+	local settled, reason = OPX.Modal.SliderRange(slider)
+	if settled == nil then return nil, reason end
 	local suffix = ''
 	if slider.suffix ~= nil then
 		suffix = exact(slider.suffix, MAX_SUFFIX)
 		if suffix == nil then return nil, 'invalid_slider_suffix' end
 	end
-	return { min = low, max = high, step = step, value = value, suffix = suffix }
+	settled.suffix = suffix
+	return settled
 end
 
 --- The value an option answers with, kept exactly as the caller wrote it.
@@ -446,12 +423,8 @@ local function build(owner, spec)
 
 	if not validStatus(spec.status) then return nil, 'invalid_status' end
 
-	if spec.data ~= nil then
-		if type(spec.data) ~= 'table' then return nil, 'invalid_form_data' end
-		if not fitsInPayload(spec.data, 1, { nodes = 0 }) then
-			return nil, 'form_data_too_large'
-		end
-	end
+	local fault = dataFault(spec.data, 'invalid_form_data', 'form_data_too_large')
+	if fault then return nil, fault end
 
 	local fields, reason = normalizeFields(spec.fields)
 	if fields == nil then return nil, reason end
@@ -490,19 +463,7 @@ local function adjust(entry, delta)
 		entry.selected = ((entry.selected - 1 + delta) % total) + 1
 		return true
 	elseif kind == 'slider' then
-		local slider = entry.slider
-		local before = slider.value
-		local value = slider.value + (slider.step * delta)
-		-- Clamped, never wrapped: a volume that jumps from 0 to 100 is a
-		-- complaint, not a feature.
-		if value < slider.min then value = slider.min end
-		if value > slider.max then value = slider.max end
-		-- Snapped back onto the step grid, because 0.1 added ten times is not 1.
-		local steps = math.floor(((value - slider.min) / slider.step) + 0.5)
-		value = slider.min + (steps * slider.step)
-		if value > slider.max then value = slider.max end
-		slider.value = value
-		return value ~= before
+		return OPX.Modal.StepSlider(entry.slider, delta)
 	end
 	return false
 end
@@ -513,8 +474,19 @@ local function edit(entry, text)
 	if entry.kind ~= 'text' then return 'form.refuse.character' end
 	if type(text) ~= 'string' then return 'form.refuse.character' end
 	local clean = text:gsub('%c', '')
-	if Text.Span(clean, entry.maxLength) < #clean then
-		return 'form.refuse.tooLong', { max = entry.maxLength }
+	-- MEASURED NATIVELY WHERE IT CAN BE. This runs on every keystroke, inside
+	-- the page callback's resume, and `Text.Span` walks the buffer a byte at a
+	-- time in Lua -- up to four bytes a character of the limit, about 18,000
+	-- instructions at a 512-character field of accented text. A buffer no longer
+	-- in bytes than the limit is within it in characters, and `utf8.len` counts
+	-- the rest in C; only a buffer that is not valid UTF-8 falls back to the walk.
+	if #clean > entry.maxLength then
+		local count = utf8 and utf8.len(clean) or nil
+		if count ~= nil then
+			if count > entry.maxLength then return 'form.refuse.tooLong', { max = entry.maxLength } end
+		elseif Text.Span(clean, entry.maxLength) < #clean then
+			return 'form.refuse.tooLong', { max = entry.maxLength }
+		end
 	end
 	if not withinCharset(entry, clean) then return 'form.refuse.character' end
 	entry.text = clean
@@ -719,11 +691,35 @@ end
 
 -- ── the contract ────────────────────────────────────────────────────────────
 
---- Whether an owner's form opens, and stays open, while the player is down.
-local function allowedWhileDown(owner)
-	local allowed = M.Settings.WHILE_DOWN
-	return type(allowed) == 'table' and allowed[owner] == true
+--- Clears the status line once it has been up long enough.
+local function expireStatus(atMs)
+	if record == nil or record.status == nil then return end
+	local life = finite(M.Settings.STATUS_MS) and M.Settings.STATUS_MS or 6000
+	if atMs - record.status.atMs < life then return end
+	record.status = nil
+	draw()
 end
+
+-- THE DOWN STATE, THE OWNER SWEEP, ESCAPE AND THE UPKEEP PASS are `OPX.Modal`'s,
+-- one implementation for `menu`, `form` and `panel`. Every way a form leaves
+-- answers it as a cancel. Escape on the pause key rather than on `form:dismiss`
+-- is the pause menu.
+local life = OPX.Modal.New({
+	name = 'form',
+	current = function() return record end,
+	close = function(reason) finish('cancel', reason) end,
+	settings = function() return M.Settings end,
+	pauseKey = M.Host.PAUSE_KEY,
+	pause = function() finish('cancel', 'pause') end,
+	job = 'form:upkeep',
+	everyMs = UPKEEP_MS,
+	-- The open is re-sent until the page reports ready: a surface built on first
+	-- use is not ready when the first form opens on it.
+	upkeep = function()
+		if pendingOpen then draw() end
+		expireStatus(OPX.Now())
+	end,
+})
 
 --- Asks the player for one or more values, refusing the spec whole if any
 --- field is malformed.
@@ -742,7 +738,7 @@ local function Open(spec)
 	-- Nothing to ask on, and there never will be at this start.
 	if OPX.UI.Interactive() == nil then return Result.Err('no_surface') end
 
-	if down and not allowedWhileDown(owner) then return Result.Err('player_down') end
+	if life.Blocked(owner) then return Result.Err('player_down') end
 	-- There is no steal: a form holds a half-typed answer, and taking one over
 	-- loses it.
 	if record ~= nil and record.owner ~= owner then return Result.Err('form_busy') end
@@ -752,10 +748,12 @@ local function Open(spec)
 	local built, reason = build(owner, spec)
 	if built == nil then return Result.Err(reason) end
 
-	if record ~= nil then finish('cancel', 'reopened') end
+	-- What a cancel callback opens in turn is closed too (see `Supersede`).
+	life.Supersede('reopened')
 
 	nextHandle = nextHandle + 1
 	built.handle = nextHandle
+	built.openedAtMs = OPX.Now()
 	record = built
 	if spec.status ~= nil then writeStatus(record, spec.status, spec.statusBad) end
 
@@ -818,11 +816,7 @@ end
 -- ── what the player did ─────────────────────────────────────────────────────
 
 --- The open form when a page payload names it, or nil for a stale one.
-local function fromPage(payload)
-	if record == nil or type(payload) ~= 'table' then return nil end
-	if payload.handle ~= record.handle then return nil end
-	return record
-end
+local fromPage = life.FromPage
 
 --- The field of the open form a page payload names, or nil for one it does not.
 local function fieldOf(owned, id)
@@ -950,34 +944,9 @@ local function onDismiss(payload)
 	finish('cancel', 'dismissed')
 end
 
--- Answers the surface-wide focus broadcast for this module's own owners.
---
--- THE BROADCAST NAMES THE WHOLE STACK'S TOP, NOT JUST "EMPTY OR NOT", and
--- reading only the empty case was the incomplete half of this idiom.
--- `ui/src/bridge/focus.ts` announces on EVERY change to the page's focus stack,
--- carrying the one owner now on top -- so a top that moved from one of OURS to
--- somebody else's arrives here as `focus = true` with an owner this module does
--- not know, and the old shape did nothing at all with that. The stale Lua entry
--- then sat above the module actually on screen and `applyFocus` applied ITS
--- wants: the chat line's `cursor = false` over the inventory's `cursor = true`,
--- with the inventory drawn and the cursor gone.
---
--- The answer is the same in all six copies: release every owner of mine that is
--- NOT the announced one, then acquire the announced one if it is mine. `form`,
--- `menu` and `panel` are saved from the worst of it by an explicit
--- `ReleaseFocus` on their close paths; `chat` and `downed` have none, so for
--- those two this handler is the only release there is.
-local function onFocus(payload)
-	if type(payload) ~= 'table' then return end
-	local owner = payload.owner
-	local held = (payload.focus == true and type(owner) == 'string') and owner or nil
-	for name in pairs(FOCUS) do
-		if name ~= held then OPX.UI.ReleaseFocus(name) end
-	end
-	local wants = held ~= nil and FOCUS[held] or nil
-	if wants == nil then return end
-	OPX.UI.AcquireFocus(held, wants)
-end
+-- Answers the surface-wide focus broadcast for this module's own owners: see
+-- `OPX.Modal.FocusResponder`.
+local onFocus = OPX.Modal.FocusResponder(FOCUS)
 
 --- Wires the page channels once, on the first open.
 wire = function()
@@ -991,52 +960,6 @@ wire = function()
 	OPX.UI.On(SURFACE, 'focus:set', onFocus)
 end
 
--- ── upkeep ──────────────────────────────────────────────────────────────────
-
---- Clears the status line once it has been up long enough.
-local function expireStatus(atMs)
-	if record == nil or record.status == nil then return end
-	local life = finite(M.Settings.STATUS_MS) and M.Settings.STATUS_MS or 6000
-	if atMs - record.status.atMs < life then return end
-	record.status = nil
-	draw()
-end
-
---- Cancels a form whose owner is a module that has stopped.
--- Only a declared module is swept: an owner this runtime knows nothing about
--- is left alone rather than guessed at.
-local function sweepOwner()
-	if record == nil then return end
-	local owner = OPX.Modules.Record(record.owner)
-	if owner ~= nil and owner.State ~= 'started' then finish('cancel', 'owner_stopped') end
-end
-
--- ── the player being down ───────────────────────────────────────────────────
-
---- Holds the down flag and cancels a form not allowed to stay up.
-local function setDown(value)
-	down = value == true
-	if down and record ~= nil and not allowedWhileDown(record.owner) then
-		finish('cancel', 'player_down')
-	end
-end
-
---- Catches up once with a player who went down before this module started.
--- A state heard while the read was in flight is newer than the read, and wins.
-local function adoptDownState()
-	local downed = OPX.Api.Get('downed')
-	if downed == nil then return end
-	local heard = downHeard
-	local answer = downed.IsDown()
-	if not answer.ok then
-		Open77.log.warn(('[form] the downed contract did not answer: %s')
-			:format(tostring(answer.error)))
-		return
-	end
-	if downHeard ~= heard then return end
-	setDown(answer.value.down == true)
-end
-
 -- ── lifecycle ───────────────────────────────────────────────────────────────
 
 --- Builds the held state.
@@ -1046,8 +969,7 @@ function M.Init()
 	nextHandle = 0
 	pendingOpen = false
 	wired = false
-	down = false
-	downHeard = 0
+	life.Reset()
 end
 
 --- Publishes the form contract.
@@ -1064,28 +986,7 @@ end
 --- Wires the down state, the pause key and the upkeep pass.
 -- @author dop42
 function M.Start()
-	AddEventHandler(OPX.Event(OPX.Channel.LOCAL, 'downed', 'changed'), function(payload)
-		if type(payload) ~= 'table' then return end
-		downHeard = downHeard + 1
-		setDown(payload.down == true)
-	end)
-
-	-- Escape is swallowed by the plugin before any surface sees it; when it
-	-- arrives here rather than on `form:dismiss`, the reason is the pause menu.
-	AddEventHandler(M.Host.PAUSE_KEY, function()
-		if record ~= nil then finish('cancel', 'pause') end
-	end)
-
-	OPX.Scheduler.Every('form:upkeep', UPKEEP_MS, function()
-		if record == nil then return end
-		-- The open is re-sent until the page reports ready: a surface built on
-		-- first use is not ready when the first form opens on it.
-		if pendingOpen then draw() end
-		expireStatus(OPX.Now())
-		sweepOwner()
-	end)
-
-	adoptDownState()
+	life.Start()
 end
 
 --- Answers the open form and hands the keyboard back.

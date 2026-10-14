@@ -17,6 +17,7 @@
 local M = OPX.Modules.Get('dealership')
 
 local Storage = OPX.Storage
+local Result = OPX.Result
 
 M.Storage = {}
 
@@ -145,37 +146,6 @@ end
 -- its own capture commands went, and for the same reason: a writer with no
 -- caller is one the next reader wires a new command to.
 
---- Every company account, for the readout.
--- @author XEROX710
--- @return Result carrying an array of rows
-function M.Storage.FetchAccounts()
-	return Storage.Query([[
-SELECT kind, group_key, balance
-  FROM opx77_company_accounts
- ORDER BY kind, group_key
-  ]])
-end
-
---- Adds to one company's balance, creating the account when there is none.
--- @author XEROX710
---
--- ONE STATEMENT, AND THE ARITHMETIC IS THE DATABASE'S. A read, an add in Lua and
--- a write is three steps with two yields between them, and two sales settling in
--- the same second would each read the balance before the other wrote it -- so
--- one of the two deposits would be lost, silently, in a table nobody reconciles.
--- `balance = balance + @amount` cannot lose one.
--- @param kind string 'job' or 'gang'
--- @param group string
--- @param amount integer
--- @return Result
-function M.Storage.Deposit(kind, group, amount)
-	return Storage.Execute([[
-INSERT INTO opx77_company_accounts (kind, group_key, balance)
-VALUES (@kind, @group, @amount)
-ON DUPLICATE KEY UPDATE balance = balance + @amount
-  ]], { kind = kind, group = group, amount = amount })
-end
-
 --- Records one deposit still owed. Idempotent on the token: the same pending
 --- deposit written twice is one row.
 -- @author dop42
@@ -205,20 +175,48 @@ SELECT id, token, kind, group_key, amount, plate
   ]], { limit = limit })
 end
 
---- Pays one owed deposit and strikes it off the ledger, together or not at all.
---- The delete is what makes it safe to retry: a row that is gone is a row the
---- next sweep does not read.
+-- The three statements of a settlement, by which key the row is named. Kept
+-- literal per key: a column name cannot be bound, and splicing one is how a
+-- statement ends up built from something it should not have been.
+local SETTLE = {
+	id = {
+		'UPDATE opx77_company_pending SET amount = amount WHERE id = ?',
+		'INSERT INTO opx77_company_accounts (kind, group_key, balance) ' ..
+			'SELECT kind, group_key, amount FROM opx77_company_pending WHERE id = ? ' ..
+			'ON DUPLICATE KEY UPDATE balance = balance + VALUES(balance)',
+		'DELETE FROM opx77_company_pending WHERE id = ?',
+	},
+	token = {
+		'UPDATE opx77_company_pending SET amount = amount WHERE token = ?',
+		'INSERT INTO opx77_company_accounts (kind, group_key, balance) ' ..
+			'SELECT kind, group_key, amount FROM opx77_company_pending WHERE token = ? ' ..
+			'ON DUPLICATE KEY UPDATE balance = balance + VALUES(balance)',
+		'DELETE FROM opx77_company_pending WHERE token = ?',
+	},
+}
+
+--- Pays one owed deposit into its company and strikes it off the ledger,
+--- together or not at all -- AND ONLY IF IT IS STILL OWED.
+--
+-- THE AMOUNT IS READ FROM THE LEDGER ROW INSIDE THE TRANSACTION, never handed
+-- in. The first statement takes the row's lock (or finds nothing); the deposit
+-- is an INSERT ... SELECT of that row, so a row already struck off deposits
+-- nothing; the delete strikes it off. A settlement whose answer was lost after
+-- it committed, retried, finds no row and pays nothing -- and a sale settling
+-- its own row while the sweep picks the same one up waits on the lock and then
+-- finds it gone. That is the whole of the idempotency: the ledger row IS the
+-- token.
 -- @author dop42
--- @param id integer the ledger row
--- @param kind string
--- @param group string
--- @param amount integer
+-- @param key string 'id' or 'token'
+-- @param value integer|string
 -- @return Result
-function M.Storage.SettlePending(id, kind, group, amount)
+function M.Storage.SettleOwed(key, value)
+	local statements = SETTLE[key]
+	if statements == nil then return Result.Err('bad-key', tostring(key)) end
 	return Storage.Transaction({
-		{ query = 'INSERT INTO opx77_company_accounts (kind, group_key, balance) VALUES (?, ?, ?) ' ..
-			'ON DUPLICATE KEY UPDATE balance = balance + ?', values = { kind, group, amount, amount } },
-		{ query = 'DELETE FROM opx77_company_pending WHERE id = ?', values = { id } },
+		{ query = statements[1], values = { value } },
+		{ query = statements[2], values = { value } },
+		{ query = statements[3], values = { value } },
 	})
 end
 

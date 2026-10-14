@@ -20,6 +20,11 @@ OPX.Locale.Register('en', {
 	['hud.info.job'] = 'JOB',
 	['hud.info.cred'] = 'CRED',
 
+	-- A money line's caption, by the purse's config id. Without one the HUD drew
+	-- the raw id, so a French HUD read BANK.
+	['hud.money.EDDIES'] = 'EDDIES',
+	['hud.money.BANK'] = 'BANK',
+
 	['hud.voice.state.idle'] = 'MIC',
 	['hud.voice.state.detected'] = 'MIC',
 	['hud.voice.state.talking'] = 'TX',
@@ -35,33 +40,38 @@ OPX.Locale.Register('en', {
 	['hud.vehicle.unit'] = 'KM/H',
 	['hud.vehicle.integrity'] = 'INTEGRITY',
 	['hud.vehicle.airborne'] = 'AIRBORNE',
+	['hud.vehicle.fuel'] = 'FUEL',
 })
 
 OPX.Locale.Register('fr', {
-	['hud.info.eyebrow'] = 'ETAT',
+	['hud.info.eyebrow'] = 'ÉTAT',
 
-	['hud.gauge.health'] = 'SANTE',
+	['hud.gauge.health'] = 'SANTÉ',
 	['hud.gauge.armor'] = 'ARMURE',
 	['hud.gauge.stamina'] = 'ENDURANCE',
 	['hud.gauge.hunger'] = 'FAIM',
 	['hud.gauge.thirst'] = 'SOIF',
 
-	['hud.info.job'] = 'METIER',
+	['hud.info.job'] = 'MÉTIER',
 	['hud.info.cred'] = 'CRED',
+
+	['hud.money.EDDIES'] = 'EDDIES',
+	['hud.money.BANK'] = 'BANQUE',
 
 	['hud.voice.state.idle'] = 'MICRO',
 	['hud.voice.state.detected'] = 'MICRO',
 	['hud.voice.state.talking'] = 'TX',
-	['hud.voice.state.muted'] = 'COUPE',
+	['hud.voice.state.muted'] = 'COUPÉ',
 	['hud.voice.state.offline'] = 'HORS LIGNE',
-	['hud.voice.mode.whisper'] = 'CHUCHOTE',
+	['hud.voice.mode.whisper'] = 'CHUCHOTÉ',
 	['hud.voice.mode.normal'] = 'NORMAL',
-	['hud.voice.mode.shout'] = 'CRIE',
-	['hud.voice.mode.proximity'] = 'PORTEE',
+	['hud.voice.mode.shout'] = 'CRIÉ',
+	['hud.voice.mode.proximity'] = 'PORTÉE',
 	['hud.voice.distance'] = '{metres} M',
 	['hud.voice.open'] = 'OUVERT',
 
 	['hud.vehicle.unit'] = 'KM/H',
-	['hud.vehicle.integrity'] = 'INTEGRITE',
+	['hud.vehicle.integrity'] = 'INTÉGRITÉ',
 	['hud.vehicle.airborne'] = 'EN VOL',
+	['hud.vehicle.fuel'] = 'CARBURANT',
 })

@@ -31,7 +31,15 @@ local function granted(playerId)
 	return Server.Permitted(playerId, Command.SELF_TAGS) == true
 end
 
--- Every connected player's id, verified name and staff mark.
+-- Every connected player's id, verified account name, character name, citizen
+-- id and staff mark.
+--
+-- THE CHARACTER AND THE CITIZEN ID TRAVEL HERE, AND ONLY HERE. A tag used to
+-- read them off the player's replicated state bag, which every client in the
+-- bucket holds -- so the staff tool was built on a list every stranger had too.
+-- Never a name to a stranger is the owner's decision; the bag carries nothing
+-- now (`modules/character/server/state.lua`) and the two fields ride on this
+-- list, which reaches nobody the ACL has not granted `opx.admin.self.tags`.
 local function nameRows()
 	local rows = {}
 	local badge = M.Section('TAGS').BADGE ~= false
@@ -39,17 +47,21 @@ local function nameRows()
 		local name = Server.NameOf(id)
 		if name then
 			rows[#rows + 1] = { id = id, name = name,
+				character = Server.CharacterOf(id),
+				citizenId = Server.CitizenBagOf(id),
 				staff = badge and Server.Permitted(id, M.OPENER) == true or nil }
 		end
 	end
 	return rows
 end
 
--- One string per list, so an unchanged list is not sent again.
+-- One string per list, so an unchanged list is not sent again. Every field the
+-- tag draws: a rename or a character switch has to reach the operator.
 local function signature(rows)
 	local parts = {}
 	for index, row in ipairs(rows) do
-		parts[index] = ('%d\t%s\t%d'):format(row.id, row.name, row.staff and 1 or 0)
+		parts[index] = ('%d\t%s\t%s\t%s\t%d'):format(row.id, row.name, row.character or '',
+			row.citizenId or '', row.staff and 1 or 0)
 	end
 	return table.concat(parts, '\n')
 end

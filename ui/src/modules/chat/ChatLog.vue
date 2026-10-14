@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { emit } from '@/bridge/channel'
-import { bool, num, table, text } from '@/bridge/types'
+import { bool, num, table, text, own } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
-import { inputHeight, inputOpen } from './state'
+import { CLEARANCE, RESTING_BOTTOM, inputDrop, inputHeight, inputOpen } from './state'
 
 /**
  * THE CHAT LOG -- the overlay half of the box.
@@ -56,17 +56,14 @@ let sequence = 0
 /**
  * THE ROOM THE STYLESHEET ALREADY LEAVES FOR THE INPUT LINE, in pixels: one
  * field row at the top anchors (`--op-space-7`), and the distance the input
- * hangs below the log's own edge at the bottom ones (`--op-space-6`).
+ * hangs below the log's own edge at the bottom ones (`RESTING_BOTTOM` in
+ * `state.ts`, `--op-space-6`).
  *
  * Written as numbers because what is computed from them is compared against a
  * height measured in pixels on the other layer; they are the same two tokens the
  * anchor rules below use, and moving one means moving the other.
  */
 const RESTING_TOP = 48
-const RESTING_BOTTOM = 32
-
-/** The gap left between the input block and the log. `--op-space-2`. */
-const CLEARANCE = 8
 
 const atTop = computed(
   () => anchor.value === 'anchor-top-left' || anchor.value === 'anchor-top-center'
@@ -86,7 +83,10 @@ const atTop = computed(
  */
 const lift = computed(() => {
   if (!inputOpen.value) return 0
-  const resting = atTop.value ? RESTING_TOP : RESTING_BOTTOM
+  // At a bottom anchor the input has already dropped clear of the log by the field
+  // row's overrun (`inputDrop`), so the room is that much larger and an open box
+  // with nothing typed leaves the log exactly where it rested (#120).
+  const resting = atTop.value ? RESTING_TOP : RESTING_BOTTOM + inputDrop.value
   return Math.max(0, inputHeight.value + CLEARANCE - resting)
 })
 
@@ -104,10 +104,17 @@ const shown = computed(() => lines.value.filter(alive))
  * and the overlay is the one surface that is always drawn.
  */
 function syncTicker(): void {
-  const wanted = fadeMs.value > 0 && !inputOpen.value && lines.value.length > 0
+  // Only while the NEWEST line is still young. `lines.length > 0` kept the interval
+  // alive for the whole session once anything had been said -- the history outlives
+  // the fade -- re-rendering the log twice a second with nothing left to hide. Each
+  // tick re-checks, so the clock stops itself on the tick that hides the last line.
+  const newest = lines.value[lines.value.length - 1]
+  const wanted = fadeMs.value > 0 && !inputOpen.value && newest !== undefined
+    && Date.now() - newest.at < fadeMs.value
   if (wanted && ticker === null) {
     ticker = setInterval(() => {
       now.value = Date.now()
+      syncTicker()
     }, 500)
   } else if (!wanted && ticker !== null) {
     clearInterval(ticker)
@@ -143,7 +150,7 @@ useBridge('opx:chat:view', (payload: Payload) => {
 
   switch (text(payload.kind)) {
     case 'config': {
-      anchor.value = ANCHORS[text(payload.anchor)] ?? 'anchor-bottom-left'
+      anchor.value = own(ANCHORS, text(payload.anchor)) ?? 'anchor-bottom-left'
       offset.value = num(payload.offset, 155)
       width.value = num(payload.width, 620)
       history.value = num(payload.history, 60)
@@ -163,6 +170,15 @@ useBridge('opx:chat:view', (payload: Payload) => {
       visible.value = bool(payload.visible, true)
       break
   }
+})
+
+/* Closing the box restarts the clock. The ticker is off while the box is open, so
+   `now` froze at the open; lines said while it was open (the first chat of a
+   session, or after a clear, started no clock at all) then never faded until the
+   next line arrived. */
+watch(inputOpen, () => {
+  now.value = Date.now()
+  syncTicker()
 })
 
 onMounted(() => {
@@ -228,6 +244,15 @@ onUnmounted(() => {
   padding: var(--op-space-1) 0 var(--op-space-1) var(--op-space-3);
   pointer-events: none;
 
+  /* NEVER TALLER THAN THE ROOM ITS ANCHOR LEAVES, and the overflow is the OLDEST
+     lines. Sixty lines at 14px is ~1100px; with the box open every one of them is
+     drawn, and at a top anchor the log grows down -- so the newest lines, the ones
+     the player opened the chat to read, were the ones below the bottom of the
+     screen. `flex-end` puts the overflow at the top, where the old lines are; each
+     anchor below sets the height it actually has. */
+  justify-content: flex-end;
+  overflow: hidden;
+
   /* The leading edge, and the only mark this block carries. */
   border-left: 1px solid var(--op-red-idle);
 
@@ -268,6 +293,7 @@ onUnmounted(() => {
 .anchor-bottom-left {
   left: var(--op-inset-x);
   bottom: calc(var(--chat-offset) + var(--chat-lift, 0px));
+  max-height: calc(100vh - var(--chat-offset) - var(--chat-lift, 0px) - var(--op-inset-y));
 }
 
 /* Centred on the screen's axis, clear of the vitals in the corner. The width is
@@ -277,6 +303,7 @@ onUnmounted(() => {
   left: 50%;
   transform: translateX(-50%);
   bottom: calc(var(--chat-offset) + var(--chat-lift, 0px));
+  max-height: calc(100vh - var(--chat-offset) - var(--chat-lift, 0px) - var(--op-inset-y));
 }
 
 /* TOP ANCHORS PUT THE LOG UNDER THE INPUT LINE, which is the mirror of the
@@ -290,12 +317,14 @@ onUnmounted(() => {
 .anchor-top-left {
   left: var(--op-inset-x);
   top: calc(var(--chat-offset) + var(--op-space-7) + var(--chat-lift, 0px));
+  max-height: calc(100vh - var(--chat-offset) - var(--op-space-7) - var(--chat-lift, 0px) - var(--op-inset-y));
 }
 
 .anchor-top-center {
   left: 50%;
   transform: translateX(-50%);
   top: calc(var(--chat-offset) + var(--op-space-7) + var(--chat-lift, 0px));
+  max-height: calc(100vh - var(--chat-offset) - var(--op-space-7) - var(--chat-lift, 0px) - var(--op-inset-y));
 }
 
 .chat-line {

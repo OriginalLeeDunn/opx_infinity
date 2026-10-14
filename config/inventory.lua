@@ -196,4 +196,15 @@ OPX.Config.MODULES.inventory = {
 
 	-- Largest count one staff command accepts.
 	MAX_COMMAND_COUNT = 10000,
+
+	-- WHAT A MEDICAL ITEM HEALS, as a percentage of the player's maximum health,
+	-- applied at once on the server through the platform's health natives. An item
+	-- named here is refused at full health and while down (none of these revives),
+	-- and is consumed only when the heal landed. An item not named here heals
+	-- nothing; its own USE block still decides whether it can be used at all.
+	HEALING = {
+		bandage = 15,
+		bounce_back = 40,
+		maxdoc = 75,
+	},
 }

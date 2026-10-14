@@ -60,6 +60,16 @@ end
 -- Read through a pcall and proved finite: `Open77.players.position` answers nil
 -- for a slot that has already gone, and a caller that indexed that answer would
 -- raise inside a network handler.
+--- The bench key a refusal names back to the client, or ''.
+---
+--- `tostring(benchKey)` WAS ECHOED, and the key is the client's own argument:
+--- whatever it sent came back, a 48 KiB string as 48 KiB and a table as
+--- `table: 0x...` -- an address in this VM's heap, handed to anybody who asked.
+--- Only a key that could name a bench is worth naming back.
+local function echo(benchKey)
+	return Recipes.Key(benchKey) or ''
+end
+
 local function positionOf(player)
 	local players = Open77.players
 	if type(players) ~= 'table' or type(players.position) ~= 'function' then return nil end
@@ -100,7 +110,9 @@ local function reachOk(player, bench)
 	local dx = at.x - bench.position.x
 	local dy = at.y - bench.position.y
 	local dz = at.z - bench.position.z
-	if math.sqrt(dx * dx + dy * dy + dz * dz) > bench.reach then
+	-- With the server's slack (`REACH_SLACK`), for every bench -- the gunsmith's
+	-- among them: the row was offered from where the client stood.
+	if math.sqrt(dx * dx + dy * dy + dz * dz) > OPX.Spots.ServerReach(bench.reach) then
 		return false, Refusal.TOO_FAR
 	end
 	return true, nil
@@ -223,6 +235,19 @@ local function unregisterBenches(owner)
 	return Result.Ok(gone)
 end
 
+--- Drops one bench, when the owner named is the one that registered it.
+-- @author dop42
+-- @param key string
+-- @param owner string
+-- @return Result boolean whether a bench went
+local function unregisterBench(key, owner)
+	local bench = benches[Recipes.Key(key) or '']
+	if bench == nil then return Result.Ok(false) end
+	if bench.owner ~= owner then return Result.Err('not_owner') end
+	benches[bench.key] = nil
+	return Result.Ok(true)
+end
+
 --- Every registered bench, for a diagnostic.
 -- @author dop42
 -- @return Result
@@ -250,6 +275,9 @@ local function view(player, benchKey)
 
 	local citizenId = citizenOf(player)
 	if citizenId == nil then return Result.Err(Refusal.NO_CHARACTER) end
+	-- No screen from the floor: a bench list is a menu of things to press, and
+	-- the answer is `screen`, so a list already up comes down with it.
+	if OPX.Life.Down(player) then return Result.Err(Refusal.DOWNED) end
 
 	local allowed, refusal = gateOk(bench, player, nil)
 	if not allowed then return Result.Err(refusal) end
@@ -272,16 +300,66 @@ end
 -- A stack that has just left this bag fits back into it, so a failure here is
 -- not a case to handle but a case to SHOUT about: the player is owed items the
 -- server could not give back, and that line is the only trace of it.
-local function restore(player, taken)
+--
+-- TO THE CHARACTER, NOT THE CONNECTION. The refusal that sends things back can
+-- come after `Storage.Place` yielded, and by then the player may have left (the
+-- bag already unloaded, without the inputs) or switched character in the world
+-- (and the inputs went to the other one). The inventory contract takes a
+-- citizen id, online or not, and gives back to the bag they came out of.
+local function restore(citizenId, taken)
 	local inventory = M.Contracts.inventory
 	for index = #taken, 1, -1 do
-		local back = inventory.AddItem(player, taken[index].item, taken[index].count)
+		local back = inventory.AddItem(citizenId, taken[index].item, taken[index].count)
 		if type(back) ~= 'table' or not back.ok then
-			Open77.log.error(('[crafting] %dx %s could not be returned to player %d: %s')
-				:format(taken[index].count, taken[index].item, player,
+			Open77.log.error(('[crafting] %dx %s could not be returned to %s: %s')
+				:format(taken[index].count, taken[index].item, citizenId,
 					type(back) == 'table' and tostring(back.error) or 'no answer'))
 		end
 	end
+end
+
+--- Gives a price back to the character that paid it, here or not. Yields.
+-- `AddMoney` by connection answered `error.notLoggedIn` for a player who had
+-- left during the order, and the answer was never read: the money was simply
+-- gone. `AddMoneyOffline` pays a loaded character in memory and an absent one
+-- in its row, under the character module's ledger.
+local function refund(player, citizenId, recipe, bench)
+	local character = M.Contracts.character
+	local reason = ('crafting:refund:%s'):format(bench.key)
+	local paid, code
+	if type(character.AddMoneyOffline) == 'function' then
+		local answer = character.AddMoneyOffline(citizenId, recipe.money, recipe.price, reason)
+		paid = type(answer) == 'table' and answer.ok == true
+		code = type(answer) == 'table' and answer.error or nil
+	else
+		paid, code = character.AddMoney(player, recipe.money, recipe.price, reason)
+	end
+	if not paid then
+		Open77.log.error(('[crafting] %d %s could not be refunded to %s at %s: %s')
+			:format(recipe.price, tostring(recipe.money), citizenId, bench.key, tostring(code)))
+	end
+end
+
+-- A placement's own name: a tag drawn once per boot (so a restart never reuses
+-- one) and a counter. 6 + 6 hex digits and a decimal, well inside the column.
+local bootTag = ('%06x%s'):format(math.random(0, 0xFFFFFF),
+	(tostring({}):match('(%x%x%x%x%x%x)$') or ''))
+local nextToken = 0
+
+--- How long `order` keeps asking whether a failed placement went in after all.
+local PLACED_TRIES = 3
+local PLACED_RETRY_MS = 500
+
+--- Whether a placement whose answer was a failure is in the table anyway. Yields.
+-- @return integer|nil the order id when it is, false when it is not, nil when
+-- the database could not say
+local function placedAnyway(citizenId, token)
+	for attempt = 1, PLACED_TRIES do
+		local found = M.Storage.Placed(citizenId, token)
+		if found.ok then return found.value or false end
+		if attempt < PLACED_TRIES then Wait(PLACED_RETRY_MS) end
+	end
+	return nil
 end
 
 --- Places one order. Yields.
@@ -299,6 +377,9 @@ local function order(player, benchKey, recipeKey)
 
 	local citizenId = citizenOf(player)
 	if citizenId == nil then return Result.Err(Refusal.NO_CHARACTER) end
+	-- Not from the floor, for the order as for the screen: the down screen is
+	-- the client's, and a client on it can still send the press.
+	if OPX.Life.Down(player) then return Result.Err(Refusal.DOWNED) end
 
 	-- The bench gate and the recipe gate are two questions and both are asked:
 	-- a consumer may open a workshop to every employee and keep one recipe for
@@ -322,6 +403,10 @@ local function order(player, benchKey, recipeKey)
 	-- the player is looking at was built when they opened the screen and they may
 	-- have spent the materials since; the view is a picture and this is the
 	-- decision.
+	-- The shelf count yielded: the connection may hold another character now,
+	-- and what is taken below is taken from whoever it holds.
+	if citizenOf(player) ~= citizenId then return Result.Err(Refusal.NO_CHARACTER) end
+
 	local money = purse(player)
 	local may, why = Recipes.Allowed(recipe, carried(player, bench),
 		money[recipe.money or ''], shelf.value.cooking, bench.queue)
@@ -333,7 +418,7 @@ local function order(player, benchKey, recipeKey)
 		local input = recipe.inputs[index]
 		local removed = inventory.RemoveItem(player, input.item, input.count)
 		if type(removed) ~= 'table' or not removed.ok then
-			restore(player, taken)
+			restore(citizenId, taken)
 			return Result.Err(Refusal.SHORT)
 		end
 		taken[#taken + 1] = input
@@ -343,7 +428,7 @@ local function order(player, benchKey, recipeKey)
 		local paid, refusalKey = M.Contracts.character.RemoveMoney(player, recipe.money,
 			recipe.price, ('crafting:%s'):format(bench.key))
 		if not paid then
-			restore(player, taken)
+			restore(citizenId, taken)
 			Open77.log.info(('[crafting] player %d could not pay %d %s at %s: %s')
 				:format(player, recipe.price, recipe.money, bench.key, tostring(refusalKey)))
 			return Result.Err(Refusal.CANNOT_PAY)
@@ -351,16 +436,42 @@ local function order(player, benchKey, recipeKey)
 	end
 
 	local seconds = Recipes.ReadyIn(shelf.value.tail, recipe.seconds)
-	local placed = M.Storage.Place(citizenId, bench.key, recipe.key, seconds)
+	nextToken = nextToken + 1
+	local token = ('%s-%d'):format(bootTag, nextToken)
+	local placed = M.Storage.Place(citizenId, bench.key, recipe.key, seconds, bench.queue, token)
+	if not placed.ok then
+		-- AN ANSWER LOST IS NOT A ROW MISSING. The insert may have committed and
+		-- only its answer failed to come back; refunding then handed back the
+		-- materials and the price of an order that was cooking all the same.
+		local found = placedAnyway(citizenId, token)
+		if found then
+			Open77.log.warn(('[crafting] the order at %s answered %s but was filed as %d; ' ..
+				'it stands'):format(bench.key, tostring(placed.detail), found))
+			placed = Result.Ok(found)
+		elseif found == nil then
+			-- Neither answer: refunding could pay twice and keeping could lose it.
+			-- Kept, and said with everything needed to settle it by hand.
+			Open77.log.error(('[crafting] the order %s of %s at %s (%s) could not be filed ' ..
+				'or found (%s); NOTHING WAS REFUNDED. If no order with that token exists, ' ..
+				'refund %d %s and the materials by hand'):format(token, citizenId, bench.key,
+					recipe.key, tostring(placed.detail), recipe.price, tostring(recipe.money)))
+			return Result.Err(Refusal.UNAVAILABLE)
+		end
+	end
+	if placed.ok and placed.value == nil then
+		-- THE SHELF FILLED BETWEEN THE CHECK ABOVE AND THE ROW: another order of
+		-- this character's landed first. Nothing was promised, so everything
+		-- taken goes back, exactly as for a row that could not be written.
+		restore(citizenId, taken)
+		if recipe.price > 0 then refund(player, citizenId, recipe, bench) end
+		return Result.Err(Refusal.QUEUE_FULL)
+	end
 	if not placed.ok then
 		-- THE ROW IS LAST FOR EXACTLY THIS CASE. Everything before it has an
 		-- inverse and every inverse is run here; nothing has been promised to the
 		-- player yet, so the order simply did not happen.
-		restore(player, taken)
-		if recipe.price > 0 then
-			M.Contracts.character.AddMoney(player, recipe.money, recipe.price,
-				('crafting:refund:%s'):format(bench.key))
-		end
+		restore(citizenId, taken)
+		if recipe.price > 0 then refund(player, citizenId, recipe, bench) end
 		Open77.log.error(('[crafting] the order at %s could not be filed: %s')
 			:format(bench.key, tostring(placed.detail)))
 		return Result.Err(Refusal.UNAVAILABLE)
@@ -370,8 +481,11 @@ local function order(player, benchKey, recipeKey)
 		bench.key), citizenId = citizenId, source = player,
 		data = { bench = bench.key, recipe = recipe.key, seconds = seconds,
 			price = recipe.price } })
+	OPX.Publish(M.Event.ON_ORDERED, player, { citizenId = citizenId, bench = bench.key,
+		recipe = recipe.key, item = recipe.output, count = recipe.count, seconds = seconds,
+		price = recipe.price, money = recipe.money, order = placed.value })
 
-	return Result.Ok({ id = math.floor(tonumber(placed.value) or 0), seconds = seconds })
+	return Result.Ok({ id = placed.value, seconds = seconds })
 end
 
 --- Hands over one finished order. Yields.
@@ -385,6 +499,7 @@ local function collect(player, orderId)
 
 	local citizenId = citizenOf(player)
 	if citizenId == nil then return Result.Err(Refusal.NO_CHARACTER) end
+	if OPX.Life.Down(player) then return Result.Err(Refusal.DOWNED) end
 
 	local found = M.Storage.Find(citizenId, id)
 	if not found.ok then
@@ -431,7 +546,9 @@ local function collect(player, orderId)
 	-- the one handing it over.
 	if claimed.value ~= true then return Result.Err(Refusal.NO_SUCH_ORDER) end
 
-	local given = inventory.AddItem(player, recipe.output, recipe.count)
+	-- To the character the order is filed under: the claim yielded, and a
+	-- connection that switched character meanwhile is somebody else's bag now.
+	local given = inventory.AddItem(citizenId, recipe.output, recipe.count)
 	if type(given) ~= 'table' or not given.ok then
 		local back = M.Storage.Reshelve(citizenId, bench.key, recipe.key)
 		if not back.ok then
@@ -445,6 +562,9 @@ local function collect(player, orderId)
 	OPX.Audit.Log({ event = 'crafting.collect', message = ('%dx %s from %s')
 		:format(recipe.count, recipe.output, bench.key), citizenId = citizenId,
 		source = player, data = { bench = bench.key, recipe = recipe.key, order = id } })
+
+	OPX.Publish(M.Event.ON_COLLECTED, player, { citizenId = citizenId, bench = bench.key,
+		recipe = recipe.key, item = recipe.output, count = recipe.count, order = id })
 
 	return Result.Ok({ bench = bench.key, item = recipe.output, count = recipe.count })
 end
@@ -465,11 +585,15 @@ end
 local function answer(player, benchKey, acted)
 	local built = view(player, benchKey)
 	if not built.ok then
-		TriggerClientEvent(M.Event.REFUSED, player, tostring(benchKey), built.error)
+		-- `true`: the SCREEN itself was refused, whatever the reason. Without it
+		-- the client could only guess from a list of codes, and the job gate's
+		-- (off duty, demoted, fired) were not on it: the stale list stayed up and
+		-- its five-second refresh toasted "You must be on duty" until closed.
+		TriggerClientEvent(M.Event.REFUSED, player, echo(benchKey), built.error, true)
 		return
 	end
 	if acted ~= nil then
-		TriggerClientEvent(M.Event.REFUSED, player, tostring(benchKey), acted)
+		TriggerClientEvent(M.Event.REFUSED, player, echo(benchKey), acted)
 	end
 	TriggerClientEvent(M.Event.VIEW, player, built.value)
 end
@@ -482,6 +606,8 @@ function M.Init()
 	-- here would answer nil for the life of the resource.
 	M.Contracts = {}
 	OPX.Schema.Add(M.Storage.SCHEMA)
+	OPX.Schema.AddColumns(M.Storage.COLUMNS)
+	OPX.Schema.AddIndexes(M.Storage.INDEXES)
 end
 
 --- Publishes the contract. Nothing may read one before this phase ends.
@@ -490,6 +616,7 @@ function M.Api()
 	OPX.Api.Provide('crafting', 1, {
 		RegisterBench = registerBench,
 		UnregisterBenches = unregisterBenches,
+		UnregisterBench = unregisterBench,
 		Benches = benchList,
 
 		View = view,
@@ -517,7 +644,7 @@ function M.Start()
 		local player = tonumber(source) or 0
 		if player <= 0 then return end
 		if not within(player) then
-			TriggerClientEvent(M.Event.REFUSED, player, tostring(benchKey), Refusal.TOO_FAST)
+			TriggerClientEvent(M.Event.REFUSED, player, echo(benchKey), Refusal.TOO_FAST)
 			return
 		end
 		CreateThread(function()
@@ -530,7 +657,7 @@ function M.Start()
 		local player = tonumber(source) or 0
 		if player <= 0 then return end
 		if not within(player) then
-			TriggerClientEvent(M.Event.REFUSED, player, tostring(benchKey), Refusal.TOO_FAST)
+			TriggerClientEvent(M.Event.REFUSED, player, echo(benchKey), Refusal.TOO_FAST)
 			return
 		end
 		CreateThread(function()
@@ -549,7 +676,7 @@ function M.Start()
 		local player = tonumber(source) or 0
 		if player <= 0 then return end
 		if not within(player) then
-			TriggerClientEvent(M.Event.REFUSED, player, tostring(benchKey), Refusal.TOO_FAST)
+			TriggerClientEvent(M.Event.REFUSED, player, echo(benchKey), Refusal.TOO_FAST)
 			return
 		end
 		CreateThread(function()

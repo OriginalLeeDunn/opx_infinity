@@ -338,22 +338,10 @@ function OPX.UI.Answer(target, ref, payload)
 	return sent, refused
 end
 
---- Registers a request handler: the answer is sent back on the reply channel
---- under the ref the page supplied.
--- @author dop42
--- @param target string
--- @param channel string
--- @param handler fun(payload: table): table
-function OPX.UI.Serve(target, channel, handler)
-	OPX.UI.On(target, channel, function(payload)
-		local ok, answer = pcall(handler, payload)
-		if not ok then
-			Open77.log.error(('[ui] %s raised: %s'):format(channel, tostring(answer)))
-			answer = { ok = false, error = 'error.unavailable' }
-		end
-		OPX.UI.Answer(target, payload.ref, answer)
-	end)
-end
+-- `OPX.UI.Serve(target, channel, handler)` was here -- `On` plus a pcall plus
+-- `Answer` -- and nothing in the resource called it: the two modules that answer
+-- the page call `Answer` themselves, with refusals of their own. Removed rather
+-- than kept as a second way to do what they already do.
 
 --- Applies whatever is on top of the focus stack, or drops focus entirely.
 ---
@@ -405,6 +393,20 @@ function OPX.UI.ReleaseFocus(owner)
 		if focusStack[index].owner == owner then table.remove(focusStack, index) end
 	end
 	applyFocus()
+end
+
+--- Gives every owner's focus back at once, and tells the page.
+---
+--- The stop path's first step, BEFORE any module stops. Leaving it to
+--- `Teardown`, after `Modules.Stop`, made the one thing a player cannot recover
+--- from -- keyboard and cursor held with nothing drawn -- depend on thirty
+--- module `Stop`s all finishing inside the instruction budget first. It costs
+--- nothing to do it early: a module releasing its own owner afterwards finds an
+--- empty stack, and the page is still there for it to talk to.
+-- @author dop42
+function OPX.UI.ReleaseAllFocus()
+	focusStack = {}
+	if page then pcall(OPX.Surface.Focus, page, false, false) end
 end
 
 --- Who currently holds focus, or nil.

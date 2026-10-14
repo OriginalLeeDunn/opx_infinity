@@ -51,6 +51,13 @@ M.Event = {
 	-- so a server-side caller sends one of these.
 	START = OPX.Event(NET, 'progress', 'start'),
 	CANCEL = OPX.Event(NET, 'progress', 'cancel'),
+	-- Client to server: how a bar the server numbered ended, `(id, ending)`.
+	-- Attacker-controlled like every client event; the server keeps its own clock.
+	REPORT = OPX.Event(NET, 'progress', 'report'),
+
+	-- Server only, public: how a bar the server started ended, as the server
+	-- decided it. `(source, { id, owner, ending, completed, elapsedMs })`.
+	ON_FINISHED = OPX.Event(LOCAL, 'progress', 'finished'),
 
 	-- Client-local. What this module says when a bar ends, however it ended.
 	ON_DONE = OPX.Event(LOCAL, 'progress', 'done'),

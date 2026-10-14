@@ -8,29 +8,27 @@
 local M = OPX.Modules.Get('target')
 
 local EN = {
-	-- The eye's own row: who is this. Two identifiers, named, because they are
-	-- different things with different lifetimes.
-	['target.identify.row'] = 'Identifiers',
-	['target.identify.title'] = 'IDENTIFIERS',
-	['target.identify.copied'] = 'Server {server} / Character {citizen} — copied',
-	['target.identify.shown'] = 'Server {server} / Character {citizen}',
+	-- The eye's own row: the SERVER id, for a report to staff. Never the
+	-- character's id or name: never a name to a stranger.
+	['target.identify.row'] = 'Show server ID',
+	['target.identify.title'] = 'SERVER ID',
+	['target.identify.copied'] = 'Server id {server} — copied',
+	['target.identify.shown'] = 'Server id {server}',
 	['target.key'] = 'Target (hold)',
-	['target.hint'] = 'Right-click a target',
 	['target.looking'] = 'Looking…',
-	['target.back'] = 'Back',
 	['target.unavailable'] = 'Action unavailable',
+	['target.confirm'] = 'Confirm: {label}',
 }
 
 local FR = {
-	['target.identify.row'] = 'Identifiants',
-	['target.identify.title'] = 'IDENTIFIANTS',
-	['target.identify.copied'] = 'Serveur {server} / Perso {citizen} — copié',
-	['target.identify.shown'] = 'Serveur {server} / Perso {citizen}',
+	['target.identify.row'] = "Voir l'identifiant",
+	['target.identify.title'] = 'ID SERVEUR',
+	['target.identify.copied'] = 'ID serveur {server} — copié',
+	['target.identify.shown'] = 'ID serveur {server}',
 	['target.key'] = 'Cibler (maintenir)',
-	['target.hint'] = 'Clic droit sur une cible',
 	['target.looking'] = 'Recherche…',
-	['target.back'] = 'Retour',
 	['target.unavailable'] = 'Action indisponible',
+	['target.confirm'] = 'Confirmer : {label}',
 }
 
 M.Catalogs = { en = EN, fr = FR }

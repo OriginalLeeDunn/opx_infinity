@@ -100,8 +100,19 @@ local function wire(surface, channel)
 			latch(surface, channel, payload)
 			return
 		end
-		for index = 1, #listeners do
-			local ran, raised = pcall(listeners[index], payload)
+		-- A REAL SNAPSHOT, which the comment above always promised and the loop
+		-- did not take: it walked the live list. A handler that removed itself
+		-- -- the remover `On` answers exists for exactly that, and a one-shot
+		-- `ready` listener is the obvious caller -- shifted the tail down one, so
+		-- the NEXT listener on the channel was skipped for that payload, and the
+		-- last index then held nil, which `pcall` reported as `attempt to call a
+		-- nil value` against a handler nobody had written. On `focus:set`, the
+		-- broadcast several modules share, the skipped one was a module that
+		-- never heard the page drop its focus.
+		local walking, count = {}, #listeners
+		for index = 1, count do walking[index] = listeners[index] end
+		for index = 1, count do
+			local ran, raised = pcall(walking[index], payload)
 			if not ran then
 				Open77.log.error(('[surface %s] %s raised: %s')
 					:format(surface.id, full, tostring(raised)))
@@ -210,6 +221,8 @@ function OPX.Surface.Create(spec)
 		failed = false,
 		handlers = {},
 		wired = {},
+		-- `<id>:<channel>` by channel, filled by `Send` as it meets each one.
+		names = {},
 		-- Payloads that arrived on a wired channel before anything registered on
 		-- it. A channel that was never wired never reaches this table -- the host
 		-- has no listener to call and the payload is gone before this file sees
@@ -237,7 +250,14 @@ end
 function OPX.Surface.Send(surface, channel, payload)
 	if type(surface) ~= 'table' or surface.failed or not surface.ready then return false end
 	if surface.page == nil then return false end
-	local full = surface.id .. ':' .. channel
+	-- The prefixed name is built once per channel, not once per send: the HUD
+	-- streams vitals at 33 ms, so a concatenation here was a fresh string every
+	-- other frame for the life of the session, for a name that never changes.
+	local full = surface.names[channel]
+	if full == nil then
+		full = surface.id .. ':' .. channel
+		surface.names[channel] = full
+	end
 	local called, answer = pcall(surface.page.send, surface.page, full, payload or {})
 	if not called then
 		Open77.log.error(('[surface %s] %s not sent: %s'):format(surface.id, full, tostring(answer)))
@@ -326,16 +346,9 @@ function OPX.Surface.Visible(surface, visible)
 	return (pcall(method, page))
 end
 
---- Whether the page currently holds focus. A surface that lost it while open has
---- been closed by something else, and the owner has to notice.
--- @author dop42
--- @param surface table
--- @return boolean
-function OPX.Surface.HasFocus(surface)
-	if type(surface) ~= 'table' or surface.failed or surface.page == nil then return false end
-	local read, held = pcall(surface.page.hasFocus, surface.page)
-	return read and held == true
-end
+-- `HasFocus(surface)` was here and nothing called it: focus is decided by
+-- `core/client/ui.lua`'s stack and corrected by the page's own `focus:set`,
+-- which is the answer this would have polled for.
 
 --- Registers the host listener for a channel with no handler behind it yet.
 --

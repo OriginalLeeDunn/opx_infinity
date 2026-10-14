@@ -1,11 +1,17 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useLocale } from '@/composables/useLocale'
 import { emit } from '@/bridge/channel'
 import { guard } from '@/bridge/diag'
 import { acquireFocus } from '@/bridge/focus'
-import { list, text } from '@/bridge/types'
+import { text, records } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
+
+// The eyebrow from the catalogue, so a French player does not read `SPAWN`; the
+// English word only before the catalogue has reached the page.
+const { t, has } = useLocale()
+const eyebrow = computed(() => (has('spawn.eyebrow') ? t('spawn.eyebrow') : 'SPAWN'))
 
 /**
  * THE SPAWN MENU -- where a character starts.
@@ -97,6 +103,25 @@ function ordinal(at: number): string {
   return String(at + 1).padStart(2, '0')
 }
 
+/* The places go when the room's fade has run, not in the same tick as `open`: wiped
+   at once, the bay collapsed to an empty head and faded out like that. */
+const WIPE_MS = 240
+let wipe: ReturnType<typeof setTimeout> | undefined
+
+function cancelWipe(): void {
+  if (wipe !== undefined) clearTimeout(wipe)
+  wipe = undefined
+}
+
+function close(): void {
+  open.value = false
+  cancelWipe()
+  wipe = setTimeout(() => {
+    wipe = undefined
+    if (!open.value) blank()
+  }, WIPE_MS)
+}
+
 function blank(): void {
   open.value = false
   places.value = []
@@ -170,7 +195,7 @@ useBridge('opx:spawn:open', (payload: Payload) => {
     'spawn:open',
     () => {
       const rows: Place[] = []
-      for (const entry of list<Payload>(payload.locations)) {
+      for (const entry of records(payload.locations)) {
         const id = text(entry.id)
         if (!id) continue
         rows.push({ id, label: text(entry.label, id), district: text(entry.district) })
@@ -179,6 +204,7 @@ useBridge('opx:spawn:open', (payload: Payload) => {
       // serve, so this is a configuration that changed under a live session.
       if (rows.length === 0) return
 
+      cancelWipe()
       places.value = rows
       title.value = text(payload.title)
       about.value = text(payload.about)
@@ -208,7 +234,7 @@ useBridge('opx:spawn:close', (payload: Payload) => {
       // The reason is Lua's and it has already said it: a toast, in the player's
       // language. This page only takes the menu down.
       void payload
-      blank()
+      close()
       release?.()
       release = undefined
     },
@@ -221,6 +247,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  cancelWipe()
   window.removeEventListener('keydown', onKeyDown)
   release?.()
 })
@@ -240,7 +267,7 @@ onUnmounted(() => {
                cannot drop -- the same call `FormView` makes. -->
           <div class="head">
             <div class="head-text">
-              <span class="eyebrow op-eyebrow">SPAWN</span>
+              <span class="eyebrow op-eyebrow">{{ eyebrow }}</span>
               <h1 class="op-truncate">{{ title }}</h1>
             </div>
           </div>
@@ -381,6 +408,12 @@ onUnmounted(() => {
   position: relative;
   flex: 1;
   min-width: 0;
+  /* A COLUMN, so the stage's max-height reaches the grid. As a block the bay was as
+     tall as its content and `.bay-inner`'s `max-height: inherit` inherited
+     nothing: past a screenful of places the grid never scrolled, and the last cards
+     and the hint were cut off by the bay's own clip. */
+  display: flex;
+  flex-direction: column;
   /* THE DIAL IS TURNED ON, with `FormView`'s caveat: the scrim means this bay was
      never the one washing out, so it needs to be told apart from that dim rather
      than held against daylight. Quiet, on `--op-plate`'s own channels, so the
@@ -393,6 +426,7 @@ onUnmounted(() => {
   z-index: 1;
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
   max-height: inherit;
 }

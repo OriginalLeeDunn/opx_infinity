@@ -1,17 +1,12 @@
 --- The shop floor: a row on the eye, and the bill that follows a fitting.
 -- @author dop42
 --
--- THIS HALF ASKS AND REPORTS. It does not decide. It puts a row where a shop
--- stands, it asks the server to open the room, and when the room closes it
--- reports WHICH SLOTS CHANGED -- the one fact the server cannot see for itself,
--- because `Open77.equipment.records` and the fitting room's own draft live only
--- here. Every other question -- the distance, the price, the money, the job --
--- is answered on the server, from its own tables. See `server/main.lua`.
---
--- THE SLOT LIST IS NOT COMPUTED HERE EITHER. It rides on `wardrobeClosed`,
--- published by the fitting room, which is the only place that holds both what
--- the player walked in wearing and what they walked out with. A shop that
--- re-read the body afterwards would be racing the clothing module's own save.
+-- THIS HALF ASKS. It does not decide, and it does not bill. It puts a row where
+-- a shop stands and asks the server to open the room; the room's clothing save
+-- is what the server charges, diffing it against the stored record itself
+-- before it is written. Every question -- the distance, the slots that moved,
+-- the price, the money, the job -- is answered on the server, from its own
+-- tables. See `server/main.lua`.
 
 local M = OPX.Modules.Get('shops')
 
@@ -32,10 +27,15 @@ local wardrobe = nil
 local ON_DECISION = OPX.Event(OPX.Channel.LOCAL, 'appearance', 'decision')
 
 -- The shop the player is currently being served at, or nil. Set when the room
--- is asked for and cleared when the bill goes out: a room opened for any other
--- reason -- the join offer, a staff member -- must not be billed to a shop
--- somebody happened to be standing near.
+-- is asked for and cleared when it closes: the uniforms strip and the WEAR
+-- request name it, and a room opened for any other reason -- the join offer, a
+-- staff member -- is not a room at this shop.
 local serving = nil
+
+-- The open room's prices by slot, its currency, and the priced uniforms picked
+-- in it, for the line that says what Save will cost (see `bill`).
+local roomPrices, roomCurrency, picked = {}, nil, {}
+local priceRoom
 
 -- The ready-made looks the server said this player may take here.
 local offered = {}
@@ -304,6 +304,40 @@ local function offerGroups()
 	end
 end
 
+--- What Save will cost, as the room's status line says it.
+--
+-- THE ROOM SHOWED NO PRICES. The first amount a player saw was "Paid X" after
+-- Save. This answers the room's pricer with the bill the server will make:
+-- every moved slot at this shop's price, except the slots wearing a uniform
+-- picked here, which are billed once at the uniform's own price. Display only:
+-- the server bills from its own tables and its own diff.
+local function bill(slots, draft)
+	local total, prepaid = 0, {}
+	for _, look in ipairs(picked) do
+		local worn = false
+		for slot, record in pairs(look.wear) do
+			if record ~= false and type(draft) == 'table' and draft[slot] == record then
+				prepaid[slot], worn = true, true
+			end
+		end
+		if worn then total = total + look.cost end
+	end
+	for _, slot in ipairs(slots) do
+		if not prepaid[slot] then
+			local price = tonumber(roomPrices[slot])
+			if price ~= nil and price > 0 then total = total + math.floor(price) end
+		end
+	end
+	if total <= 0 then return nil end
+	return locale('shops.room.total', { total = OPX.Locale.Money(total, roomCurrency) })
+end
+
+--- Hands the open room its pricer, once there is a room and a price list.
+priceRoom = function()
+	if not roomOpen or wardrobe == nil or type(wardrobe.PriceWardrobe) ~= 'function' then return end
+	pcall(wardrobe.PriceWardrobe, OWNER, bill)
+end
+
 --- Puts a look on, whichever of the two ways is the right one right now.
 --
 -- THE FORK THAT MAKES THE WHOLE FEATURE WORK. With a fitting room open the
@@ -422,7 +456,7 @@ local function showLooks()
 			-- a ready-made look is a purchase and the server takes the money before
 			-- it sends the garments.
 			value = tonumber(look.cost) and tonumber(look.cost) > 0
-				and tostring(look.cost) or nil,
+				and OPX.Locale.Money(look.cost) or nil,
 			data = { verb = 'wear', look = look.id },
 			close = true,
 		}
@@ -457,8 +491,13 @@ local function showOutfits()
 			rows[#rows + 1] = { id = 'share', label = locale('shops.outfits.share'),
 				data = { verb = 'share', id = outfit.id } }
 		end
+		-- CONFIRMED, because a deleted outfit is gone for good and this row sat one
+		-- arrow key under Wear. The menu's own `confirm` builds the two rows, the
+		-- one that keeps the outfit first.
 		rows[#rows + 1] = { id = 'delete', label = locale('shops.outfits.delete'),
-			data = { verb = 'delete', id = outfit.id } }
+			data = { verb = 'delete', id = outfit.id },
+			confirm = { no = locale('shops.outfits.keep'),
+				yes = locale('shops.outfits.deleteConfirm', { name = tostring(outfit.name) }) } }
 
 		items[index] = {
 			id = 'outfit.' .. tostring(outfit.id),
@@ -544,7 +583,10 @@ local function askCode()
 			-- round trip, and the server's is the one that decides.
 			local code = M.CleanCode(typed, length)
 			if code == nil then return OPX.Toast.Locale('shops.badCode', nil, 'error') end
-			TriggerServerEvent(M.Event.REDEEM, { code = code })
+			-- With the shop whose room this is: a code is worn only inside a
+			-- shop's room and billed at its prices, and the server checks both.
+			if serving == nil then return OPX.Toast.Locale('shops.redeemAtShop', nil, 'error') end
+			TriggerServerEvent(M.Event.REDEEM, { code = code, shop = serving })
 		end,
 	}
 end
@@ -580,10 +622,8 @@ function M.Start()
 		placeRows()
 	end
 
-	-- THE BILL IS RAISED BY THE ROOM CLOSING, and only when this module asked for
-	-- it. `serving` is what separates "a fitting at a shop" from every other
-	-- reason a fitting room opens -- the join offer, a staff member -- and it is
-	-- cleared here whatever the outcome, so a later close cannot be billed twice.
+	-- THE ROOM'S DECISIONS. No bill is raised here any more: the server charges
+	-- the clothing save itself. `serving` is cleared when the room closes.
 	AddEventHandler(ON_DECISION, function(decision)
 		if type(decision) ~= 'table' then return end
 		local event = decision.event
@@ -594,6 +634,7 @@ function M.Start()
 		-- this client first is not something either side promises.
 		if event == 'wardrobeOpened' and decision.ok ~= false then
 			roomOpen = true
+			priceRoom()
 			return offerGroups()
 		end
 
@@ -626,21 +667,37 @@ function M.Start()
 		closeScreens()
 		-- A CANCELLED ROOM DROPS THE QUEUED SAVE. The player named a look they
 		-- then decided not to keep; writing the one they walked in with down under
-		-- that name is exactly the confusion the queue exists to avoid.
-		if decision.kept ~= true then pendingSave = nil end
+		-- that name is exactly the confusion the queue exists to avoid. And it is
+		-- SAID: the player was told "it will be saved when you finish here".
+		--
+		-- A ROOM LEFT BY SAVE WITH NOTHING CHANGED IS NOT A CANCEL. It closes
+		-- `kept = false` too, because keeping what was never changed writes
+		-- nothing, so no `clothingSaved` ever comes -- and "save the look I am
+		-- wearing" silently saved nothing. The stored look IS what is worn then,
+		-- so it is written down now.
+		if decision.kept ~= true and pendingSave ~= nil then
+			local name = pendingSave
+			pendingSave = nil
+			if decision.asked == true then
+				TriggerServerEvent(M.Event.SAVE, { name = name })
+			else
+				OPX.Toast.Locale('shops.save.dropped', { name = name }, 'info')
+			end
+		end
 
-		local shop = serving
 		serving, offered, saved = nil, {}, {}
-		if shop == nil or decision.kept ~= true then return end
-
-		local slots = type(decision.slots) == 'table' and decision.slots or {}
-		if #slots == 0 then return end
-		TriggerServerEvent(M.Event.BILL, { shop = shop, slots = slots })
+		roomPrices, picked = {}, {}
 	end)
 
 	RegisterNetEvent(M.Event.LOOKS, function(payload)
 		offered = type(payload) == 'table' and type(payload.looks) == 'table'
 			and payload.looks or {}
+		roomPrices = type(payload) == 'table' and type(payload.prices) == 'table' and payload.prices or {}
+		roomCurrency = type(payload) == 'table' and type(payload.currency) == 'string'
+			and payload.currency or nil
+		picked = {}
+		-- No pricer to hand here: it reads these tables when it is asked, and
+		-- `offerGroups` below republishes the room.
 		-- Offered again: this may have arrived after the room opened, and the
 		-- Uniforms category exists only when this list is not empty.
 		offerGroups()
@@ -648,15 +705,16 @@ function M.Start()
 
 	RegisterNetEvent(M.Event.PUT_ON, function(payload)
 		if type(payload) ~= 'table' then return end
+		-- A uniform picked in the room is billed at its own price on Save; the
+		-- room's line counts it so, for the slots that are wearing it.
+		if roomOpen and type(payload.wear) == 'table' then
+			for _, look in ipairs(offered) do
+				if look.id == payload.look and (tonumber(look.cost) or 0) > 0 then
+					picked[#picked + 1] = { wear = payload.wear, cost = tonumber(look.cost) }
+				end
+			end
+		end
 		dress(payload.wear)
-	end)
-
-	-- THE BILL COULD NOT BE TAKEN, so the clothes go back. The record comes from
-	-- the server because by this point the client's own idea of what it walked in
-	-- wearing is exactly what is in doubt.
-	RegisterNetEvent(M.Event.RESTORE, function(record)
-		if type(record) ~= 'table' or type(record.equipment) ~= 'table' then return end
-		putOn(record.equipment)
 	end)
 
 	RegisterNetEvent(M.Event.SAVED, function(payload)

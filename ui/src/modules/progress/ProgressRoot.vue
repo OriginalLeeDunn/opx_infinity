@@ -53,6 +53,13 @@ const cancelKey = ref('')
     before the transition begins -- set in the same frame, it would jump. */
 const filled = ref(false)
 
+/** One per `show`, and the bar's key. A show arriving while a bar is still up -- one
+    action straight after another -- used to keep the element: its "empty" was a
+    transition back from wherever the last bar stood, reversed 32ms later, so the
+    new bar started at (nearly) full and stayed there. A new key is a new element,
+    and a new element starts at zero. */
+const run = ref(0)
+
 /** The transition's own duration, in milliseconds. */
 const span = shallowRef(0)
 
@@ -65,11 +72,13 @@ function clearRaise(): void {
 
 useBridge('opx:progress:show', (payload: Payload) => {
   clearRaise()
-  label.value = t(text(payload.label))
+  // The key; translated where it is drawn, so a catalogue landing late still applies.
+  label.value = text(payload.label)
   cancelKey.value = text(payload.cancelKey)
   cancelable.value = bool(payload.cancelable) && cancelKey.value !== ''
   span.value = Math.max(0, num(payload.durationMs))
   filled.value = false
+  run.value += 1
   open.value = true
   // ONE FRAME AT ZERO. A transition started in the frame the element mounts in
   // has no "from" to interpolate out of, so the bar snaps full and then sits
@@ -89,10 +98,11 @@ onUnmounted(clearRaise)
 <template>
   <div v-if="open" class="progress">
     <section class="plate op-plane op-ink">
-      <p class="label op-eyebrow op-truncate">{{ label }}</p>
+      <p class="label op-eyebrow op-truncate">{{ t(label) }}</p>
 
       <span class="track op-frame" data-augmented-ui="tr-clip border">
         <span
+          :key="run"
           class="bar"
           :style="{
             transform: filled ? 'scaleX(1)' : 'scaleX(0)',

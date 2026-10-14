@@ -114,7 +114,8 @@ OPX.Config.MODULES.teleports = {
 	-- Requests one player may make per window. The move itself is bounded by the
 	-- one-at-a-time lock in the server half; this bounds the asking.
 	REQUEST_WINDOW_MS = 10000,
-	REQUESTS_PER_WINDOW = 4,
+	-- 6, as every other place (garages, dealers, lifts) over the same window.
+	REQUESTS_PER_WINDOW = 6,
 
 	-- The key pressed while standing on an entrance. ID is stable, because a
 	-- player's rebind is stored under it; NAME is the catalogue key of the

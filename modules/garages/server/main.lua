@@ -67,7 +67,7 @@ local spots = {}
 -- nowhere else, so two SYNCs of the same revision for the same bucket are the
 -- same list, and a client that already holds it has nothing to do. That is
 -- most of them: every client asks every POLL_MS, and taking a list in costs a
--- client far more than drawing one (see the client's `takeIn`).
+-- client far more than drawing one (see the client's `SYNC` handler).
 local listMark, listRevision = nil, 0
 
 -- Per-player rate-limit windows for requests that are not rate-limited by
@@ -87,6 +87,18 @@ local running = false
 -- bring-out takes the first exit. That is the old behaviour and it is not worth
 -- refusing over, but it is worth an operator being able to find it.
 local reportedOccupancy = false
+
+-- EXITS PROMISED TO A BRING-OUT STILL ON ITS WAY, exit -> the clock time the
+-- promise lapses. `freeExit` reads the world, and the spawn after it yields on
+-- the database before the car exists: two players at one garage pressing the
+-- key in the same moment both read bay one free and both cars were created on
+-- it, one inside the other. A bay is held from the choice until the car stands
+-- on it (it is then in the world, which is what `freeExit` reads) or the spawn
+-- is refused. Weak keys: a rebuilt garage table lets the old exits go.
+local promised = setmetatable({}, { __mode = 'k' })
+-- Long enough for a spawn's database round trip, short enough that a thread the
+-- host dropped mid-yield costs one bay for a moment, not for the session.
+local PROMISE_MS = 10000
 
 -- Longest wire value a log line carries, in characters.
 local MAX_LOGGED = 64
@@ -506,6 +518,8 @@ local function freeExit(place, skipId)
 				break
 			end
 		end
+		local held = promised[exit]
+		if free and held ~= nil and OPX.Now() < held then free = false end
 		if free then return exit, slot end
 	end
 	return nil, nil
@@ -532,17 +546,29 @@ local function resolve(source, key, craft)
 
 	local point = nil
 	if key == nil or key == '' then
-		point = Access.Nearest(spots, at.x, at.y)
+		-- IN THE CONNECTION'S OWN BUCKET. Over every bucket, an instanced copy of
+		-- a garage standing on the same spot that sorted first by key won the
+		-- search and was then refused as `wrongBucket`, to a player standing on a
+		-- garage in their own. The door a seated driver or pilot is nearest to is
+		-- looked for in the same bucket.
+		local here = Access.InBucket(spots, at.bucket)
+		point = Access.Nearest(here, at.x, at.y, OPX.Spots.ServerReachSq(Access.USE_RADIUS))
 		if (point == nil or point.role ~= M.ROLE.ENTRY) and craft ~= nil then
-			point = Access.NearestDoor(spots, at.x, at.y, craft == 'aircraft') or point
+			point = Access.NearestDoor(here, at.x, at.y, craft == 'aircraft') or point
 		end
 	else
 		point = Access.Spot(spots, key)
 		if point == nil and garages[key] ~= nil then
-			local mine = {}
+			-- The garage's points in this bucket when it has any there, and all
+			-- of them otherwise -- so a garage that is only elsewhere still
+			-- answers `wrongBucket` below rather than `noSuchSpot`.
+			local mine, here = {}, {}
 			for _, candidate in ipairs(Access.PointsOf(garages[key])) do
 				mine[candidate.key] = candidate
+				if candidate.bucket == at.bucket then here[candidate.key] = candidate end
 			end
+			if next(here) ~= nil then mine = here end
+
 			-- UNBOUNDED, and that is the difference between two refusals an
 			-- operator reads. Asking for the nearest point WITHIN REACH answers
 			-- nil for somebody standing across the street from the garage they
@@ -559,8 +585,10 @@ local function resolve(source, key, craft)
 	-- config/garages.lua): further than a walker, and no higher over it than a
 	-- landed hull or a low hover puts them.
 	local pilot = craft == 'aircraft' and point.role == M.ROLE.ENTRY and point.kind == M.KIND.AVPAD
-	local reach = pilot and Access.AV_PUTAWAY_RADIUS_SQ or Access.USE_RADIUS_SQ
+	local reach = OPX.Spots.ServerReachSq(pilot and Access.AV_PUTAWAY_RADIUS or Access.USE_RADIUS)
 	local flat = Access.FlatDistanceSquared(point, at.x, at.y)
+	-- WITH THE SERVER'S SLACK: the row was drawn from where the client stood,
+	-- and this measures where the player was last observed (`REACH_SLACK`).
 	if flat == nil or flat > reach then
 		return nil, Result.Err('garages.tooFar', point.key)
 	end
@@ -609,6 +637,8 @@ function M.List(source, key)
 			listed[#listed + 1] = {
 				plate = row.plate,
 				record = row.record,
+				-- The model as a player calls it, so the list is not bare plates.
+				name = OPX.Vehicle.DisplayName(row.record),
 				here = row.garage == built.key,
 			}
 		end
@@ -910,6 +940,8 @@ function M.Bring(source, key, wanted)
 		return Result.Err('garages.noFreeExit', built.label)
 	end
 
+	promised[exit] = OPX.Now() + PROMISE_MS
+
 	-- The exit itself, never the player's side: that is the whole point of a
 	-- marker. An AV is lifted clear of the pad it materialises on.
 	local z = exit.z
@@ -923,6 +955,9 @@ function M.Bring(source, key, wanted)
 		yaw = exit.heading,
 		bucket = exit.bucket,
 	})
+	-- Either way the promise is kept or void now: a car on the bay is read off
+	-- the world from here on, and a refused spawn left it empty.
+	promised[exit] = nil
 	if not spawned.ok then return spawned end
 
 	-- THE PILOT IS PLACED, NOT LEFT TO CLIMB. Only at a pad, and only for an
@@ -967,6 +1002,7 @@ function M.Bring(source, key, wanted)
 		label = built.label,
 		exit = slot,
 		plate = pick.plate,
+		name = OPX.Vehicle.DisplayName(pick.record),
 		id = spawned.value and spawned.value.id or nil,
 		-- Forwarded, not decided here: whether the vehicle had to be moved is
 		-- the vehicles contract's answer, and this half only repeats it.
@@ -1152,6 +1188,30 @@ function M.TakeJob(source, key, slot)
 	})
 end
 
+--- Whether anybody but `source` sits in a vehicle, read from the host's own
+--- snapshot. A vehicle that cannot be read has nobody aboard we know of.
+local function othersAboard(vehicleId, source)
+	local api = Open77.vehicles
+	if vehicleId == nil or type(api) ~= 'table' or type(api.get) ~= 'function' then return false end
+	local read, snapshot = pcall(api.get, vehicleId)
+	if not read or type(snapshot) ~= 'table' or type(snapshot.occupants) ~= 'table' then
+		return false
+	end
+	for _, occupant in ipairs(snapshot.occupants) do
+		local id = type(occupant) == 'table' and (occupant.playerId or occupant.player) or occupant
+		if tonumber(id) ~= tonumber(source) then return true end
+	end
+	return false
+end
+
+--- Whether the host has this connection in any vehicle seat at all.
+local function seatedAnywhere(source)
+	local players = Open77.players
+	if type(players) ~= 'table' or type(players.getVehicleSeat) ~= 'function' then return false end
+	local read, assignment = pcall(players.getVehicleSeat, source)
+	return read and type(assignment) == 'table' and assignment.vehicleId ~= nil
+end
+
 --- The marker's one door: PUT AWAY when the connection is sitting in its own
 --- vehicle, and BRING OUT otherwise.
 -- ONE DECISION, MADE HERE. The player presses one key on one marker, and which
@@ -1189,6 +1249,17 @@ function M.Use(source, key, wanted)
 		-- leave a car in.
 		local allowed, gateRefusal = mayUse(source, built)
 		if not allowed then return Result.Err(gateRefusal, built.label) end
+		-- NOBODY ELSE IS IN IT. Putting a car away removes it from the world, and
+		-- the removal ejects whoever is riding along -- a passenger dropped on
+		-- the tarmac because the driver pressed a key. `vehicles.Spawn` and
+		-- `SetState` already refuse an occupied car for the same reason.
+		if othersAboard(seated.value.id, source) then
+			return Result.Err('garages.passengers', built.label)
+		end
+		-- The model is read before the car goes, for the sentence that says so.
+		local row = type(vehicles.Get) == 'function' and vehicles.Get(seated.value.plate) or nil
+		local record = type(row) == 'table' and row.ok and type(row.value) == 'table'
+			and row.value.record or nil
 		local put = vehicles.Store(seated.value.plate, built.key)
 		if not put.ok then return put end
 		return Result.Ok({
@@ -1196,6 +1267,7 @@ function M.Use(source, key, wanted)
 			garage = built.key,
 			label = built.label,
 			plate = seated.value.plate,
+			name = OPX.Vehicle.DisplayName(record),
 			stored = true,
 		})
 	end
@@ -1227,12 +1299,44 @@ function M.Use(source, key, wanted)
 		})
 	end
 
+	-- SEATED IN A CAR THAT IS NOT THEIRS. `Occupied` answers nothing for a
+	-- friend's car, a staff spawn or a ride, and this fell through to the
+	-- bring-out half: the row said "Put your vehicle away", the key brought one
+	-- of the player's own cars out beside them instead (or answered that every
+	-- exit was blocked, by the car they were sitting in). The host's seat is
+	-- read here only to tell those two apart; what may be stored is still
+	-- decided by `Occupied` alone.
+	if seated ~= nil and seated.ok and seatedAnywhere(source) then
+		return Result.Err('garages.notYours')
+	end
+
 	return M.Bring(source, key, wanted)
 end
 
 -- ── the doors ───────────────────────────────────────────────────────────────
 
+--- What a sentence calls a vehicle: `Model · PLATE`, or the plate alone.
+local function vehicleLabel(value)
+	local plate = tostring(value.plate or '')
+	if type(value.name) == 'string' and value.name ~= '' then
+		return locale('garages.vehicleLabel', { name = value.name, plate = plate })
+	end
+	return plate
+end
+
 --- One request off the wire. Rate-limited, then answered either way.
+--- The key an answer names back to the client: one this server knows, or nil.
+---
+--- THE CLIENT'S OWN ARGUMENT WAS ECHOED, whatever it was: a 48 KiB string came
+--- back as 48 KiB on every refusal, rate-limited ones included. The client
+--- matches an answer to the marker it pressed, and only a key naming a spot or
+--- a garage can be that.
+local function echoOf(key)
+	if type(key) ~= 'string' then return nil end
+	if Access.Spot(spots, key) ~= nil or garages[key] ~= nil then return key end
+	return nil
+end
+
 -- A `record` means "issue me a hull of the division's stock" and a `job` means
 -- "sign me out this row of my job's fleet"; both ride the same window and
 -- cooldown a bring-out does. With neither it is a bring-out or a put-away, as
@@ -1257,15 +1361,21 @@ local function onRequested(key, plate, record, job)
 	-- the caller that can drive it, and the floor its own config already asked
 	-- for is what stops it being driven.
 	if Access.COOLDOWN_MS > 0 and OPX.Cooling(src, 'garages.bring', Access.COOLDOWN_MS) then
-		TriggerClientEvent(M.Event.ANSWER, src, key, false, 'garages.rateLimited')
+		TriggerClientEvent(M.Event.ANSWER, src, echoOf(key), false, 'garages.rateLimited')
 		return
 	end
 	if not within(src, Access.REQUESTS_PER_WINDOW, Access.REQUEST_WINDOW_MS) then
-		TriggerClientEvent(M.Event.ANSWER, src, key, false, 'garages.rateLimited')
+		TriggerClientEvent(M.Event.ANSWER, src, echoOf(key), false, 'garages.rateLimited')
 		return
 	end
 
 	CreateThread(function()
+		-- From the floor nothing comes out and nothing goes in: the down screen
+		-- is drawn by the client, and a client on it still sends the key.
+		if OPX.Life.Down(src) then
+			TriggerClientEvent(M.Event.ANSWER, src, echoOf(key), false, 'error.incapacitated')
+			return
+		end
 		local used = nil
 		if job ~= nil then
 			used = M.TakeJob(src, key, job)
@@ -1275,11 +1385,14 @@ local function onRequested(key, plate, record, job)
 			used = M.Use(src, key, plate)
 		end
 		if not used.ok then
-			-- The refusal AND a toast of the same code: without the toast the
-			-- player would not know why nothing happened.
-			OPX.Refuse(src, used.error, M.Operation.BRING)
-			OPX.NotifyLocale(src, used.error, { garage = safe(used.detail) }, 'error')
-			TriggerClientEvent(M.Event.ANSWER, src, key, false, used.error)
+			-- ONE DOOR, AND IT CARRIES THE GARAGE'S NAME. This sent the refusal, a
+			-- toast of the same code AND this answer, which the client toasts too:
+			-- three toasts for one refusal, and the refusal's copy read `Every exit
+			-- at {garage} is blocked` because a refusal carries no params. The
+			-- answer is the one the client was already reading; it now carries
+			-- the detail the sentence names.
+			TriggerClientEvent(M.Event.ANSWER, src, echoOf(key), false, used.error, nil, nil,
+				safe(used.detail))
 			Open77.log.info(('[garages] player %d refused %s: %s'):format(src, safe(key),
 				tostring(used.error)))
 			return
@@ -1294,8 +1407,12 @@ local function onRequested(key, plate, record, job)
 		local action = value.issued and 'issued'
 			or (value.stored and 'stored' or (value.returned and 'returned'
 				or (value.recalled and 'recalled' or 'brought')))
+		-- NAMED AS THE LIST NAMES IT, model and plate, and a recall says it was
+		-- recalled: it said "Brought out XX" for a car that had been moved from
+		-- across the map, which is the phrasing behind the six-presses report.
+		local vehicle = vehicleLabel(value)
 		if value.stored then
-			OPX.NotifyLocale(src, 'garages.storedAway', { plate = value.plate }, 'success')
+			OPX.NotifyLocale(src, 'garages.storedAway', { vehicle = vehicle }, 'success')
 		elseif value.returned then
 			OPX.NotifyLocale(src, 'garages.jobReturned',
 				{ vehicle = locale(tostring(value.vehicle)) }, 'success')
@@ -1304,10 +1421,12 @@ local function onRequested(key, plate, record, job)
 		elseif value.job ~= nil then
 			OPX.NotifyLocale(src, 'garages.jobOut',
 				{ vehicle = locale(tostring(value.vehicle)) }, 'success')
+		elseif value.recalled then
+			OPX.NotifyLocale(src, 'garages.recalled', { vehicle = vehicle }, 'success')
 		else
-			OPX.NotifyLocale(src, 'garages.broughtOut', { plate = value.plate }, 'success')
+			OPX.NotifyLocale(src, 'garages.broughtOut', { vehicle = vehicle }, 'success')
 		end
-		TriggerClientEvent(M.Event.ANSWER, src, key, true, nil, value.plate, action, value.job)
+		TriggerClientEvent(M.Event.ANSWER, src, echoOf(key), true, nil, value.plate, action, value.job)
 		local verbs = { stored = 'put away', recalled = 'moved', issued = 'issued',
 			returned = 'returned to the pool', brought = 'brought out' }
 		Open77.log.info(('[garages] player %d %s %s%s at %s%s'):format(src, verbs[action],
@@ -1330,8 +1449,9 @@ local function onListed(key)
 	CreateThread(function()
 		local listed = M.List(src, key)
 		if not listed.ok then
-			OPX.Refuse(src, listed.error, M.Operation.LIST)
-			TriggerClientEvent(M.Event.VEHICLES, src, { spot = key, error = listed.error })
+			-- Only the list answer, which the client toasts: the refusal beside it
+			-- put the same sentence up twice.
+			TriggerClientEvent(M.Event.VEHICLES, src, { spot = echoOf(key), error = listed.error })
 			return
 		end
 		TriggerClientEvent(M.Event.VEHICLES, src, listed.value)
@@ -1573,7 +1693,8 @@ local function registerCommands()
 				OPX.NotifyLocale(source, brought.error, { garage = safe(brought.detail) }, 'error')
 				return OPX.CommandResult(source, false, tostring(brought.error))
 			end
-			OPX.NotifyLocale(source, 'garages.broughtOut', { plate = brought.value.plate }, 'success')
+			OPX.NotifyLocale(source, brought.value.recalled and 'garages.recalled' or 'garages.broughtOut',
+				{ vehicle = vehicleLabel(brought.value) }, 'success')
 			OPX.CommandResult(source, true, ('%s out at %s'):format(brought.value.plate,
 				brought.value.label))
 		end)
@@ -1762,7 +1883,11 @@ function M.Start()
 
 	RegisterNetEvent(M.Event.ASK, function()
 		local player = tonumber(source)
-		if player == nil then return end
+		if player == nil or player <= 0 then return end
+		-- A FLOOR, as every other door here has one: each ask is a character
+		-- read, a bucket filter, a sort and a payload, and a client polls every
+		-- POLL_MS (15 s). Faster than once a second is not a client polling.
+		if OPX.Cooling(player, 'garages.ask', 1000) then return end
 		sync(player)
 	end)
 

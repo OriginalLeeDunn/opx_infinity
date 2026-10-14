@@ -196,7 +196,7 @@ local function registerCommands()
 		for index = 2, #args do
 			label = label .. (index > 2 and ' ' or '') .. tostring(args[index])
 		end
-		if #label > 64 then label = label:sub(1, 64) end
+		label = OPX.Text.Clean(label, 64)
 
 		CreateThread(function()
 			capture(source, key, label)
@@ -275,7 +275,12 @@ function M.Start()
 
 	RegisterNetEvent(M.Event.ASK, function()
 		local player = tonumber(source)
-		if player == nil then return end
+		if player == nil or player <= 0 then return end
+		-- A FLOOR, the garages one, and this was the one ask without it: each is a
+		-- position read, a bucket filter, a serialise and a payload, and a client
+		-- polls every POLL_MS (15 s). A loop on this event cost all four per
+		-- packet.
+		if OPX.Cooling(player, 'clothing.ask', 1000) then return end
 		sync(player)
 	end)
 
@@ -299,10 +304,17 @@ function M.Start()
 		-- The same floor the list is asked on: a key that can be held down is a
 		-- key that can be a request per frame.
 		if OPX.Cooling(player, 'clothing.open', 1000) then return end
+		-- Nor from the floor: a downed player's client still sends the key, and
+		-- the room it opens would be a save granted to somebody waiting for help.
+		if OPX.Life.Down(player) then return end
 
 		local point = pointOf(player)
 		if point == nil then return end
-		local here = Access.Nearest(Access.InBucket(spots, point.bucket), point.x, point.y)
+		-- With the server's slack (`REACH_SLACK`): the room went up from where
+		-- the client stood, and a save refused for a metre of latency is a save
+		-- the player never hears was refused.
+		local here = Access.Nearest(Access.InBucket(spots, point.bucket), point.x, point.y,
+			OPX.Spots.ServerReachSq(Access.USE_RADIUS))
 		if here == nil then
 			Open77.log.debug(('[clothing] player %d asked for a store they are not standing on')
 				:format(player))

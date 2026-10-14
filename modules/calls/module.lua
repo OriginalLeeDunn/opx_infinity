@@ -81,6 +81,10 @@ M.Event = {
 	-- pressed X to take the invite back and ended their own call instead.
 	WITHDRAW = OPX.Event(NET, 'calls', 'withdraw'),
 
+	-- Client to server: delete the contact a row of the last list stands for.
+	-- The row's reference is the server's own, minted with that list.
+	FORGET = OPX.Event(NET, 'calls', 'forget'),
+
 	-- The menu's list, asked for and answered. The owner wanted a third
 	-- participant addable "par le menu ou par le ALT", and the ALT path needs
 	-- somebody standing in front of you -- so the menu path needs a list of
@@ -108,4 +112,5 @@ M.Operation = {
 	ANSWER = 'calls.answer',
 	HANG_UP = 'calls.hangup',
 	WITHDRAW = 'calls.withdraw',
+	FORGET = 'calls.forget',
 }

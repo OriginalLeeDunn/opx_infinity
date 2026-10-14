@@ -5,11 +5,12 @@
 -- the status line itself. Every other string a form draws is the caller's own.
 
 OPX.Locale.Register('en', {
-	['form.key.field'] = 'Field',
+	['form.key.field'] = 'Switch field',
 	['form.key.edit'] = 'Type to edit',
 	['form.key.change'] = 'Change',
 	['form.key.confirm'] = 'Confirm',
 	['form.key.cancel'] = 'Cancel',
+	['form.eyebrow'] = 'FORM',
 
 	['form.refuse.required'] = 'This field cannot be left empty.',
 	['form.refuse.format'] = 'That is not a value this field accepts.',
@@ -18,11 +19,12 @@ OPX.Locale.Register('en', {
 })
 
 OPX.Locale.Register('fr', {
-	['form.key.field'] = 'Champ',
-	['form.key.edit'] = 'Saisie',
+	['form.key.field'] = 'Changer de champ',
+	['form.key.edit'] = 'Saisir',
 	['form.key.change'] = 'Changer',
 	['form.key.confirm'] = 'Valider',
 	['form.key.cancel'] = 'Annuler',
+	['form.eyebrow'] = 'FORMULAIRE',
 
 	['form.refuse.required'] = 'Ce champ ne peut pas rester vide.',
 	['form.refuse.format'] = "Cette valeur n'est pas acceptée ici.",

@@ -106,6 +106,11 @@ OPX.Config.MODULES.shops = {
 
 		-- Whether a look may be shared at all. False stops codes being minted
 		-- and stops them being redeemed; the looks already saved keep working.
+		--
+		-- A code is redeemed ONLY inside a shop's fitting room, at its counter,
+		-- and the pieces it puts on are billed at that shop's `PRICES` when the
+		-- room is saved, exactly as if picked from its racks (the owner's ruling,
+		-- 2026-10). It used to dress the player for free, anywhere.
 		SHARING = true,
 
 		-- Characters in a share code, excluding its dashes.
@@ -124,7 +129,9 @@ OPX.Config.MODULES.shops = {
 	--
 	-- THESE ARE NOT PRICED BY SLOT. A ready-made look states its own COST, once,
 	-- because it is one purchase and not a rummage -- and a uniform a job hands
-	-- out states `COST = 0`, which is the point of it.
+	-- out states `COST = 0`, which is the point of it. It is billed when the
+	-- room is SAVED with the look on, not when it is picked: a Cancel costs
+	-- nothing, and the fitting room's status line shows the bill before Save.
 	--
 	-- `WEAR` is a partial record: the slots it names are set, and the slots it
 	-- does NOT name are left exactly as the player already had them. `false`

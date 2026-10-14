@@ -18,7 +18,7 @@ M.Presenter = {}
 local Presenter = M.Presenter
 
 -- Presenter tick. A snapshot is asked for every SYNC_MS, a paged one abandoned
--- after BATCH_MS, and a playback this client released stays unposed HOLD_MS
+-- after BATCH_MS unless the worker is still taking its pages, and a playback this client released stays unposed HOLD_MS
 -- while the finished state travels.
 local TICK_MS = 100
 local SYNC_MS = 5000
@@ -175,21 +175,77 @@ local function accept(s, fromSnapshot)
 	return true
 end
 
--- Takes one live state from the service's wire.
-local function onState(s)
-	if not validState(s) then return end
+-- Live states that landed while a commit was part-way through, and whether one
+-- is: the commit walks the mirror across yields, so a state arriving meanwhile
+-- waits for it and is taken after, as it was when the commit ran in one piece.
+local deferred, committing = {}, false
+local MAX_DEFERRED = 1024
+
+-- Takes one validated live state into the mirror.
+local function take(s)
 	if epoch ~= nil and s.epoch ~= epoch then return end
 	if context ~= nil and s.active and s.bucket ~= context.bucket then return end
 	epoch = epoch or s.epoch
 	accept(s, false)
 end
 
+-- Takes one live state from the service's wire.
+local function onState(s)
+	if not validState(s) then return end
+	if committing then
+		if #deferred < MAX_DEFERRED then deferred[#deferred + 1] = s end
+		return
+	end
+	take(s)
+end
+
+-- WORK ON THE SNAPSHOT WORKER IS PACED BY WEIGHT, NOT BY STATE COUNT. It
+-- yielded every 16 states, which held a page of one-step states near 5,700
+-- instructions a resume and let a page of sixteen-step states, or the commit of
+-- a 128-page bucket, run straight past the client's budget. Each piece of work
+-- now charges what it costs, in units of about 25 instructions -- a state
+-- checked ten plus four a step, a state merged, scanned or committed one or
+-- two -- and the worker yields before the tab would pass PACE_UNITS, about
+-- 2,500 instructions. Outside a coroutine (no CreateThread) nothing yields.
+-- A reset while the worker sleeps moves `era` on; the page in hand belongs to
+-- the world before and is dropped where it stands.
+local PACE_UNITS = 100
+local owed, era, pageEra = 0, 0, 0
+
+-- Yields on the snapshot worker, and nowhere else. A worker that breathes is
+-- alive however long its snapshot takes.
+local workingSince = 0
+local function breathe()
+	owed, workingSince = 0, OPX.Now()
+	if type(Wait) == 'function' and coroutine.isyieldable() then Wait(0) end
+end
+
+-- Charges `units` of work, about to be done, to the worker's current resume,
+-- yielding first when they would take it past PACE_UNITS; false once a reset
+-- has made the page in hand stale.
+local function pace(units)
+	if owed + units > PACE_UNITS then breathe() end
+	owed = owed + units
+	return pageEra == era
+end
+
+-- What checking one state off the wire is worth: a base, plus its steps.
+local function weightOf(s)
+	local steps = type(s) == 'table' and s.steps or nil
+	if type(steps) ~= 'table' then return 10 end
+	local count = #steps
+	return 10 + 4 * (count > 16 and 16 or count)
+end
+
 -- Replaces the mirror with a complete snapshot; absence in one means an end.
 -- Only a complete snapshot may move the mirror to another incarnation of the
 -- service: a different epoch means it restarted and nothing it said before holds.
-local function commit(snapshotEpoch, revision, states)
+local function apply(snapshotEpoch, revision, states)
 	if epoch ~= nil and epoch ~= snapshotEpoch then
-		for playerId in pairs(mirror) do changes[playerId] = false end
+		for playerId in pairs(mirror) do
+			changes[playerId] = false
+			if not pace(1) then return end
+		end
 		undrawAll()
 		mirror, seen, failed, held, floor = {}, {}, {}, {}, -1
 	end
@@ -201,18 +257,40 @@ local function commit(snapshotEpoch, revision, states)
 			undraw(playerId)
 			changes[playerId] = false
 		end
+		if not pace(1) then return end
 	end
-	for _, s in pairs(states) do accept(s, true) end
+	for _, s in pairs(states) do
+		accept(s, true)
+		if not pace(2) then return end
+	end
 
 	if revision > floor then floor = revision end
 	for playerId, known in pairs(seen) do
 		if mirror[playerId] == nil and known <= floor then seen[playerId] = nil end
+		if not pace(1) then return end
+	end
+end
+
+-- Commits, holding live states back until the mirror is consistent again.
+local function commit(snapshotEpoch, revision, states)
+	committing = true
+	local ran, failure = pcall(apply, snapshotEpoch, revision, states)
+	committing = false
+	local waiting = deferred
+	deferred = {}
+	if not ran then error(failure, 0) end
+	-- Already checked on arrival, and taken against the context of now, as on
+	-- arrival; a newer state landing meanwhile wins by revision.
+	for index = 1, #waiting do
+		take(waiting[index])
+		pace(2)
 	end
 end
 
 -- Takes one snapshot page, committing once every page has arrived. One assembly
 -- at a time: the service sends its pages in order on a single channel.
-local function onSnapshot(page)
+local function takePage(page)
+	pageEra = era
 	if type(page) ~= 'table' or not text(page.epoch, 64) then return end
 	local revision = integer(page.revision, 0, MAX_ID)
 	local bucket = integer(page.bucket, 0, MAX_BUCKET)
@@ -225,6 +303,7 @@ local function onSnapshot(page)
 	local slice = {}
 	for index = 1, #states do
 		local s = states[index]
+		if not pace(weightOf(s)) then return end
 		if not validState(s) or s.epoch ~= page.epoch or s.bucket ~= bucket or not s.active or
 			s.revision > revision or slice[s.playerId] ~= nil then
 			return
@@ -253,18 +332,58 @@ local function onSnapshot(page)
 	batch.parts[part] = slice
 	if batch.arrived < total then return end
 
+	-- The merge and the commit start a resume of their own, and pace it.
+	local assembled = batch
+	batch = nil
+	breathe()
+	if pageEra ~= era then return end
 	local merged = {}
 	for index = 1, total do
-		for playerId, s in pairs(batch.parts[index]) do
-			if merged[playerId] ~= nil then
-				batch = nil
-				return
-			end
+		for playerId, s in pairs(assembled.parts[index]) do
+			if merged[playerId] ~= nil then return end
 			merged[playerId] = s
+			if not pace(1) then return end
 		end
 	end
-	batch = nil
 	commit(page.epoch, revision, merged)
+end
+
+-- THE SNAPSHOT IS VALIDATED AND COMMITTED OFF THE NET HANDLER. A page carries
+-- up to 64 states, each checked field by field with up to 16 steps, and the last
+-- page merged every page and committed the whole bucket -- all inside the net
+-- event's one resume: thousands of instructions a page, and a budget kill there
+-- left `batch` half-built until the ten-second abandon. The handler now only
+-- queues the page; one worker thread takes the pages in order, yielding every
+-- few states and before the commit.
+local pages, working = {}, false
+local MAX_PAGES = 128
+local WORKER_STALE_MS = 5000
+
+-- Whether the worker is alive and has work in hand. A paged snapshot is not
+-- abandoned while it is: its pages are waiting on the worker, not missing.
+local function busy()
+	return working and OPX.Now() - workingSince < WORKER_STALE_MS
+end
+
+local function onSnapshot(page)
+	if type(page) ~= 'table' then return end
+	if type(CreateThread) ~= 'function' then return takePage(page) end
+	if #pages >= MAX_PAGES then return end
+	pages[#pages + 1] = page
+	-- A worker the budget killed never clears `working`; one silent this long is
+	-- presumed dead and replaced.
+	if busy() then return end
+	working, workingSince = true, OPX.Now()
+	CreateThread(function()
+		while #pages > 0 do
+			workingSince = OPX.Now()
+			local ran, failure = pcall(takePage, table.remove(pages, 1))
+			if not ran then
+				Open77.log.warn(('[animations] a snapshot page raised: %s'):format(tostring(failure)))
+			end
+		end
+		working = false
+	end)
 end
 
 -- Answers a player's body entity on this client, or nil. The local player is
@@ -295,49 +414,63 @@ local function fail(playerId, s, entity, signature, reason)
 	end
 end
 
+-- Poses one streamed body to match its mirrored state.
+local function pose(native, playerId, s, entity, atMs)
+	local hold = held[playerId]
+	if hold ~= nil and (hold.playbackId ~= s.playbackId or atMs >= hold.untilMs) then
+		held[playerId], hold = nil, nil
+	end
+	if hold ~= nil then return end
+	local step = s.steps[s.step + 1]
+	local signature = s.playbackId .. ':' .. s.cycle .. ':' .. s.step
+	local failure = failed[playerId]
+	if failure ~= nil and (failure.signature ~= signature or failure.entity ~= entity) then
+		failed[playerId], failure = nil, nil
+	end
+	if failure ~= nil then return end
+	local posed = posedBy[playerId]
+	if posed == nil or posed.signature ~= signature then
+		local restart = posed ~= nil and posed.profile == step.profile and posed.clip == step.clip
+		local called, played, reason = pcall(native._playProfile, entity, step.profile,
+			step.clip, restart)
+		if called and played then
+			posedBy[playerId] = { entity = entity, signature = signature,
+				profile = step.profile, clip = step.clip }
+		else
+			fail(playerId, s, entity, signature, called and reason or 'play_raised')
+		end
+	elseif type(native._profileStatus) == 'function' then
+		local called, status = pcall(native._profileStatus, entity)
+		if called and status ~= 'ok' and status ~= 'device_pending' then
+			fail(playerId, s, entity, signature, status)
+		end
+	end
+end
+
 -- Poses every streamed body to match the mirror. The same clip again is a
 -- restart, so a looping cycle does not blend into itself; `device_pending` is a
 -- prop or workspot still streaming, not a failure.
+--
+-- THE TICK WALKS THE STREAMED BODIES, NOT THE MIRROR. Only a body this client
+-- streams can be posed, and the mirror holds the whole bucket: walked every
+-- tick it cost some 35 instructions a mirrored player, past the client budget
+-- from about a hundred players up. A key the context carries twice (as a
+-- number and as a string) is posed once, under the entity `entityOf` answers.
 local function present(atMs)
 	local native = api()
 	for playerId, posed in pairs(posedBy) do
 		if mirror[playerId] == nil or entityOf(playerId) ~= posed.entity then undraw(playerId) end
 	end
 
-	for playerId, s in pairs(mirror) do
-		local hold = held[playerId]
-		if hold ~= nil and (hold.playbackId ~= s.playbackId or atMs >= hold.untilMs) then
-			held[playerId], hold = nil, nil
-		end
-		local entity = entityOf(playerId)
-		if entity ~= nil and hold == nil then
-			local step = s.steps[s.step + 1]
-			local signature = s.playbackId .. ':' .. s.cycle .. ':' .. s.step
-			local failure = failed[playerId]
-			if failure ~= nil and (failure.signature ~= signature or failure.entity ~= entity) then
-				failed[playerId], failure = nil, nil
-			end
-			if failure == nil then
-				local posed = posedBy[playerId]
-				if posed == nil or posed.signature ~= signature then
-					local restart = posed ~= nil and posed.profile == step.profile and
-						posed.clip == step.clip
-					local called, played, reason = pcall(native._playProfile, entity, step.profile,
-						step.clip, restart)
-					if called and played then
-						posedBy[playerId] = { entity = entity, signature = signature,
-							profile = step.profile, clip = step.clip }
-					else
-						fail(playerId, s, entity, signature, called and reason or 'play_raised')
-					end
-				elseif type(native._profileStatus) == 'function' then
-					local called, status = pcall(native._profileStatus, entity)
-					if called and status ~= 'ok' and status ~= 'device_pending' then
-						fail(playerId, s, entity, signature, status)
-					end
-				end
-			end
-		end
+	local own = context.playerId
+	if mirror[own] ~= nil then pose(native, own, mirror[own], 0, atMs) end
+	local players = context.players
+	if type(players) ~= 'table' then return end
+	for key, entity in pairs(players) do
+		local number = tonumber(key)
+		local playerId = number ~= nil and math.tointeger(number) or nil
+		local s = playerId ~= nil and playerId ~= own and mirror[playerId] or nil
+		if s ~= nil and entityOf(playerId) == entity then pose(native, playerId, s, entity, atMs) end
 	end
 end
 
@@ -372,8 +505,8 @@ local function reset()
 	undrawAll()
 	for playerId in pairs(mirror) do changes[playerId] = false end
 	epoch, floor, batch = nil, -1, nil
-	mirror, seen, failed, held = {}, {}, {}, {}
-	nextSyncMs = 0
+	mirror, seen, failed, held, deferred = {}, {}, {}, {}, {}
+	nextSyncMs, era = 0, era + 1
 end
 
 -- Raises up to DRAIN pending change events.
@@ -419,7 +552,7 @@ local function tick()
 		nextSyncMs = atMs + SYNC_MS
 		TriggerServerEvent(M.Wire.SYNC, wireId())
 	end
-	if batch ~= nil and atMs - batch.atMs > BATCH_MS then batch = nil end
+	if batch ~= nil and atMs - batch.atMs > BATCH_MS and not busy() then batch = nil end
 
 	drain()
 	decide(atMs)

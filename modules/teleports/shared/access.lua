@@ -410,7 +410,9 @@ function Access.AtEntrance(entrance, x, y, z, bucket)
 	local at = integer(bucket)
 	if at == nil or at ~= entrance.bucket then return false, 'wrong_bucket' end
 	local flat = Access.FlatDistanceSquared(entrance, x, y)
-	if flat == nil or flat > Access.USE_RADIUS_SQ then return false, 'too_far' end
+	-- The server is the only caller, so its slack is applied here: see
+	-- `REACH_SLACK` in config/shared.lua.
+	if flat == nil or flat > OPX.Spots.ServerReachSq(Access.USE_RADIUS) then return false, 'too_far' end
 	local rise = z - entrance.z
 	if rise < 0 then rise = -rise end
 	if rise > Access.USE_HEIGHT then return false, 'too_far' end

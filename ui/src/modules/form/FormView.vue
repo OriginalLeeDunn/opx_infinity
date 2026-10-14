@@ -4,9 +4,15 @@ import type { ObjectDirective } from 'vue'
 import { emit } from '@/bridge/channel'
 import { guard } from '@/bridge/diag'
 import { acquireFocus } from '@/bridge/focus'
-import { list, num, text } from '@/bridge/types'
+import { num, text, records, own } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
+import { useLocale } from '@/composables/useLocale'
+
+// The eyebrow from the catalogue, so a French player does not read `FORM`; the
+// English word only before the catalogue has reached the page.
+const { t, has } = useLocale()
+const eyebrow = computed(() => (has('form.eyebrow') ? t('form.eyebrow') : 'FORM'))
 
 /**
  * THE FORM -- port of `opx77_input/web/{index.html,input.css,input.js}`.
@@ -190,7 +196,7 @@ function mine(payload: Payload): boolean {
 }
 
 function readConfig(payload: Payload): void {
-  anchor.value = ANCHORS[text(payload.anchor)] ?? ANCHORS['center']
+  anchor.value = own(ANCHORS, text(payload.anchor)) ?? ANCHORS['center']
   const wide = num(payload.width)
   if (wide > 0) width.value = Math.round(wide)
   dim.value = payload.dim !== false
@@ -203,14 +209,14 @@ function readFrame(payload: Payload): void {
   status.value = text(payload.status)
   statusBad.value = payload.statusBad === true
 
-  keys.value = list<Payload>(payload.keys).map((cap) => ({
+  keys.value = records(payload.keys).map((cap) => ({
     key: text(cap.key),
     label: text(cap.label)
   }))
 
   const drawn = new Set<string>()
 
-  fields.value = list<Payload>(payload.rows).map((row) => {
+  fields.value = records(payload.rows).map((row) => {
     const named = text(row.kind, 'text')
     const kind: Field['kind'] = named === 'choice' || named === 'slider' ? named : 'text'
     const id = text(row.id)
@@ -271,7 +277,7 @@ function syncCaret(): void {
     if (!root) return
     const field = focused.value
     if (field && field.kind === 'text') {
-      const input = root.querySelector<HTMLInputElement>(`[data-field="${field.id}"] input`)
+      const input = root.querySelector<HTMLInputElement>(`[data-field="${CSS.escape(field.id)}"] input`)
       if (input && document.activeElement !== input) {
         input.focus()
         // DOWN onto the second name lands the caret wherever that element was last
@@ -288,19 +294,36 @@ function syncCaret(): void {
   }, undefined)
 }
 
+/** How long a closed form keeps its rows: past the room's fade, with room to spare.
+    They were wiped in the same tick as `open`, so the frame collapsed to its title and
+    faded out like that -- a flicker on every Confirm. Nothing can redraw them meanwhile:
+    the handle is gone, so `mine()` drops any late frame. */
+const WIPE_MS = 240
+let wipe: ReturnType<typeof setTimeout> | undefined
+
+function cancelWipe(): void {
+  if (wipe !== undefined) clearTimeout(wipe)
+  wipe = undefined
+}
+
 function blank(): void {
   open.value = false
   // Nothing in flight survives the form it was typed into: the next form's fields may
   // carry the same ids, and a candidate held over would draw one form's text on another.
   pending.clear()
-  fields.value = []
-  keys.value = []
-  note.value = ''
-  hint.value = ''
-  status.value = ''
-  statusBad.value = false
   const active = document.activeElement
   if (active instanceof HTMLElement) active.blur()
+  cancelWipe()
+  wipe = setTimeout(() => {
+    wipe = undefined
+    if (open.value) return
+    fields.value = []
+    keys.value = []
+    note.value = ''
+    hint.value = ''
+    status.value = ''
+    statusBad.value = false
+  }, WIPE_MS)
 }
 
 let release: (() => void) | undefined
@@ -328,6 +351,7 @@ useBridge('opx:form:open', (payload: Payload) => {
     // Lua cancels the live form when a caller re-opens on the same surface, and the
     // acknowledgements start again from whatever the new form's fields carry.
     pending.clear()
+    cancelWipe()
     handle.value = payload.handle
     readConfig(payload)
     readFrame(payload)
@@ -361,6 +385,7 @@ useBridge('opx:form:close', (payload: Payload) => {
 })
 
 onUnmounted(() => {
+  cancelWipe()
   listen(false)
   release?.()
 })
@@ -434,7 +459,7 @@ function focusField(field: Field): void {
               <!-- The `//` device, drawn locally: `.op77-eyebrow` in tokens.css colours
                    its own `::before` with `--op77-accent`, which is yellow under
                    `.op-theme-city`. Otherwise identical, and that is the only reason. -->
-              <span class="eyebrow">FORM</span>
+              <span class="eyebrow">{{ eyebrow }}</span>
               <h1 class="op-truncate">{{ title }}</h1>
             </div>
           </div>
@@ -446,11 +471,10 @@ function focusField(field: Field): void {
                not re-run under them while they type. -->
           <ul ref="listEl" class="list">
             <li
-              v-for="(field, at) in fields"
+              v-for="field in fields"
               :key="field.id"
               class="slot"
               :data-field="field.id"
-              :style="`--op-slot: ${at}`"
             >
               <div
                 class="field"
@@ -485,7 +509,10 @@ function focusField(field: Field): void {
                     <i :style="{ width: fill(field) }" />
                   </span>
                   <span v-if="field.kind !== 'text'" class="value op-value op-truncate">{{ field.value }}</span>
-                  <span v-if="field.kind === 'text' && field.count && field.on" class="count">
+                  <!-- HELD IN THE ROW ON EVERY FIELD, SHOWN ON THE FOCUSED ONE. Mounted only on
+                       focus, it arrived in a cell that packs to the right and shoved the
+                       typed line left by its own width the moment the player tabbed in. -->
+                  <span v-if="field.kind === 'text' && field.count" class="count" :class="{ quiet: !field.on }">
                     {{ field.count }}
                   </span>
                   <!-- LEFT and RIGHT with a mouse. Lua reads both routes as the same
@@ -662,6 +689,15 @@ function focusField(field: Field): void {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* THE BLACK SHADOW, once for the whole surface. A `text-shadow` INHERITS, so this
+     one declaration carries the title, the note, the labels, the typed line, the
+     hint and the caps. It is the honest fix for an unbacked panel: it darkens the
+     two pixels around a letter instead of putting a box behind the row. It sat on
+     `.head` until now, which handed it to the title and to nothing else: every
+     field, value, hint and keycap under the head was drawn without it. */
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.95),
+    0 0 9px rgba(0, 0, 0, 0.8);
 }
 
 /* The interlace. It is over the panel in every frame of the reference and it is
@@ -696,13 +732,6 @@ function focusField(field: Field): void {
   padding: var(--op-space-3) calc(var(--op-space-4) + var(--op-cut-lg))
     var(--op-space-2) calc(var(--op-space-4) + var(--op-rule));
   border-bottom: 1px solid var(--op-red-idle);
-  /* THE BLACK SHADOW, once for the whole surface. A `text-shadow` INHERITS, so this
-     one declaration carries the title, the note, the labels, the typed line, the
-     hint and the caps. It is the honest fix for an unbacked panel: it darkens the
-     two pixels around a letter instead of putting a box behind the row. */
-  text-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.95),
-    0 0 9px rgba(0, 0, 0, 0.8);
 }
 
 /* On a right-anchored form the cut is over the title rather than past it. */
@@ -897,6 +926,10 @@ function focusField(field: Field): void {
   font-variant-numeric: tabular-nums;
 }
 
+.count.quiet {
+  visibility: hidden;
+}
+
 .marks {
   flex: none;
   display: flex;
@@ -919,7 +952,8 @@ function focusField(field: Field): void {
 .field:hover:not(.on) {
   color: var(--op-red-deep);
   --aug-border-bg: var(--op-red-deep);
-  --aug-border-all: 1.8px;
+  /* The menu's hover weight, as every hover on the surface now is. */
+  --aug-border-all: 1.5px;
 }
 
 .field:hover:not(.on) .entry {
@@ -1059,29 +1093,18 @@ function focusField(field: Field): void {
   }
 }
 
-@keyframes field-in-on {
-  0% {
-    opacity: 0;
-    transform: translate3d(0, 0, 0);
-  }
-
-  55% {
-    opacity: 1;
-    transform: translate3d(calc(var(--pop, 10px) + 2px), 0, 0);
-  }
-
-  100% {
-    opacity: 1;
-    transform: translate3d(var(--pop, 10px), 0, 0);
-  }
-}
-
-.room.open .field {
+/* ON THE ROW, NOT THE FIELD. It ran on `.field`, with `.field.on` swapping in a
+   second keyframe that ended on the `--pop` step -- so every Up/Down, which moves
+   `on` from one field to another, changed BOTH fields' animation-name, and a changed
+   name restarts an animation: the two rows blanked (backwards fill, 40ms delay) and
+   stuttered in again under the player's caret. The `<li>` never changes class, so
+   its animation runs once, when the keyed v-for creates it. The chosen field's step
+   is its own `transform` inside the row, and the two compose to exactly the old
+   `field-in-on` path (0 -> pop+2px -> pop). SpawnView made the same move. */
+.room.open .slot {
   animation: field-in var(--op-enter-ms) var(--op-stutter) backwards;
-  animation-delay: calc(var(--slot, 0) * 28ms + 40ms);
-}
-
-.room.open .field.on {
-  animation-name: field-in-on;
+  /* NO STAGGER, on the owner's word: rows land together, as the menu's buttons and
+     the eye's rows do. A per-row delay read as the rows trickling in. */
+  animation-delay: 40ms;
 }
 </style>

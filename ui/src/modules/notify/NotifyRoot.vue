@@ -97,6 +97,11 @@ const DEFAULT_MS = 5000
 
 interface Toast {
   id: string
+  /** The element's identity, unique per record for the page's life. NOT `id`: a toast
+      re-shown under the id of one still running its exit puts two records with the
+      same id in one stack for EXIT_MS, and duplicate `:key`s let Vue patch or remove
+      the wrong element. A replace in place keeps the previous record's key. */
+  key: number
   kind: Kind
   title: string
   message: string
@@ -172,11 +177,14 @@ function liveCount(): number {
  * reporting those back would be an echo.
  */
 function leave(id: string, report: boolean): void {
-  const toast = toasts.value.find((entry) => entry.id === id)
-  if (!toast || toast.out) return
+  // The LIVE record for this id. During an exit a second, live one can share it, and
+  // finding the leaving one first returned early: a dismiss or clear from Lua was
+  // lost, and a persistent toast stayed up for the session under a forgotten id.
+  const toast = toasts.value.find((entry) => entry.id === id && !entry.out)
+  if (!toast) return
 
   toasts.value = toasts.value.map((entry) =>
-    entry.id === id ? { ...entry, out: true, progress: -1 } : entry
+    entry === toast ? { ...entry, out: true, progress: -1 } : entry
   )
   if (report) emit('opx:notify:gone', { id })
 
@@ -186,7 +194,7 @@ function leave(id: string, report: boolean): void {
   const volume = toast.stinger ? toast.stinger.volume : 1
 
   window.setTimeout(() => {
-    toasts.value = toasts.value.filter((entry) => entry.id !== id || !entry.out)
+    toasts.value = toasts.value.filter((entry) => entry.key !== toast.key)
     if (closing) void playStinger(closing, volume, 'close')
   }, EXIT_MS)
 }
@@ -210,6 +218,8 @@ function evict(position: Position): void {
 }
 
 /** Builds the record a payload describes, over `previous` when this is a patch. */
+let serial = 0
+
 function build(payload: Payload, previous: Toast | undefined): Toast {
   const durationMs = Math.max(
     0,
@@ -235,6 +245,7 @@ function build(payload: Payload, previous: Toast | undefined): Toast {
 
   return {
     id: text(payload.id),
+    key: previous ? previous.key : ++serial,
     kind: payload.kind === undefined && previous ? previous.kind : kindOf(payload.kind),
     // A locale KEY or the sentence Lua already resolved: `t` returns anything it does not
     // know unchanged, so both spellings pass through the same call.
@@ -426,7 +437,7 @@ onUnmounted(stop)
            `rotateY` is actually projected. The entrance and the exit move the same
            property, so both restate the rotation rather than composing with it -- which
            is what `MenuView.vue` does in `plate-in-on` for the same reason. -->
-      <div v-for="toast in at(position)" :key="toast.id" class="entry" :class="{ out: toast.out }">
+      <div v-for="toast in at(position)" :key="toast.key" class="entry" :class="{ out: toast.out }">
         <NotifyToast
           :kind="toast.kind"
           :title="toast.title"

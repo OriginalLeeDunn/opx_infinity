@@ -27,11 +27,9 @@
 -- other list is drawn exactly as it was.
 --
 -- Markers are engine primitives, so nothing is redrawn per frame: one is created
--- when a point comes into range and removed when it leaves. `reconcile` owns
--- that set for as long as the module is running, and `clearMarkers` empties it
--- on the way down; nothing else writes it. Creation is guarded -- the
--- `world.markers` API may not be installed at all, and a raise here would take
--- the scan down with it.
+-- when a point comes into range and removed when it leaves. The set is
+-- `OPX.Spots.Markers` (`lib/client/spots.lua`), which every spot module shares:
+-- creation is guarded, capped per pass, and a raise cannot take the scan down.
 
 local M = OPX.Modules.Get('garages')
 local Access = M.Access
@@ -48,12 +46,20 @@ local SPEC_ID = 'garages'
 
 -- The point list as the server last sent it, and the markers drawn for it.
 local spots = {}
-local markers = {}
+local markers = OPX.Spots.Markers.New({
+	tag = 'garages',
+	-- The ROLE as well as the kind: a door and a list are two different promises
+	-- and a player who cannot tell them apart drives into the wrong one.
+	look = function(spot) return Access.Marker(spot.kind, spot.role) end,
+	maxDistance = function() return Access.MaxDistance() end,
+})
 
 -- The point the player is standing on, whether its row is up, and which label
 -- that row carries: one key does three things across two kinds of point, so the
 -- row has several possible texts and a change between them is a redraw.
 local nearest, shown, shownLabel = nil, false, nil
+-- The squared distance to `nearest` the last scan measured, for the key's claim.
+local nearestSq = nil
 
 -- The open list's handle, and what it is listing.
 local handle, listing = nil, nil
@@ -65,37 +71,26 @@ local keyRegistered = false
 -- drawn, a row that cannot be posted and a list that cannot be opened are
 -- different problems and a player reading the log wants to know which one they
 -- have.
-local reportedMarkers, reportedStrip, reportedMenu = false, false, false
+local reportedStrip, reportedMenu = false, false
 
 -- Scheduler handles, so Stop can cancel them.
 local scanJob, askJob = nil, nil
 
--- THE LIST IS TAKEN IN ON A THREAD OF ITS OWN, A FEW POINTS PER RESUME. A
--- client resume has a TIME budget -- the frame's two milliseconds shared by
--- every running resource, some sixty microseconds each on a live server -- and
--- a SYNC read whole in its own event handler (every point through
--- `Access.FromWire`, about 380 VM instructions each, then the scan) ran past it
--- on a busy frame: `garages/client/main.lua:582: Open77 script execution
--- budget exceeded`, from the SYNC handler, every fifteen seconds while the
--- world was loading (2026-09-27 and -28). Two things end it:
---   * a list whose revision (`rev`, see the server's `sync`) is the newest one
---     this client has already taken, or is taking, is not read again -- which
---     is nearly every SYNC, since every client asks every POLL_MS;
---   * a new list is read TAKE_BATCH points per resume, and the scan that draws
---     it runs in a resume of its own.
--- A list that arrives while another is being read replaces it: only the
--- newest is ever adopted, and the one being read is dropped half-way. A read
--- that fails (the budget, whatever else) is said, and the next SYNC of that
--- list is read again rather than skipped.
-local TAKE_BATCH = 4
-local incoming, taking, wantedRev = nil, false, nil
+-- Points one resume reads off a `SYNC`, and the list being read: a newer list,
+-- or a reset, stops an older reader before its next slice. See the `SYNC`
+-- handler.
+local SYNC_SLICE = 10
+local syncGeneration = 0
 
--- Bumped by `Init`, so a reading thread that outlives a stop never writes the
--- next session's list.
-local generation = 0
+-- THE SAME LIST IS NOT READ TWICE. The server names every list it sends (`rev`,
+-- see its `sync`) and every client asks for it every POLL_MS, so nearly every
+-- SYNC is a list this client already holds: one whose revision is the one held,
+-- or the one being read, is dropped unread. A read that fails clears it, so the
+-- next SYNC of that list is read again rather than skipped.
+local wantedRev = nil
 
 -- Declared ahead of the functions that reference each other.
-local syncPrompt, onRow, takeIn
+local syncPrompt, onRow
 
 -- Reads the key declaration, with the shipped value as the fallback so a config
 -- that lost its KEY block still names a key.
@@ -113,28 +108,9 @@ local function menuSettings()
 		MAX_HEIGHT_VH = 88, VISIBLE_ROWS = 12 }
 end
 
--- The player's own ground position, or nil before there is a world to read.
-local function playerXY()
-	local character = Open77.character
-	if type(character) ~= 'table' or type(character.position) ~= 'function' then
-		return nil, nil
-	end
-	local read, x, y = pcall(character.position)
-	if not read or type(x) ~= 'number' or type(y) ~= 'number' or x ~= x or y ~= y then
-		return nil, nil
-	end
-	return x, y
-end
-
--- Whether another surface holds the keyboard. Kept module-local rather than
--- folded into `OPX.Keys.IsCaptured`, which answers captured when the read itself
--- raises where this answers free.
-local function captured()
-	local input = Open77.input
-	if type(input) ~= 'table' or type(input.isCaptured) ~= 'function' then return false end
-	local read, answer = pcall(input.isCaptured)
-	return read and answer == true
-end
+-- The player's ground position, and whether another surface holds the
+-- keyboard: the readings every spot module makes, in `lib/client/spots.lua`.
+local playerXY, captured = OPX.Spots.PlayerXY, OPX.Spots.Captured
 
 -- Whether the player is sitting in a vehicle. This is the client's half of the
 -- one decision the door makes, and it is a HINT: it chooses which text the row
@@ -168,107 +144,9 @@ end
 -- point says what it opens, per kind.
 local function promptLabel()
 	if nearest == nil then return nil end
-	if nearest.role == M.ROLE.ENTRY then
-		return seated() and 'garages.prompt.putAway' or 'garages.prompt.driveIn'
-	end
+	if nearest.role == M.ROLE.ENTRY and seated() then return 'garages.prompt.putAway' end
+	-- On foot, a door opens the list, as a menu point does (see `Runtime.Use`).
 	return 'garages.prompt.' .. tostring(nearest.kind)
-end
-
--- ── the markers ─────────────────────────────────────────────────────────────
-
--- Creates one marker, or answers why it could not be. Never raises.
-local function createMarker(spot)
-	local api = Open77.markers
-	if type(api) ~= 'table' or type(api.create) ~= 'function' then
-		return nil, 'world.markers is unavailable'
-	end
-	-- The ROLE as well as the kind: a door and a list are two different promises
-	-- and a player who cannot tell them apart drives into the wrong one.
-	local look = Access.Marker(spot.kind, spot.role)
-	local read, id, reason = pcall(api.create, {
-		-- The point's declared height plus the look's own lift: a ring left at
-		-- floor height is co-planar with the floor and draws nothing at all.
-		position = { x = spot.x, y = spot.y, z = spot.z + look.lift },
-		shape = look.shape,
-		style = look.style,
-		radius = look.radius,
-		maxDistance = Access.MaxDistance(),
-	})
-	if not read then return nil, tostring(id) end
-	if id == nil then return nil, tostring(reason or 'refused') end
-	return id, nil
-end
-
--- New markers one reconcile may create; see `reconcile`.
-local CREATES_PER_PASS = 6
-
--- Removes one marker without raising.
-local function removeMarker(id)
-	local api = Open77.markers
-	if type(api) ~= 'table' or type(api.remove) ~= 'function' then return end
-	pcall(api.remove, id)
-end
-
--- Brings the drawn set in line with what is in range: a point within
--- MAX_DISTANCE has a marker, one beyond it does not. Touches nothing when the
--- set would not change.
---
--- THE POSITION IS THREADED THROUGH, NOT READ AGAIN. `scan()` -- the only caller
--- -- has just read it for `Access.Nearest`, and reading it a second time here
--- made this module cost TWO host position reads per pass at SCAN_MS.
--- @param x number|nil the player's position, or nil where it could not be read
--- @param y number|nil
-local function reconcile(x, y)
-	local limit = Access.MaxDistance()
-	local reach = limit * limit
-	local made = 0
-
-	for key, spot in pairs(spots) do
-		-- Inline, on a position `scan` already coerced: the per-spot cost of this
-		-- loop is what every scan pays for every point on the server.
-		local wanted = false
-		if x ~= nil then
-			local dx, dy = x - spot.x, y - spot.y
-			wanted = dx * dx + dy * dy <= reach
-		end
-		-- AT MOST CREATES_PER_PASS NEW MARKERS A PASS. A player who arrives among
-		-- thirty points would otherwise have thirty created in one resume, which
-		-- is how this function ran past the platform's budget right after a world
-		-- load (2026-09-28, the first scan after the SYNC); the rest follow on the
-		-- next scans, SCAN_MS apart.
-		if wanted and markers[key] == nil and made < CREATES_PER_PASS then
-			made = made + 1
-			local id, failure = createMarker(spot)
-			if id == nil then
-				if not reportedMarkers then
-					reportedMarkers = true
-					Open77.log.warn(('[garages] no marker is drawn: %s'):format(tostring(failure)))
-				end
-			else
-				markers[key] = id
-			end
-		elseif not wanted and markers[key] ~= nil then
-			removeMarker(markers[key])
-			markers[key] = nil
-		end
-	end
-
-	-- A point the server no longer names loses its marker here rather than being
-	-- left behind: it may have gone while it was in range.
-	for key, id in pairs(markers) do
-		if spots[key] == nil then
-			removeMarker(id)
-			markers[key] = nil
-		end
-	end
-end
-
--- Drops every marker this module drew.
-local function clearMarkers()
-	for key, id in pairs(markers) do
-		removeMarker(id)
-		markers[key] = nil
-	end
 end
 
 -- ── the strip ───────────────────────────────────────────────────────────────
@@ -277,9 +155,7 @@ end
 -- row with no key to name says nothing, which is why `RegisterKeyMapping`'s
 -- answer is kept rather than assumed.
 local function keyLabel()
-	if not keyRegistered then return nil end
-	local declared = keySettings()
-	return OPX.Lib.Input.KeyFor(declared.ID) or declared.DEFAULT
+	return OPX.Spots.Key.Label(keyRegistered, keySettings())
 end
 
 -- Brings the strip in line with where the player is standing AND with what they
@@ -287,7 +163,10 @@ end
 -- player sat in one would be naming the wrong job for the key under it. The row
 -- is down while the list is up, because the key then belongs to the list.
 syncPrompt = function()
-	local want = nearest ~= nil and handle == nil and keyLabel() ~= nil and not captured()
+	-- The claim on the shared key is filed every scan, row or no row, and the
+	-- row is drawn only when no other feature on that key would take the press.
+	local wins = OPX.Spots.Key.Shows(keySettings().ID)
+	local want = nearest ~= nil and handle == nil and keyLabel() ~= nil and not captured() and wins
 	local label = want and promptLabel() or nil
 	if want == shown and label == shownLabel then return end
 
@@ -336,6 +215,14 @@ end
 -- Shows one message as a replaced toast, or as a log line when no toast can be
 -- raised. Refusals and successes share the one id, so the last thing said
 -- replaces the one before it rather than stacking.
+-- A refusal code as a sentence. The server answers catalogue keys, but one it
+-- passed through from the vehicle store (`query-failed`) is not one, and
+-- `locale` answers a missing key with the key itself -- on the player's screen.
+local function sentence(code, params)
+	local key = type(code) == 'string' and OPX.Locale.Exists(code) and code or 'garages.refused'
+	return locale(key, params)
+end
+
 local function say(kind, message)
 	local raised = OPX.Toast.Show({
 		id = 'opx.garages.answer',
@@ -448,9 +335,12 @@ local function openList(payload)
 	end
 	for index = 1, #ownRows do
 		local row = ownRows[index]
+		-- THE MODEL FIRST, then the plate, the way the vehicle's key is labelled:
+		-- `8XK2L0P` alone is not a car anybody recognises in two seconds.
+		local name = type(row.name) == 'string' and row.name ~= '' and row.name or nil
 		items[#items + 1] = {
 			id = tostring(row.plate),
-			label = tostring(row.plate),
+			label = name and ('%s · %s'):format(name, tostring(row.plate)) or tostring(row.plate),
 			value = locale(row.here and 'garages.list.here' or 'garages.list.away'),
 			data = { plate = row.plate },
 		}
@@ -557,7 +447,15 @@ function Runtime.Use(origin)
 	-- A menu point asks for a roster; a door asks the server to act, and the
 	-- server -- never the client -- decides whether that is a put-away or a
 	-- bring-out, from the seat the host reports.
-	local event = nearest.role == M.ROLE.MENU and M.Event.LIST or M.Event.REQUEST
+	--
+	-- ON FOOT, A DOOR OPENS THE LIST TOO. It used to bring out whichever car
+	-- ranked first, so a player with two cars filed there could not choose; the
+	-- lead's decision is that the list is the answer on foot. Seated, the door
+	-- still asks the server, which puts the car away. Whether the player is
+	-- seated is this client's hint only -- the server reads the seat itself
+	-- before it stores anything, and a list asked for while seated is harmless.
+	local listing = nearest.role == M.ROLE.MENU or (nearest.role == M.ROLE.ENTRY and not seated())
+	local event = listing and M.Event.LIST or M.Event.REQUEST
 	local sent, reason = TriggerServerEvent(event, nearest.key)
 	if not sent then
 		result.ok, result.error = false, tostring(reason or 'not_sent')
@@ -605,7 +503,7 @@ function Runtime.Report()
 	return {
 		spots = OPX.Table.Count(spots),
 		garages = OPX.Table.Count(Runtime.Garages()),
-		markers = OPX.Table.Count(markers),
+		markers = markers.Count(),
 		nearest = nearest and nearest.key or nil,
 		-- Which kind of point is underfoot, so a diagnostic can tell a door from
 		-- a list without looking the key up.
@@ -629,7 +527,7 @@ local function scan()
 		syncPrompt()
 		return
 	end
-	nearest = Access.Nearest(spots, x, y)
+	nearest, nearestSq = Access.Nearest(spots, x, y)
 	-- SEATED, THE KEY IS A DOOR'S. A driver at a garage wants to put the vehicle
 	-- away, not read the list of what to bring out; and a pilot sits metres from
 	-- the middle of the hull they just set down on a pad, out of the walk-up
@@ -639,66 +537,12 @@ local function scan()
 	if nearest == nil or nearest.role ~= M.ROLE.ENTRY then
 		local craft = seatedIn()
 		if craft ~= nil then
-			local door = Access.NearestDoor(spots, x, y, craft == 'aircraft')
-			if door ~= nil then nearest = door end
+			local door, doorSq = Access.NearestDoor(spots, x, y, craft == 'aircraft')
+			if door ~= nil then nearest, nearestSq = door, doorSq end
 		end
 	end
 	syncPrompt()
-	reconcile(x, y)
-end
-
---- Reads one list in, TAKE_BATCH points per resume, and adopts it unless a
---- newer one landed meanwhile (or the module stopped); then draws it, in a
---- resume of its own. Yields.
-local function readList(batch, mine)
-	local count = #batch.spots
-	local accepted = {}
-	for index = 1, count do
-		local spot, why = Access.FromWire(batch.spots[index])
-		if spot == nil then
-			Open77.log.warn('[garages] a point was refused: ' .. tostring(why))
-		else
-			accepted[spot.key] = spot
-		end
-		if index % TAKE_BATCH == 0 and index < count then
-			Wait(0)
-			if generation ~= mine or incoming ~= nil then return end
-		end
-	end
-	if generation ~= mine then return end
-	spots = accepted
-	-- A full pass, not just the markers: a list that arrives while the player
-	-- is standing on a point must put its row up now rather than wait for the
-	-- next scan.
-	Wait(0)
-	if generation == mine then scan() end
-end
-
---- Takes the newest SYNC in, on one thread at a time: a SYNC that lands while
---- it runs is picked up by the same thread, and the list being read is dropped.
-function takeIn()
-	taking = true
-	local mine = generation
-	local task, refused = CreateThread(function()
-		while incoming ~= nil and generation == mine do
-			local batch = incoming
-			incoming = nil
-			local ok, failure = pcall(readList, batch, mine)
-			if not ok and generation == mine then
-				if wantedRev == batch.rev then wantedRev = nil end
-				Open77.log.warn('[garages] the point list was not taken in: ' .. tostring(failure))
-				Wait(0)
-			end
-		end
-		if generation == mine then taking = false end
-	end)
-	-- The host answers a task id, or nil and why (`task_limit_or_stopping`). A
-	-- thread that never started must not leave the door shut: nothing would
-	-- ever read a list again this session.
-	if task == nil and refused ~= nil then
-		taking, incoming, wantedRev = false, nil, nil
-		Open77.log.warn('[garages] the point list could not be read: ' .. tostring(refused))
-	end
+	markers.Reconcile(spots, x, y)
 end
 
 -- ── the phases ──────────────────────────────────────────────────────────────
@@ -706,46 +550,31 @@ end
 --- Clears everything this half holds. Never yields.
 -- @author XEROX710
 function Runtime.Init()
-	generation = generation + 1
-	incoming, taking, wantedRev = nil, false, nil
-	spots, markers = {}, {}
+	spots = {}
+	syncGeneration = syncGeneration + 1
+	wantedRev = nil
+	markers.Reset()
 	nearest, shown, shownLabel, keyRegistered = nil, false, nil, false
 	handle, listing = nil, nil
-	reportedMarkers, reportedStrip, reportedMenu = false, false, false
+	reportedStrip, reportedMenu = false, false
 	scanJob, askJob = nil, nil
 end
 
 --- Declares the key and wires the server events.
 -- @author XEROX710
 function Runtime.Start()
-	-- The mapping's name is translated at registration and its id is stable,
-	-- because a player's rebind is stored under the id.
-	local declared = keySettings()
-	if declared.DEFAULT ~= false then
-		local called, ok, answer = pcall(RegisterKeyMapping, declared.ID, locale(declared.NAME),
-			declared.DEFAULT, function()
-				if captured() then return end
-				local ran, failure = pcall(Runtime.Use, 'key')
-				if not ran then
-					Open77.log.error(('[garages] key %s: %s'):format(declared.ID, tostring(failure)))
-				end
-			end)
-		-- Two answer shapes are documented for the host call: the effective key,
-		-- or `true, key`. Reading only the second logged a working mapping as
-		-- refused.
-		local effective = nil
-		if called then
-			effective = type(ok) == 'string' and ok ~= '' and ok
-				or (ok == true and type(answer) == 'string' and answer ~= '' and answer) or nil
-		end
-		if not called or (ok ~= true and effective == nil) then
-			Open77.log.warn(('[garages] key mapping %s (%s) not registered: %s')
-				:format(declared.ID, tostring(declared.DEFAULT),
-					tostring(called and answer or ok)))
-		else
-			keyRegistered = true
-		end
-	end
+	-- The key, and the silent press: see `OPX.Spots.Key.Register`.
+	keyRegistered = OPX.Spots.Key.Register({
+		tag = 'garages',
+		declared = keySettings(),
+		onPress = Runtime.Use,
+		-- An open list first, which this key closes; then the spot it stands on.
+		wants = function(x, y)
+			if handle ~= nil then return OPX.Spots.Key.Rank('OPEN') end
+			if nearest == nil then return nil end
+			return OPX.Spots.Key.Rank('SPOT'), OPX.Spots.Key.Reach(nearest, x, y, nearestSq)
+		end,
+	})
 
 	-- The strip redraws a rebound key itself; this only re-reads whether the row
 	-- should be up at all.
@@ -756,29 +585,74 @@ function Runtime.Start()
 		syncPrompt()
 	end)
 
+	-- READ ON A THREAD, A SLICE A RESUME. Every point is checked field by field
+	-- off the wire, ~150 VM instructions each, and the list is every point in the
+	-- player's bucket -- however many an operator has captured -- followed by a
+	-- full scan, all in the net event's one resume: the budget meter's 18,500
+	-- for twenty points, against a client budget of ~10,000 that drops the list
+	-- without a word. The list in use is swapped whole once it has been read, so
+	-- a scan never sees half of one.
 	RegisterNetEvent(M.Event.SYNC, function(payload)
 		local listed = type(payload) == 'table' and payload.spots or nil
 		if type(listed) ~= 'table' then return end
 		local rev = type(payload.rev) == 'string' and payload.rev ~= '' and payload.rev or nil
-		-- The newest list this client has taken, or is taking: nothing to do.
-		-- Anything else is the server's newest answer and replaces whatever is
-		-- being read -- even the list that was held before it.
+		-- The list held, or the one being read: nothing to do. Anything else is
+		-- the server's newest answer and replaces whatever is being read.
 		if rev ~= nil and rev == wantedRev then return end
 		wantedRev = rev
-		incoming = { spots = listed, rev = rev }
-		if not taking then takeIn() end
+		syncGeneration = syncGeneration + 1
+		local mine = syncGeneration
+		local task, refused = CreateThread(function()
+			local read, failure = pcall(function()
+				local accepted = {}
+				for index = 1, #listed do
+					if index > 1 and (index - 1) % SYNC_SLICE == 0 then
+						Wait(0)
+						if mine ~= syncGeneration then return end
+					end
+					local spot, why = Access.FromWire(listed[index])
+					if spot == nil then
+						Open77.log.warn('[garages] a point was refused: ' .. tostring(why))
+					else
+						accepted[spot.key] = spot
+					end
+				end
+				-- The swap and the scan on a fresh resume of their own.
+				Wait(0)
+				if mine ~= syncGeneration then return end
+				spots = accepted
+				-- A full pass, not just the markers: a list that arrives while the
+				-- player is standing on a point must put its row up now rather than
+				-- wait for the next scan.
+				scan()
+			end)
+			-- A read the budget (or anything else) cut short is said, and the same
+			-- list is read again the next time the server sends it.
+			if not read and mine == syncGeneration then
+				wantedRev = nil
+				Open77.log.warn('[garages] the point list was not taken in: ' .. tostring(failure))
+			end
+		end)
+		-- The host answers a task id, or nil and why (`task_limit_or_stopping`):
+		-- a list no thread was started for is read when it comes again.
+		if task == nil and refused ~= nil then
+			wantedRev = nil
+			Open77.log.warn('[garages] the point list could not be read: ' .. tostring(refused))
+		end
 	end)
 
 	RegisterNetEvent(M.Event.VEHICLES, function(payload)
 		if type(payload) ~= 'table' then return end
 		if type(payload.error) == 'string' then
 			takeDown()
-			return say('error', locale(payload.error))
+			return say('error', sentence(payload.error))
 		end
 		openList(payload)
 	end)
 
-	RegisterNetEvent(M.Event.ANSWER, function(key, ok, failure, plate, action, job)
+	-- The sixth argument is the fleet KEY of a job vehicle on a success, and the
+	-- garage a refusal's sentence names on a refusal.
+	RegisterNetEvent(M.Event.ANSWER, function(key, ok, failure, plate, action, extra)
 		local verdict = {
 			spot = type(key) == 'string' and key or nil,
 			ok = ok == true,
@@ -790,12 +664,12 @@ function Runtime.Start()
 			-- out and had to be moved" are different facts about the same marker.
 			action = type(action) == 'string' and action or nil,
 			-- The fleet KEY of a job vehicle, which has no plate to name.
-			job = type(job) == 'string' and job or nil,
+			job = ok == true and type(extra) == 'string' and extra or nil,
 			source = 'server',
 		}
 		publish(verdict)
 		if not verdict.ok then
-			say('error', locale(verdict.error))
+			say('error', sentence(verdict.error, { garage = type(extra) == 'string' and extra or '' }))
 		end
 	end)
 
@@ -873,7 +747,7 @@ function Runtime.Shutdown()
 		askJob = nil
 	end
 	takeDown()
-	clearMarkers()
+	markers.Clear()
 	local api = OPX.Api.Get('prompts')
 	if shown and api ~= nil and type(api.Hide) == 'function' then
 		pcall(api.Hide, OWNER, GROUP)

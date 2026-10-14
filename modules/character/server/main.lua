@@ -114,14 +114,13 @@ local function paycheck()
 					-- SAID AS WHERE IT WENT. A paycheck paid into the account is
 					-- money the player has to go and draw at a bank branch
 					-- (`modules/bank`), and "You received 150 BANK" never said so.
-					-- The formatted amount only on the bank line: `money.paycheck`
-					-- prints `{amount} {type}` itself, and a formatted amount there
-					-- read "150 €$ EDDIES".
+					-- A cash paycheck reads the way main words it, the amount
+					-- formatted with its kind (`OPX.Locale.Money`).
 					local toBank = M.PaycheckType == 'BANK'
 					OPX.NotifyLocale(player.PlayerData.source,
 						toBank and 'money.paycheckBank' or 'money.paycheck',
-						{ amount = toBank and M.FormatMoney(payment) or payment,
-							type = M.PaycheckType, job = job.label }, 'success')
+						{ amount = toBank and M.FormatMoney(payment) or OPX.Locale.Money(payment, M.PaycheckType),
+							job = job.label }, 'success')
 					TriggerEvent(M.Event.IN_PAYCHECK,
 						player.PlayerData.source, payment, job.name)
 				end
@@ -161,7 +160,7 @@ local function tick()
 	-- at load freezes for the life of the resource. Each job is wrapped in its own
 	-- pcall so that one failing job does not stop the others.
 	if now >= nextSaveAt then
-		nextSaveAt = now + M.Number(M.Settings.AUTOSAVE_SECONDS, 30) * 1000
+		nextSaveAt = now + M.Number(M.Settings.AUTOSAVE_SECONDS, 300) * 1000
 		local ok, err = pcall(autosave)
 		if not ok then Open77.log.error('[character] autosave raised: ' .. tostring(err)) end
 	end
@@ -181,7 +180,7 @@ end
 
 --- Runs the background pass until the module stops.
 local function background()
-	nextSaveAt = OPX.Now() + M.Number(M.Settings.AUTOSAVE_SECONDS, 30) * 1000
+	nextSaveAt = OPX.Now() + M.Number(M.Settings.AUTOSAVE_SECONDS, 300) * 1000
 	nextPaycheckAt = OPX.Now() + math.max(M.Number(M.Settings.MONEY.PAYCHECK_MINUTES, 0), 1) * 60000
 	nextPruneAt = OPX.Now() + 300000
 
@@ -375,9 +374,16 @@ local function registerEvents()
 	-- Core dropping a session is the safety net for a departure nobody signalled,
 	-- and for a slot that changed hands: the character still attached is logged
 	-- out and saved.
-	AddEventHandler(SESSION_FORGOTTEN, function(playerId)
+	--
+	-- THE EVENT IS QUEUED (`core/server/sessions.lua`), so this runs a tick after
+	-- the session is gone -- and on an eviction, after the NEXT account's session
+	-- is already on the slot. The departed account travels with the event and is
+	-- the one this acts for: a Player of any other account on the slot is somebody
+	-- who has just arrived, and logging THEM out would be the bug.
+	AddEventHandler(SESSION_FORGOTTEN, function(playerId, departedUserId)
 		local player = M.Players[tonumber(playerId) or -1]
 		if not player then return end
+		if departedUserId ~= nil and player.PlayerData.userId ~= departedUserId then return end
 		-- The slot may already belong to somebody else, whose position must never
 		-- be written into this row: the save of an eviction does not sample.
 		player.MaySample = false
@@ -429,7 +435,8 @@ local function registerEvents()
 		CreateThread(function()
 			local named = M.SetName(src, payload.firstName, payload.lastName)
 			if not named.ok then
-				OPX.Refuse(src, named.error, operation)
+				-- The bounds ride along: the length sentence names them.
+				OPX.Refuse(src, named.error, operation, nil, select(2, M.NameRefusal(nil)))
 				return
 			end
 			OPX.NotifyLocale(src, 'character.named', {
@@ -676,6 +683,14 @@ DEFAULT_SPAWN = {
 			if source <= 0 or not args[1] then
 				return OPX.CommandNotice(source, raw, 'warning', locale('command.usage.delete'))
 			end
+			-- ASKED TWICE, BECAUSE IT CANNOT BE UNDONE. A delete takes the
+			-- character's clothes, items, vehicles and groups with it, and one
+			-- typed character in a citizen id is somebody else of yours. So the
+			-- bare command only says what it is about to do and how to go on.
+			if tostring(args[2] or ''):lower() ~= 'confirm' then
+				return OPX.CommandNotice(source, raw, 'warning',
+					locale('character.deleteConfirm', { citizenId = tostring(args[1]) }))
+			end
 			CreateThread(function()
 				local deleted = M.DeleteCharacter(source, args[1])
 				OPX.CommandNotice(source, raw, deleted.ok and 'success' or 'error',
@@ -869,6 +884,8 @@ function M.Api()
 
 		GetMetadata = M.GetMetadata,
 		SetMetadata = M.SetMetadata,
+		ReadMetadata = M.ReadMetadata,
+		WriteMetadata = M.WriteMetadata,
 		SetBodyFamily = M.SetBodyFamily,
 		SetName = M.SetName,
 
@@ -888,6 +905,7 @@ function M.Api()
 		GetPlayersByJob = M.Groups.GetPlayersByJob,
 		GetPlayersByGang = M.Groups.GetPlayersByGang,
 		GetGroupMembers = M.Groups.GetGroupMembers,
+		ListGroups = M.Groups.List,
 
 		ListCharacters = M.ListCharacters,
 		EnterSession = M.EnterSession,

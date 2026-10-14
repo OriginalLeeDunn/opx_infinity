@@ -295,5 +295,20 @@ OPX.Config.MODULES.blips = {
 			RANGE = 0,
 			WALLS = false,
 		},
+
+		-- Gas stations (`modules/fuel`), one pin per surveyed station: ox's
+		-- `showBlips = 2`. ox's `1`, the nearest only, is a RANGE here -- 800 m
+		-- shows the stations of the district you are driving through. 2.31 has NO
+		-- fuel sprite at all (the list is in the devkit, `blips#complete-sprite-
+		-- list-cyberpunk-2077-231`); `drop_point` is a map-capable service-point
+		-- variant (the bank branches above wear it too, with their own label), so a
+		-- station reads as a service point. Check it on the big map before changing it to a `ping_*`.
+		fuel = {
+			SHOW = true,
+			SPRITE = 'drop_point',
+			LABEL = 'Gas Station',
+			RANGE = 0,
+			WALLS = false,
+		},
 	},
 }

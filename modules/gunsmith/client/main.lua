@@ -27,10 +27,40 @@ local CHEST_ROW = 'gunsmith.chest'
 -- The contracts, resolved at Start.
 local target, crafting = nil, nil
 
--- The armouries this file registered spheres for, in the order the eye was given
--- them: the eye answers with the INDEX it matched, and this list is the only
--- thing that ties that index back to an armoury.
+-- The armouries this file registered spheres for.
 local placed = {}
+
+--- The armoury whose bench or chest the eye landed on, or nil.
+-- @author dop42
+--
+-- THE EYE NEVER ANSWERS WITH A SPHERE INDEX, and both rows used to read one:
+-- `payload.index` was always nil, so pressing Workbench or the armoury stock did
+-- nothing at all -- no screen, no toast, no log line. The shops module found the
+-- same bug in its own row and fixed it the same way: the eye says WHERE it
+-- landed (`context.position`), and the nearest spot of the right kind within
+-- the row's radius is the one pressed. Two overlapping armouries resolve to the
+-- one under the crosshair.
+-- @param context table what the eye sent
+-- @param part string 'bench' or 'chest'
+-- @param radius number
+-- @return table|nil
+local function nearest(context, part, radius)
+	local at = type(context) == 'table' and context.position or nil
+	if type(at) ~= 'table' or not (OPX.Math.IsFinite(at.x) and OPX.Math.IsFinite(at.y)
+		and OPX.Math.IsFinite(at.z)) then
+		return nil
+	end
+	local best, bestGap = nil, radius
+	for index = 1, #placed do
+		local spot = placed[index][part]
+		if spot ~= nil then
+			local dx, dy, dz = at.x - spot.x, at.y - spot.y, at.z - spot.z
+			local away = math.sqrt(dx * dx + dy * dy + dz * dz)
+			if away <= bestGap then best, bestGap = placed[index], away end
+		end
+	end
+	return best
+end
 
 --- Puts the two rows on every armoury that has a bench.
 local function placeRows()
@@ -39,19 +69,16 @@ local function placeRows()
 
 	local radius = Access.PROMPT_RADIUS
 
-	local benches, chests, chestAt = {}, {}, {}
+	local benches, chests = {}, {}
 	for index = 1, #placed do
 		local armoury = placed[index]
 		benches[index] = { x = armoury.bench.x, y = armoury.bench.y, z = armoury.bench.z,
 			radius = radius }
-		-- A CHEST IS OPTIONAL AND ITS SPHERE LIST IS THEREFORE NOT THE BENCH LIST.
-		-- `chestAt` maps the chest sphere index back to `placed`, because an
-		-- armoury with no chest leaves a hole in one list and not the other -- and
-		-- an index read off the wrong list opens the wrong armoury's chest.
+		-- A chest is optional, so its sphere list is not the bench list; neither
+		-- list is read back by index (see `nearest`), so a hole costs nothing.
 		if armoury.chest ~= nil then
 			chests[#chests + 1] = { x = armoury.chest.x, y = armoury.chest.y,
 				z = armoury.chest.z, radius = radius }
-			chestAt[#chests] = index
 		end
 	end
 
@@ -61,9 +88,8 @@ local function placeRows()
 		icon = 'tool',
 		distance = radius,
 		order = 20,
-		onSelect = function(payload)
-			local index = tonumber(type(payload) == 'table' and payload.index or nil)
-			local armoury = index and placed[index] or nil
+		onSelect = function(context)
+			local armoury = nearest(context, 'bench', radius)
 			if armoury == nil then return end
 			if crafting == nil then
 				return OPX.Toast.Locale('gunsmith.unavailable', nil, 'error')
@@ -77,15 +103,22 @@ local function placeRows()
 
 	if #chests == 0 then return end
 
+	-- THE CHESTS ON A FRESH RESUME. The eye checks every sphere and the row it
+	-- carries field by field, ~2,000 VM instructions a registration, and this
+	-- runs inside `Start` on the client boot thread: the two together were the
+	-- dearest resume of the boot (6,500 on the budget meter) against a budget
+	-- of ~10,000 that unwinds the thread, and every module after this one with
+	-- it. `Start` may yield; under pcall for a caller that is not on a thread.
+	pcall(Wait, 0)
+
 	rows = target.RegisterSpheres(OWNER, chests, {
 		id = CHEST_ROW,
 		label = locale('gunsmith.chest'),
 		icon = 'box',
 		distance = radius,
 		order = 21,
-		onSelect = function(payload)
-			local index = tonumber(type(payload) == 'table' and payload.index or nil)
-			local armoury = index and placed[chestAt[index]] or nil
+		onSelect = function(context)
+			local armoury = nearest(context, 'chest', radius)
 			if armoury == nil then return end
 			TriggerServerEvent(M.Event.CHEST, armoury.key)
 		end,

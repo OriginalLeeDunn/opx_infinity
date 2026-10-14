@@ -101,6 +101,34 @@ function OPX.Locale.Text(key, params)
 	return OPX.String.Interpolate(text, params)
 end
 
+--- An amount of money as a player reads it, in the active language.
+-- @author dop42
+--
+-- ONE FORMAT FOR EVERY PRICE. Prices reached the screen as bare numbers
+-- (`Paid 4500 at Jinguji.`, `You received 500 BANK`), each module formatting
+-- its own way or not at all. The thousands separator is the language's
+-- (`money.separator`: `4,500` in English, `4 500` in French, with a narrow
+-- no-break space), the currency is a word from the catalogue
+-- (`money.type.<TYPE>`, `€$` for eddies), and an unknown type is shown by its
+-- configured name rather than dropped.
+-- @param amount number
+-- @param moneyType string|nil the configured type; the default type when nil
+-- @return string
+function OPX.Locale.Money(amount, moneyType)
+	local value = tonumber(amount) or 0
+	local separator = Locale.Exists('money.separator') and Locale.Text('money.separator') or ','
+	-- Grouped on a one-byte comma and swapped after: `GroupDigits` reverses the
+	-- string, which would reverse the bytes of a multi-byte separator too.
+	local grouped = OPX.Math.GroupDigits(math.floor(value + 0.5), ',')
+		:gsub(',', (separator:gsub('%%', '%%%%')))
+	local shared = OPX.Config and OPX.Config.SHARED
+	local typeName = type(moneyType) == 'string' and moneyType ~= '' and moneyType
+		or (shared and shared.MONEY and shared.MONEY.DEFAULT) or 'EDDIES'
+	local key = 'money.type.' .. typeName
+	local currency = Locale.Exists(key) and Locale.Text(key) or typeName
+	return Locale.Text('money.amount', { amount = grouped, currency = currency })
+end
+
 -- The global shorthand every gameplay file calls.
 locale = Locale.Text
 

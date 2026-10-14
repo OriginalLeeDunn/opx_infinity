@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onUnmounted, shallowRef } from 'vue'
 import { guard } from '@/bridge/diag'
-import { list, num, text } from '@/bridge/types'
+import { num, text, records, own } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
 import { useLocale } from '@/composables/useLocale'
@@ -82,14 +82,14 @@ let timer: ReturnType<typeof setInterval> | undefined
 
 useBridge('opx:hud:status', (payload: Payload) => {
   const atMs = Date.now()
-  const seen: Record<string, boolean> = {}
+  const seen = new Set<string>()
   const next: Chip[] = []
 
-  for (const row of list<Payload>(payload.chips)) {
+  for (const row of records(payload.chips)) {
     if (next.length >= MAX_CHIPS) break
     const id = text(row.id)
-    if (!id || seen[id]) continue
-    seen[id] = true
+    if (!id || seen.has(id)) continue
+    seen.add(id)
 
     const remainingMs = num(row.remainingMs)
     const totalMs = num(row.totalMs)
@@ -100,8 +100,11 @@ useBridge('opx:hud:status', (payload: Payload) => {
     next.push({
       id,
       icon: text(row.icon).slice(0, 4),
-      label: t(text(row.label)),
-      tone: TONES[text(row.tone, 'neutral')] ?? 'neutral',
+// The KEY, translated where it is drawn: Lua sends each payload once (deduped by
+      // signature), so one that beat the locale catalogue would otherwise keep the raw
+      // key on screen until the value next changed. `t()` in the template is reactive.
+      label: text(row.label),
+      tone: own(TONES, text(row.tone, 'neutral')) ?? 'neutral',
       endsAt: timed ? atMs + remainingMs : 0,
       totalMs: timed ? totalMs : 0,
       progress: timed ? Math.max(0, Math.min(1, remainingMs / totalMs)) : fixed
@@ -152,15 +155,14 @@ onUnmounted(stop)
 <template>
   <div v-if="chips.length" class="strip">
     <span
-      v-for="(chip, at) in chips"
+      v-for="chip in chips"
       :key="chip.id"
       class="chip"
       data-augmented-ui="tr-clip border"
       :class="chip.tone"
-      :style="`--op-slot: ${at}`"
     >
       <span v-if="chip.icon" class="icon">{{ chip.icon }}</span>
-      <span class="label">{{ chip.label }}</span>
+      <span class="label">{{ t(chip.label) }}</span>
       <!-- The remainder. A filled bar, and legitimate for the same reason a gauge's is:
            it is the quantity itself, not a backdrop for one. -->
       <span
@@ -178,7 +180,6 @@ onUnmounted(stop)
     <span
       v-if="hidden > 0"
       class="chip overflow"
-      :style="`--op-slot: ${chips.length}`"
     >
       <span class="label">+{{ hidden }}</span>
     </span>
@@ -326,6 +327,7 @@ onUnmounted(stop)
 
 .chip {
   animation: chip-in var(--op-enter-ms) var(--op-stutter) backwards;
-  animation-delay: calc(var(--slot, 0) * 28ms);
+  /* NO STAGGER, on the owner's word: rows land together, as the menu's buttons and
+     the eye's rows do. A per-row delay read as the rows trickling in. */
 }
 </style>

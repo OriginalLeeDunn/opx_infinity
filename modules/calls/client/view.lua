@@ -48,7 +48,7 @@ local EVENT_VIEW = M.Event.VIEW
 -- one row on the target eye -- and stays in the seam's vocabulary because the
 -- verb is still the module's, reached in process from that row.
 local ACTIONS = { 'ready', 'close', 'toggle', 'call', 'share',
-	'accept', 'decline', 'hangUp', 'withdraw', 'diag' }
+	'accept', 'decline', 'hangUp', 'withdraw', 'forget', 'diag' }
 
 --- Wires the page to the seam.
 -- @author dop42

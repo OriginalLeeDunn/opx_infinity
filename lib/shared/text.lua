@@ -8,6 +8,15 @@ local Text = OPX.Text
 -- every number reaching us has been through JSON as one.
 local MAGNITUDE = 2 ^ 53
 
+-- Absent on a runtime without the 5.3 utf8 library; every use is guarded.
+local utf8lib = utf8
+
+-- How many broken sequences one text may have mended before the rest of it is
+-- dropped. Each mend is a native scan of what is left, and a text that is mostly
+-- broken bytes is noise, not a sentence -- this keeps the walk a few calls long
+-- on the client, whose resume budget does not care whose text it was.
+local MAX_MENDS = 16
+
 --- Byte length of the first maximum characters of a text.
 -- The scan is bounded at four bytes a character before it starts, so a long
 -- string cut to a short limit costs the limit, not the string. Continuation
@@ -33,7 +42,34 @@ function OPX.Text.Span(text, maximum)
 	return size
 end
 
+--- Replaces every byte that does not start a valid UTF-8 sequence with `?`.
+-- A text that is already valid costs one native call, which is every text a
+-- person typed on a real keyboard. Past `MAX_MENDS` the rest is dropped.
+-- @param text string
+-- @return string
+local function mended(text)
+	if utf8lib == nil or utf8lib.len == nil then return text end
+	local length, bad = utf8lib.len(text)
+	if length ~= nil then return text end
+	local parts, from = {}, 1
+	for _ = 1, MAX_MENDS do
+		parts[#parts + 1] = text:sub(from, bad - 1)
+		parts[#parts + 1] = '?'
+		from = bad + 1
+		length, bad = utf8lib.len(text, from)
+		if length ~= nil then
+			parts[#parts + 1] = text:sub(from)
+			return table.concat(parts)
+		end
+	end
+	return table.concat(parts)
+end
+
 --- Replaces control characters and cuts display text to maximum characters.
+-- AND MENDS BROKEN UTF-8. A client can send any bytes it likes, and a lone
+-- `\xC3` relayed to every other client, written into a JSON column or cut into a
+-- name is a line that renders as garbage, a row MySQL refuses, or a save that
+-- fails until somebody edits it by hand. What comes out of here is valid UTF-8.
 -- @author dop42
 -- @param value any
 -- @param maximum integer Characters, not bytes.
@@ -43,7 +79,15 @@ function OPX.Text.Clean(value, maximum, ellipsis)
 	if value == nil then return nil end
 	if type(value) == 'number' then value = tostring(value) end
 	if type(value) ~= 'string' then return nil end
-	value = value:gsub('[%c]', ' ')
+	-- CUT BEFORE THE SCAN, the correction `OPX.Audit.Safe` already carries: the
+	-- strip walked the WHOLE string and the cut came second, so a 64-character
+	-- toast title another resource handed the client exports as a megabyte cost
+	-- a megabyte. `Span` never looks past four bytes a character, and a control
+	-- character is one byte replaced by one byte, so nothing past that head can
+	-- change the answer.
+	local head = maximum * 4 + 4
+	if #value > head then value = value:sub(1, head) end
+	value = mended((value:gsub('[%c]', ' ')))
 	if #value <= maximum then return value end
 	local cut = Text.Span(value, maximum)
 	if cut >= #value then return value end

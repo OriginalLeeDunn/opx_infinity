@@ -340,9 +340,12 @@ local function moneyLines(data, lines)
 		local key = index <= led and order[index] or extra[index - led]
 		local amount = purse[key]
 		if finite(amount) and amount ~= 0 then
+			-- A caption from the catalogue when it has one; the id itself, as
+			-- before, for a purse nobody wrote words for.
+			local caption = 'hud.money.' .. key
 			lines[#lines + 1] = {
 				id = key:lower(),
-				label = key,
+				label = OPX.Locale.Exists(caption) and caption or key,
 				value = OPX.Math.GroupDigits(amount, Settings.MONEY_SEPARATOR),
 				tone = 'neutral',
 			}
@@ -354,10 +357,18 @@ end
 local function identityLines(data, lines)
 	local job = data.job
 	if Settings.SHOW_JOB ~= false and type(job) == 'table' and job.label ~= nil then
+		-- IN THE PLAYER'S LANGUAGE when the catalogue has the job and the grade
+		-- (`character.job.<job>`, `character.grade.<job>.<level>`), and the
+		-- config's own text otherwise: a French HUD read "Unemployed / Freelancer".
+		-- The label travels as a key the page looks up; the value is drawn as it
+		-- comes, so it is resolved here.
+		local jobKey = 'character.job.' .. tostring(job.name)
+		local grade = type(job.grade) == 'table' and job.grade or {}
+		local gradeKey = ('character.grade.%s.%s'):format(tostring(job.name), tostring(grade.level))
 		lines[#lines + 1] = {
 			id = 'job',
-			label = tostring(job.label),
-			value = type(job.grade) == 'table' and tostring(job.grade.name or '') or '',
+			label = OPX.Locale.Exists(jobKey) and jobKey or tostring(job.label),
+			value = OPX.Locale.Exists(gradeKey) and locale(gradeKey) or tostring(grade.name or ''),
 			tone = job.onDuty == true and 'on' or 'neutral',
 		}
 	end
@@ -414,21 +425,47 @@ end
 --- Adopts the strip the needs module published, bounded before it reaches the
 --- page. The client's local bus is shared with every resource on the host, so
 --- anything at all may raise this name.
+-- The most chips the strip draws, and the most entries a payload is read for.
+local MAX_CHIPS = 12
+local MAX_OFFERED = 64
+
 local function onEffects(payload)
 	if type(payload) ~= 'table' then return end
 
-	local kept = {}
+	-- BOUNDED, AND REBUILT FIELD BY FIELD. The header above says why and the code
+	-- did half of it: a chip needed only a string id, and was then forwarded as
+	-- given -- any count, any field, tables where text belongs. One oversized or
+	-- malformed strip is a HUD payload the host refuses WHOLE, vitals and all,
+	-- and every redraw concatenated a signature over all of it. At most
+	-- MAX_CHIPS are kept, the rest are counted into the hidden tally the page
+	-- already draws, and only the fields the page reads cross.
+	local kept, overflow = {}, 0
 	local offered = type(payload.chips) == 'table' and payload.chips or {}
-	for index = 1, #offered do
+	for index = 1, math.min(#offered, MAX_OFFERED) do
 		local chip = offered[index]
-		if type(chip) == 'table' and type(chip.id) == 'string' and chip.id ~= '' then
-			kept[#kept + 1] = chip
+		if type(chip) == 'table' and type(chip.id) == 'string' and chip.id ~= '' and #chip.id <= 96 then
+			if #kept >= MAX_CHIPS then
+				overflow = overflow + 1
+			else
+				local progress, remaining, total = tonumber(chip.progress),
+					tonumber(chip.remainingMs), tonumber(chip.totalMs)
+				kept[#kept + 1] = {
+					id = chip.id,
+					label = OPX.Text.Clean(chip.label, 48),
+					icon = type(chip.icon) == 'string' and #chip.icon <= 32 and chip.icon or nil,
+					tone = type(chip.tone) == 'string' and #chip.tone <= 16 and chip.tone or nil,
+					progress = finite(progress) and OPX.Math.Clamp(progress, 0, 1) or nil,
+					remainingMs = finite(remaining) and remaining >= 0 and math.floor(remaining) or nil,
+					totalMs = finite(total) and total >= 0 and math.floor(total) or nil,
+				}
+			end
 		end
 	end
 	chips = kept
 
 	local hidden = tonumber(payload.hidden)
 	hiddenChips = finite(hidden) and math.floor(OPX.Math.Clamp(hidden, 0, 999)) or 0
+	hiddenChips = math.min(999, hiddenChips + overflow)
 
 	local anchor = type(payload.anchor) == 'string' and #payload.anchor <= 32
 		and payload.anchor or nil
@@ -787,6 +824,24 @@ local function vehicleView()
 		end
 	end
 
+	-- THE TANK, read off the vehicle's `fuel` bag field through the fuel module
+	-- (ox's `Entity(vehicle).state.fuel`). ABSENT, not 0, for a car nobody has
+	-- filled or a server without the module: an empty gauge is a thing a player
+	-- pulls over for.
+	if configured.FUEL ~= false then
+		local fuel = OPX.Api.Get('fuel')
+		local read, level = false, nil
+		if fuel ~= nil and type(fuel.Percent) == 'function' then
+			read, level = pcall(fuel.Percent, seat.vehicleId)
+		end
+		if read and finite(level) then
+			view.fuel = percent(level)
+			view.fuelLabel = locale('hud.vehicle.fuel')
+			view.fuelTone = view.fuel <= (Settings.TONE_BAD or 15) and 'bad'
+				or view.fuel <= (Settings.TONE_WARN or 33) and 'warn' or 'neutral'
+		end
+	end
+
 	return view
 end
 
@@ -814,6 +869,7 @@ local function drawWidgets(force)
 	drawBlock(CHANNEL_VEHICLE, vehicle, vehicle ~= nil and {
 		tostring(vehicle.speed), vehicle.gear, tostring(vehicle.rpm or ''),
 		tostring(vehicle.integrity or ''), vehicle.tone, vehicle.airborne and '1' or '0',
+		tostring(vehicle.fuel or ''), vehicle.fuelTone or '',
 	} or nil, force)
 end
 
@@ -898,15 +954,33 @@ end
 -- any block's signature, so an otherwise identical frame would be skipped and
 -- the page would come back holding the picture it had before the player went
 -- down.
+--
+-- THE SWITCH AT ONCE, THE BLOCKS ONE A RESUME. Re-sending every block -- the
+-- gauges, the money (sorted and grouped), the effect strip and the widgets with
+-- their host reads and catalogue lines -- ran inside whichever handler asked:
+-- the page reporting ready, the player going down or coming back, a surface
+-- covering the HUD. The switch is still pushed in that resume, so the HUD shows
+-- or hides on the frame it was asked to; the four re-sends follow on a thread of
+-- their own, one a frame, and a newer redraw abandons an older one.
+local showGeneration = 0
+
 local function drawShow(force)
 	local shown = visible and not down and not covered
 	push(CHANNEL_SHOW, { visible = shown }, shown and '1' or '0', force)
-	if shown then
-		drawVitals(true)
-		drawInfo(true)
-		drawStatus(true)
+	local blocks = shown and { drawVitals, drawInfo, drawStatus, drawWidgets } or { drawWidgets }
+	showGeneration = showGeneration + 1
+	if type(CreateThread) ~= 'function' then
+		for index = 1, #blocks do blocks[index](true) end
+		return
 	end
-	drawWidgets(true)
+	local mine = showGeneration
+	CreateThread(function()
+		for index = 1, #blocks do
+			if index > 1 then Wait(0) end
+			if showGeneration ~= mine then return end
+			blocks[index](true)
+		end
+	end)
 end
 
 --- Shows or hides the HUD. Any value but `false` shows, which is the contract
@@ -1043,11 +1117,12 @@ function M.Start()
 
 	AddEventHandler(EVENT_CHARACTER_LOADED, function()
 		sampleVitals()
-		-- The game brings its own HUD back at incarnation, which happens after
-		-- this module started.
-		applyVanilla()
 		drawVitals()
 		drawInfo()
+		-- The game brings its own HUD back at incarnation, which happens after
+		-- this module started. Up to thirteen components, two host calls each and
+		-- a note per refusal: on a resume of its own, not the event's.
+		if type(CreateThread) == 'function' then CreateThread(applyVanilla) else applyVanilla() end
 	end)
 	AddEventHandler(EVENT_CHARACTER_UNLOADED, function()
 		live = {}

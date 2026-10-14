@@ -43,7 +43,11 @@ local SPEC_ID = 'dealership'
 
 -- The dealer list as the server last sent it, and the markers drawn for it.
 local spots = {}
-local markers = {}
+local markers = OPX.Spots.Markers.New({
+	tag = 'dealership',
+	look = function(spot) return Access.Marker(spot.kind) end,
+	maxDistance = function() return Access.MaxDistance() end,
+})
 
 -- What each kind of dealer sells, as the server sent it: `{ garage = {},
 -- avpad = {} }` of `{ key, label, class, price, text }`.
@@ -55,6 +59,8 @@ local stock = { garage = {}, avpad = {} }
 -- "is a row up" would leave "Browse vehicles" standing over an AV pad the player
 -- walked onto straight from a car dealer, without `nearest` ever passing nil.
 local nearest, shown, shownLabel = nil, false, nil
+-- The squared distance to `nearest` the last scan measured, for the key's claim.
+local nearestSq = nil
 
 -- Whether the key mapping answered.
 local keyRegistered = false
@@ -66,6 +72,12 @@ local handle, stack = nil, {}
 -- module somebody else opens, so it is held outside the stack: the stack is what
 -- the player navigated to and this is what arrived.
 local offer = nil
+
+-- Whether that offer is WAITING behind a list of the player's own. An offer
+-- used to take down whatever dealership menu was open and replace it, so a key
+-- press meant for the player's own row could land on "Buy it" instead. It now
+-- waits, said in a toast, and opens when that list closes.
+local offerWaiting = false
 
 -- Whether this player is standing inside a dealer's ZONE, and the dealer it is.
 -- Being in one is what grows the "sell a vehicle" row on every other player.
@@ -83,7 +95,7 @@ local reportedTarget = false
 -- Whether each failure was already logged. A marker that cannot be drawn and a
 -- row that cannot be posted are different problems and a player reading the log
 -- wants to know which one they have.
-local reportedMarkers, reportedStrip, reportedMenu = false, false, false
+local reportedStrip, reportedMenu = false, false
 
 -- Scheduler handles, so Stop can cancel them.
 local scanJob, askJob = nil, nil
@@ -105,123 +117,16 @@ local function menuSettings()
 	return declared or { ANCHOR = 'center', WIDTH = 708, HEIGHT = 708, MAX_HEIGHT_VH = 88, VISIBLE_ROWS = 15 }
 end
 
--- The player's own ground position, or nil before there is a world to read.
-local function playerXY()
-	local character = Open77.character
-	if type(character) ~= 'table' or type(character.position) ~= 'function' then
-		return nil, nil
-	end
-	local read, x, y = pcall(character.position)
-	if not read or type(x) ~= 'number' or type(y) ~= 'number' or x ~= x or y ~= y then
-		return nil, nil
-	end
-	return x, y
-end
-
--- `playerYaw` stood here. It read the operator's own facing for a capture, and
--- went with the capture: `/opx.admin.self.pos` reads a facing server-side now.
-
--- Whether another surface holds the keyboard: the chat box, a form, the pause
--- menu. Kept module-local rather than folded into `OPX.Lib.Input.IsCaptured`,
--- which answers captured when the read itself raises where this answers free.
-local function captured()
-	local input = Open77.input
-	if type(input) ~= 'table' or type(input.isCaptured) ~= 'function' then return false end
-	local read, answer = pcall(input.isCaptured)
-	return read and answer == true
-end
-
--- ── the markers ─────────────────────────────────────────────────────────────
-
--- Creates one marker, or answers why it could not be. Never raises.
-local function createMarker(spot)
-	local api = Open77.markers
-	if type(api) ~= 'table' or type(api.create) ~= 'function' then
-		return nil, 'world.markers is unavailable'
-	end
-	local look = Access.Marker(spot.kind)
-	local read, id, reason = pcall(api.create, {
-		-- The spot's declared height plus the look's own lift: a ring left at
-		-- floor height is co-planar with the floor and draws nothing at all.
-		position = { x = spot.x, y = spot.y, z = spot.z + look.lift },
-		shape = look.shape,
-		style = look.style,
-		radius = look.radius,
-		maxDistance = Access.MaxDistance(),
-	})
-	if not read then return nil, tostring(id) end
-	if id == nil then return nil, tostring(reason or 'refused') end
-	return id, nil
-end
-
--- Removes one marker without raising.
-local function removeMarker(id)
-	local api = Open77.markers
-	if type(api) ~= 'table' or type(api.remove) ~= 'function' then return end
-	pcall(api.remove, id)
-end
-
--- Brings the drawn set in line with what is in range: a dealer within
--- MAX_DISTANCE has a marker, one beyond it does not.
---
--- THE POSITION IS THREADED THROUGH, NOT READ AGAIN. `scan()` -- the only caller
--- -- has just read it for `Access.Nearest`, and reading it a second time here
--- made this module cost TWO host position reads per pass at SCAN_MS. Across
--- `clothing`, `dealership` and `garages` that was twelve host reads a second for
--- six distinct answers. `modules/teleports/client/main.lua` already threads it
--- (`reconcile(at)`); these three were never updated with it.
--- @param x number|nil the player's position, or nil where it could not be read
--- @param y number|nil
-local function reconcile(x, y)
-	local limit = Access.MaxDistance()
-	local reach = limit * limit
-
-	for key, spot in pairs(spots) do
-		local flat = nil
-		if x ~= nil then flat = Access.FlatDistanceSquared(spot, x, y) end
-		local wanted = flat ~= nil and flat <= reach
-		if wanted and markers[key] == nil then
-			local id, failure = createMarker(spot)
-			if id == nil then
-				if not reportedMarkers then
-					reportedMarkers = true
-					Open77.log.warn(('[dealership] no marker is drawn: %s'):format(tostring(failure)))
-				end
-			else
-				markers[key] = id
-			end
-		elseif not wanted and markers[key] ~= nil then
-			removeMarker(markers[key])
-			markers[key] = nil
-		end
-	end
-
-	-- A dealer the server no longer names loses its marker here rather than
-	-- being left behind: it may have been removed while it was in range.
-	for key, id in pairs(markers) do
-		if spots[key] == nil then
-			removeMarker(id)
-			markers[key] = nil
-		end
-	end
-end
-
--- Drops every marker this module drew.
-local function clearMarkers()
-	for key, id in pairs(markers) do
-		removeMarker(id)
-		markers[key] = nil
-	end
-end
+-- The player's ground position, and whether another surface holds the
+-- keyboard: the readings every spot module makes, in `lib/client/spots.lua`.
+local playerXY, captured = OPX.Spots.PlayerXY, OPX.Spots.Captured
 
 -- ── the strip ───────────────────────────────────────────────────────────────
 
 -- Names the key the row is bound to, or nil when it is off or was refused -- a
 -- row with no key to name says nothing.
 local function keyLabel()
-	if not keyRegistered then return nil end
-	local declared = keySettings()
-	return OPX.Lib.Input.KeyFor(declared.ID) or declared.DEFAULT
+	return OPX.Spots.Key.Label(keyRegistered, keySettings())
 end
 
 -- What the key is about to open, as a locale key: a car dealer and an AV pad are
@@ -236,7 +141,10 @@ end
 -- of dealer that is: comparing only "is a row up" would keep a car dealer's
 -- label over an adjacent AV pad, because both want a row.
 local function syncPrompt()
-	local want = nearest ~= nil and keyLabel() ~= nil and not captured() and handle == nil
+	-- The claim on the shared key is filed every scan, row or no row, and the
+	-- row is drawn only when no other feature on that key would take the press.
+	local wins = OPX.Spots.Key.Shows(keySettings().ID)
+	local want = nearest ~= nil and keyLabel() ~= nil and not captured() and handle == nil and wins
 	local label = want and promptLabel() or nil
 	if want == shown and label == shownLabel then return end
 
@@ -379,7 +287,9 @@ local function screenFor(current)
 		end
 		items[#items + 1] = { separator = true, label = '' }
 		items[#items + 1] = { id = 'close', label = locale('dealership.close'), close = true }
-		return locale('dealership.menu.sell', { player = tostring(arg.name or arg.buyer) }), items,
+		-- The buyer's server id, never a name: `arg.name` was the eye's
+		-- `displayName`, the account gamertag. Never a name to a stranger.
+		return locale('dealership.menu.sell', { id = tostring(arg.buyer) }), items,
 			{ status = locale('dealership.menu.sellHint') }
 	end
 
@@ -397,8 +307,7 @@ local function screenFor(current)
 			{ id = 'yes', label = locale('dealership.offerAccept'), value = tostring(offer.text),
 				submenu = true, data = { decide = true } },
 			{ id = 'no', label = locale('dealership.offerDecline'), data = { decide = false } },
-		}, { status = locale('dealership.menu.offerHint', {
-			seller = tostring(offer.seller), price = tostring(offer.text) }) }
+		}, { status = locale('dealership.menu.offerHint', { price = tostring(offer.text) }) }
 	end
 
 	-- THE BUYER'S GARAGE, under a salesperson's offer. The counter's own
@@ -475,23 +384,54 @@ local function screenFor(current)
 	return nil
 end
 
--- Takes the menu down for a reason of this file's own.
-local function takeDown()
+-- Closes the open menu, if any, without anything else.
+local function closeMenu()
 	local closing = handle
 	handle, stack = nil, {}
 	local api = OPX.Api.Get('menu')
 	if closing ~= nil and api ~= nil and type(api.Close) == 'function' then
 		pcall(api.Close, closing, 'dealership')
 	end
-	syncPrompt()
 	return closing ~= nil
+end
+
+-- Whether the screen up is the offer itself, or the garage step under it.
+local function offerOnScreen()
+	local top = stack[#stack]
+	return handle ~= nil and top ~= nil and (top.screen == 'offer' or top.screen == 'offerDeliver')
+end
+
+local draw
+
+-- Puts the offer this player was made on the screen.
+local function showOffer()
+	offerWaiting = false
+	closeMenu()
+	stack = { { screen = 'offer' } }
+	if not draw() then
+		offer = nil
+		say('error', locale('dealership.noList'))
+	end
+	syncPrompt()
+end
+
+-- Takes the menu down for a reason of this file's own. An offer that was waiting
+-- behind it comes up now.
+local function takeDown()
+	local closed = closeMenu()
+	if offerWaiting and type(offer) == 'table' then
+		showOffer()
+		return closed
+	end
+	syncPrompt()
+	return closed
 end
 
 -- Draws the screen on top of the stack, or updates the one already up.
 -- `inPlace` is the navigation redraw: the destination screen is added under the
 -- model the player picked, and reopening would throw them back to the top of the
 -- list if the menu were reopened rather than updated.
-local function draw(inPlace)
+draw = function(inPlace)
 	local current = stack[#stack]
 	if current == nil then return false end
 
@@ -639,6 +579,8 @@ onRow = function(payload)
 		-- Back on a one-level screen would close it; step up instead.
 		if payload.reason == 'back' and #stack > 1 then return pop() end
 		stack = {}
+		-- The offer that waited behind the player's own list opens now.
+		if offerWaiting and type(offer) == 'table' then return showOffer() end
 		return syncPrompt()
 	end
 	if payload.action ~= 'select' or captured() then return end
@@ -745,9 +687,8 @@ end
 -- has a company to bank into and that the buyer has the money, before it so much
 -- as records an offer.
 -- @param buyer integer the player id the eye resolved
--- @param name string|nil what to call them on the screen
 -- @return table
-function Runtime.Sell(buyer, name)
+function Runtime.Sell(buyer)
 	local result = { source = 'target' }
 	buyer = tonumber(buyer)
 	if buyer == nil then
@@ -769,7 +710,7 @@ function Runtime.Sell(buyer, name)
 	end
 
 	takeDown()
-	stack = { { screen = 'sell', arg = { buyer = buyer, name = name } } }
+	stack = { { screen = 'sell', arg = { buyer = buyer } } }
 	if not draw() then
 		result.ok, result.error = false, 'dealership.noList'
 		publish(result)
@@ -841,7 +782,7 @@ end
 -- @return table
 function Runtime.Report()
 	local count = OPX.Table.Count(spots)
-	local drawn = OPX.Table.Count(markers)
+	local drawn = markers.Count()
 	local current = stack[#stack]
 	return {
 		spots = count,
@@ -885,8 +826,7 @@ local function sellRow()
 			local target = type(context) == 'table' and context.target or nil
 			local id = type(target) == 'table' and math.tointeger(target.playerId) or nil
 			if id == nil or id < 1 then return false end
-			local answer = Runtime.Sell(id, type(target.displayName) == 'string'
-				and target.displayName or nil)
+			local answer = Runtime.Sell(id)
 			return answer.ok == true
 		end,
 	}
@@ -955,7 +895,7 @@ local function scan()
 		syncPrompt()
 		return
 	end
-	nearest = Access.Nearest(spots, x, y)
+	nearest, nearestSq = Access.Nearest(spots, x, y)
 
 	-- TWO RADII OVER ONE LIST. `nearest` is standing ON the marker, which is what
 	-- buys; `zone` is being IN THE ROOM, which is what sells. The wider read is a
@@ -966,7 +906,7 @@ local function scan()
 	if (inside ~= nil and inside.key or nil) ~= wasIn then syncTarget() end
 
 	syncPrompt()
-	reconcile(x, y)
+	markers.Reconcile(spots, x, y)
 end
 
 -- ── the placement round-trip ────────────────────────────────────────────────
@@ -982,46 +922,31 @@ end
 --- Clears everything this half holds. Never yields.
 -- @author XEROX710
 function Runtime.Init()
-	spots, markers = {}, {}
+	spots = {}
+	markers.Reset()
 	stock = { [M.KIND.GARAGE] = {}, [M.KIND.AVPAD] = {} }
 	nearest, shown, shownLabel, keyRegistered = nil, false, nil, false
 	handle, stack = nil, {}
-	offer, zone, zoneRows = nil, nil, false
-	reportedMarkers, reportedStrip, reportedMenu, reportedTarget = false, false, false, false
+	offer, offerWaiting, zone, zoneRows = nil, false, nil, false
+	reportedStrip, reportedMenu, reportedTarget = false, false, false
 	scanJob, askJob = nil, nil
 end
 
 --- Declares the key and wires the four server events.
 -- @author XEROX710
 function Runtime.Start()
-	-- The mapping's name is translated at registration and its id is stable,
-	-- because a player's rebind is stored under the id.
-	local declared = keySettings()
-	if declared.DEFAULT ~= false then
-		local called, ok, answer = pcall(RegisterKeyMapping, declared.ID, locale(declared.NAME),
-			declared.DEFAULT, function()
-				if captured() then return end
-				local ran, failure = pcall(Runtime.Open, 'key')
-				if not ran then
-					Open77.log.error(('[dealership] key %s: %s'):format(declared.ID, tostring(failure)))
-				end
-			end)
-		-- Two answer shapes are documented for the host call: the effective key,
-		-- or `true, key`. Reading only the second logged a working mapping as
-		-- refused.
-		local effective = nil
-		if called then
-			effective = type(ok) == 'string' and ok ~= '' and ok
-				or (ok == true and type(answer) == 'string' and answer ~= '' and answer) or nil
-		end
-		if not called or (ok ~= true and effective == nil) then
-			Open77.log.warn(('[dealership] key mapping %s (%s) not registered: %s')
-				:format(declared.ID, tostring(declared.DEFAULT),
-					tostring(called and answer or ok)))
-		else
-			keyRegistered = true
-		end
-	end
+	-- The key, and the silent press: see `OPX.Spots.Key.Register`.
+	keyRegistered = OPX.Spots.Key.Register({
+		tag = 'dealership',
+		declared = keySettings(),
+		onPress = Runtime.Open,
+		-- An open list first, which this key closes; then the dealer it stands at.
+		wants = function(x, y)
+			if handle ~= nil then return OPX.Spots.Key.Rank('OPEN') end
+			if nearest == nil then return nil end
+			return OPX.Spots.Key.Rank('SPOT'), OPX.Spots.Key.Reach(nearest, x, y, nearestSq)
+		end,
+	})
 
 	-- The strip redraws a rebound key itself; this only re-reads whether the row
 	-- should be up at all.
@@ -1091,10 +1016,10 @@ function Runtime.Start()
 			verdict.garage = value.garage
 			verdict.price = value.price
 		end
+		-- NO TOAST FROM HERE. Every refusal that reaches this handler was
+		-- already toasted by the server (`OPX.NotifyLocale` beside the ANSWER),
+		-- so a second one from here showed each refusal twice.
 		publish(verdict)
-		if not verdict.ok then
-			say('error', locale(verdict.error))
-		end
 	end)
 
 	-- THE OFFER A SALESPERSON MADE, and the one screen in this module that the
@@ -1104,13 +1029,27 @@ function Runtime.Start()
 	RegisterNetEvent(M.Event.OFFERED, function(payload)
 		if type(payload) ~= 'table' or type(payload.entry) ~= 'string' then return end
 		offer = payload
-		takeDown()
-		stack = { { screen = 'offer' } }
-		if not draw() then
-			offer = nil
-			return say('error', locale('dealership.noList'))
+		-- NOT OVER THE PLAYER'S OWN LIST. A replacement offer may replace the
+		-- offer screen; anything else the player opened is theirs, and the offer
+		-- waits behind it rather than taking its place under their finger.
+		if handle ~= nil and not offerOnScreen() then
+			offerWaiting = true
+			return say('info', locale('dealership.offerWaiting',
+				{ model = tostring(payload.model or '?') }))
 		end
-		syncPrompt()
+		showOffer()
+	end)
+
+	-- An offer that ended without this player's answer: it ran out, or the seller
+	-- left. The screen asking them to buy comes down -- pressing it only ever
+	-- answered `noOffer` -- unless the offer named is one already replaced.
+	RegisterNetEvent(M.Event.WITHDRAWN, function(payload)
+		if type(payload) ~= 'table' or type(offer) ~= 'table' then return end
+		if payload.token ~= offer.token then return end
+		offer, offerWaiting = nil, false
+		if offerOnScreen() then takeDown() end
+		say('error', locale(type(payload.error) == 'string' and payload.error or 'dealership.noOffer'))
+		publish({ ok = false, error = payload.error, source = 'offer', withdrawn = true })
 	end)
 
 	-- What became of an offer, told to the SELLER. The buyer already knows: they
@@ -1166,7 +1105,7 @@ function Runtime.Shutdown()
 		askJob = nil
 	end
 	takeDown()
-	clearMarkers()
+	markers.Clear()
 	-- The eye's row goes with everything else. A row left behind by a stopped
 	-- owner is a row that opens a list nothing is listening for.
 	local eye = OPX.Api.Get('target')

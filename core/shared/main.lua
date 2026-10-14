@@ -20,7 +20,7 @@ OPX = OPX or {}
 -- out of this file and holds it against the manifest, so even that path cannot
 -- drift silently -- and it is read from the SOURCE rather than published on
 -- `OPX`, because the suite forbids hanging internals there and is right to.
-local DECLARED = '0.1.2'
+local DECLARED = '0.2.0'
 
 local function manifestVersion()
 	local resource = Open77 ~= nil and Open77.resource or nil

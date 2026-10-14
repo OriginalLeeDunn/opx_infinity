@@ -47,7 +47,7 @@ end
 --- Answers how many characters an account may hold.
 local function slotsFor(userId)
 	return M.Settings.CHARACTERS.SLOTS_BY_USER[userId]
-		or M.Number(M.Settings.CHARACTERS.DEFAULT_SLOTS, 1)
+		or M.Number(M.Settings.CHARACTERS.DEFAULT_SLOTS, 3)
 end
 
 --- Trims a character entity to what the selection screen shows.
@@ -122,7 +122,7 @@ function M.CreateCharacter(source)
 	-- while `NextCid` frees the slot.
 	local rows = M.Storage.CountRows(session.userId)
 	if not rows.ok then return rows end
-	local ceiling = M.Number(M.Settings.CHARACTERS.ROW_CEILING, 5)
+	local ceiling = M.Number(M.Settings.CHARACTERS.ROW_CEILING, 60)
 	if rows.value >= ceiling then
 		Open77.log.warn(('[character] %s has %d character rows, at the ceiling of %d')
 			:format(session.userId, rows.value, ceiling))
@@ -204,6 +204,11 @@ function M.CreateCharacter(source)
 	})
 	Open77.log.info(('[character] %s created %s, slot %d, with no name and no body yet')
 		:format(session.displayName, entity.citizenId, entity.cid))
+	OPX.Publish(M.Event.ON_CREATED, source, {
+		citizenId = entity.citizenId,
+		userId = session.userId,
+		slot = entity.cid,
+	})
 
 	return Result.Ok(toSummary(entity))
 end
@@ -317,7 +322,7 @@ function M.NewCharacter(source)
 
 	local rows = M.Storage.CountRows(session.userId)
 	if not rows.ok then return rows end
-	local ceiling = M.Number(M.Settings.CHARACTERS.ROW_CEILING, 5)
+	local ceiling = M.Number(M.Settings.CHARACTERS.ROW_CEILING, 60)
 	if rows.value >= ceiling then return Result.Err('character.rowLimit', tostring(ceiling)) end
 
 	local characters = M.Storage.FetchAll(session.userId)
@@ -408,6 +413,15 @@ local function removeCharacter(citizenId, owner, source)
 		Open77.log.error(('[character] a handler raised while %s was being deleted: %s')
 			:format(citizenId, tostring(failure)))
 	end
+	-- And to every other resource, which keeps its own rows keyed on the
+	-- citizen id and has no other way to learn they belong to nobody now.
+	OPX.Publish(M.Event.ON_DELETED, online and online.PlayerData.source or nil, {
+		citizenId = citizenId,
+		userId = owner,
+		-- The connection that asked: the player themself, staff, or nil for the
+		-- console.
+		by = tonumber(source),
+	})
 
 	-- Deleting a character somebody is PLAYING leaves them in the world as nobody,
 	-- and there is no screen left to choose another one on. Their session ends,

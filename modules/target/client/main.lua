@@ -231,6 +231,22 @@ end
 -- Holds or hands back aim, shooting, interaction and the camera. Every one of
 -- these needs `players.controls`; without the permission the eye refuses to open
 -- rather than opening over live controls.
+--
+-- ALL OR NOTHING. The four were applied in one chain, so a later one that raised
+-- or refused (a build without `freezeRotation`, a host that said no) left the
+-- earlier ones applied -- while `heldControls` stayed false, so `close` never
+-- gave them back: aim, shooting and interaction stayed off for the session,
+-- and every later press of the key took them again. All four are now checked
+-- present before any is touched, and a step that fails undoes the ones before
+-- it, each by its own inverse (never `resetControls`, which would also clear
+-- what another module holds).
+local HOLD_STEPS = {
+	{ name = 'allowAim', take = false, give = true },
+	{ name = 'allowShoot', take = false, give = true },
+	{ name = 'allowInteraction', take = false, give = true },
+	{ name = 'freezeRotation', take = true, give = false },
+}
+
 local function controls(hold)
 	local players = Open77.players
 	if type(players) ~= 'table' then return false end
@@ -238,12 +254,26 @@ local function controls(hold)
 		if type(players.resetControls) == 'function' then pcall(players.resetControls) end
 		return true
 	end
-	local taken = pcall(function()
-		assert(players.allowAim(false) and players.allowShoot(false)
-			and players.allowInteraction(false) and players.freezeRotation(true))
-	end)
-	return taken
+	for index = 1, #HOLD_STEPS do
+		if type(players[HOLD_STEPS[index].name]) ~= 'function' then return false end
+	end
+	for index = 1, #HOLD_STEPS do
+		local step = HOLD_STEPS[index]
+		local called, applied = pcall(players[step.name], step.take)
+		if not called or not applied then
+			for back = index - 1, 1, -1 do
+				local undo = HOLD_STEPS[back]
+				pcall(players[undo.name], undo.give)
+			end
+			return false
+		end
+	end
+	return true
 end
+
+-- The hold on its own, for the suite: opening the eye needs a screen ray, a
+-- cursor and a held key, none of which is what is under test there.
+M.HoldControls = controls
 
 --- Takes the eye down and hands the cursor, camera and weapons back.
 -- @author dop42
@@ -419,13 +449,23 @@ end
 
 -- One slice of a pick: at most BATCH rows, then the body ends. Runs on its own
 -- one-shot thread because `ask` may yield.
+--
+-- A SLICE ONLY EVER SPEAKS FOR ITS OWN PICK. `ask` yields on a round trip, and
+-- in that gap the player can release, press again and start a new pick. The
+-- old slice then woke up and cleared `pending` -- the NEW pick's -- which left
+-- that one on its spinner with `busy` set, refusing every pick and hover until
+-- the eye was closed. Every check after a yield is now against `job` itself.
 local function slice()
 	local job = pending
 	if job == nil then return end
+	local function drop()
+		if pending == job then setPending(nil) end
+	end
 	local last = math.min(job.at + BATCH - 1, #job.queue)
 	while job.at <= last do
+		if pending ~= job then return end
 		if not stillHeld(job.request) then
-			setPending(nil)
+			drop()
 			return
 		end
 		if OPX.Now() >= job.budget then
@@ -443,8 +483,9 @@ local function slice()
 			-- without one.
 			if answer == true or answer == false then mark = answer end
 		end
+		if pending ~= job then return end
 		if not stillHeld(job.request) then
-			setPending(nil)
+			drop()
 			return
 		end
 		if allowed and Registry.Get(row.token) == row and Registry.Matches(row, job.context) then
@@ -459,15 +500,28 @@ local function slice()
 			end
 		end
 	end
+	if pending ~= job then return end
 	if job.at > #job.queue then return finish() end
 	job.inFlight = false
 end
+
+-- How long past its lookup budget a slice may stay in flight before it is
+-- presumed dead. A slice the instruction budget unwound never clears
+-- `inFlight`, and the pick would sit on its spinner until the eye closed.
+local SLICE_STALE_MS = 1000
 
 -- Starts the next slice, if the last one has finished. The scheduler job, and the
 -- only thing that paces the resolution.
 function resolve()
 	local job = pending
-	if job == nil or job.inFlight then return end
+	if job == nil then return end
+	if job.inFlight then
+		if OPX.Now() < job.budget + SLICE_STALE_MS then return end
+		-- Draw what was resolved; a slice still alive after this finds its pick
+		-- gone and stops.
+		job.at = #job.queue + 1
+		return finish()
+	end
 	if not stillHeld(job.request) then
 		setPending(nil)
 		return
@@ -578,6 +632,9 @@ end
 -- Runs a listed row's onSelect once its target and its predicate still hold. On
 -- its own one-shot thread: every step here may yield on a promise.
 local function commit(row, at)
+	-- The thread starts a frame after the click, and the eye can close in that
+	-- frame: `selection` is then nil, and indexing it raised on this bare thread.
+	if not stillHeld(at) or selection == nil then return end
 	local current = contextAt(selection.screen.x, selection.screen.y)
 	if not sameTarget(selection, current) or not Registry.Matches(row, current) then
 		return close('target_changed')
@@ -605,12 +662,34 @@ local function commit(row, at)
 	end
 end
 
+-- How long an armed confirm row waits for its second click.
+local CONFIRM_MS = 4000
+
+-- The confirm row armed by a first click: `{ token, handle, atMs }`, or nil.
+local armedConfirm = nil
+
 -- The page reports which row was clicked; everything about it is re-derived here.
 local function choose(payload)
 	if not opened or busy or payload.handle ~= handle then return end
 	if type(payload.token) ~= 'string' or not listed[payload.token] then return end
 	local row = Registry.Get(payload.token)
 	if row == nil or selection == nil then return close('option_unavailable') end
+	-- A ROW THAT DESTROYS SOMETHING ASKS TWICE. The first click relabels it
+	-- `Confirm: <label>` in place, inside whatever folder it sits in; only a
+	-- second click on the same row, on the same eye, within a few seconds runs
+	-- it. Removing a vehicle used to take one stray click.
+	if row.confirm == true then
+		local armed = armedConfirm
+		local again = armed ~= nil and armed.token == payload.token and armed.handle == handle
+			and OPX.Now() - armed.atMs <= CONFIRM_MS
+		if not again then
+			armedConfirm = { token = payload.token, handle = handle, atMs = OPX.Now() }
+			send('target:confirm', { handle = handle, token = payload.token,
+				label = locale('target.confirm', { label = row.label }) })
+			return
+		end
+	end
+	armedConfirm = nil
 	request = request + 1
 	local at = request
 	busy = true
@@ -664,10 +743,8 @@ local function open()
 		handle = handle,
 		hoverMs = HOVER_MS,
 		labels = {
-			hint = locale('target.hint'),
 			looking = locale('target.looking'),
 			unavailable = locale('target.unavailable'),
-			back = locale('target.back'),
 		},
 	})
 	if not drawn or refused then return close(refused and 'payload_refused' or 'no_surface') end
@@ -1050,9 +1127,11 @@ end
 -- the short version is that `character` cannot depend on `target` without
 -- closing a cycle through `downed`, and the graph refuses a cycle by name.
 --
--- BOTH VALUES ARE ALREADY ON THIS CLIENT. The character id is replicated on the
--- player's own state bag -- it is what draws their nameplate -- so this row reads
--- what is here rather than asking the server for something about somebody else.
+-- THE SERVER ID ONLY. The character id was the second half of the answer, read
+-- off the player's replicated state bag; never a name to a stranger is the
+-- owner's decision (#91), a citizen id names a person as surely as their name
+-- does, and the bag no longer carries it. The server id is what a report to
+-- staff needs, and the eye already holds it.
 local IDENTIFY_OWNER = 'target'
 
 -- The player id the eye's context names, as a number.
@@ -1062,19 +1141,6 @@ local function identifyTarget(context)
 	local id = tonumber(subject.playerId)
 	if id == nil or id <= 0 or id % 1 ~= 0 then return nil end
 	return id
-end
-
--- The character id replicated for one player, or nil when the bag has not
--- arrived. A player whose bag is silent is a player this row cannot answer
--- about, which is the honest answer rather than a blank line.
-local function citizenOf(playerId)
-	local character = OPX.Api.Get('character')
-	if type(character) ~= 'table' or type(character.GetPlayerIdentity) ~= 'function' then
-		return nil
-	end
-	local read, identity = pcall(character.GetPlayerIdentity, playerId)
-	if not read or type(identity) ~= 'table' then return nil end
-	return identity.citizenId
 end
 
 -- Puts one line on the clipboard, and answers whether it went. A host with no
@@ -1122,33 +1188,22 @@ function M.IdentifyRow(reach)
 			icon = 'tag',
 			order = 5,
 			distance = reach,
-			-- Offered only when there is something to answer with. A row that
-			-- appears and then says "unknown" teaches a player the feature is
-			-- broken; one that is simply absent teaches them the bag has not
-			-- arrived yet, which is what is true.
+			-- Offered on any player the eye resolved to an id.
 			canInteract = function(context)
-				local who = identifyTarget(context)
-				return who ~= nil and citizenOf(who) ~= nil
+				return identifyTarget(context) ~= nil
 			end,
 			onSelect = function(context)
 				local who = identifyTarget(context)
 				if who == nil then return false end
-				local citizen = citizenOf(who)
-				if citizen == nil then return false end
 
-				local line = ('%d / %s'):format(who, citizen)
-				local copied = copy(line)
+				local copied = copy(tostring(who))
 				OPX.Toast.Show({
 					id = 'opx.target.identify',
 					kind = 'info',
 					title = OPX.Locale.Text('target.identify.title'),
-					-- BOTH NUMBERS, NAMED. "id serveur est id perso": they are
-					-- different things with different lifetimes, and a toast that
-					-- printed two bare values would leave the reader guessing
-					-- which was which.
 					message = OPX.Locale.Text(
 						copied and 'target.identify.copied' or 'target.identify.shown',
-						{ server = tostring(who), citizen = citizen }),
+						{ server = tostring(who) }),
 					durationMs = 8000,
 				})
 				return true

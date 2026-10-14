@@ -37,9 +37,9 @@ end
 -- @return boolean, string|nil
 function M.SetName(firstName, lastName)
 	local first = M.ValidateName(firstName)
-	if not first.ok then return false, 'character.badName' end
+	if not first.ok then return false, (M.NameRefusal(first)) end
 	local last = M.ValidateName(lastName)
-	if not last.ok then return false, 'character.badName' end
+	if not last.ok then return false, (M.NameRefusal(last)) end
 
 	TriggerServerEvent(M.Event.NAME, { firstName = first.value, lastName = last.value })
 	return true
@@ -213,7 +213,7 @@ local function headingReporter()
 	local lastSent
 
 	OPX.Scheduler.Every('character.heading',
-		M.Number(M.Settings.HEADING_REPORT_MS, 1000), function()
+		M.Number(M.Settings.HEADING_REPORT_MS, 5000), function()
 			if not M.IsLoggedIn then
 				lastSent = nil
 				return
@@ -259,11 +259,11 @@ function M.Api()
 
 		SetName = M.SetName,
 
-		-- EVERYBODY ELSE, off the replicated bag rather than off this mirror. The
-		-- mirror is the local character and always will be: `M.Event.DATA` carries
-		-- one player's whole row to one client. Anything asking "who is that" asks
-		-- these three, and they answer for anybody in the bucket with no event and
-		-- no permission. See `client/state.lua`.
+		-- EVERYBODY ELSE: nothing. Never a name to a stranger -- the owner's
+		-- decision -- so the server no longer replicates anybody's name, citizen
+		-- id, job or gang, and these three answer empty for every player. They
+		-- stay on the contract so a caller written against it keeps running. See
+		-- `client/state.lua`.
 		GetPlayerState = M.PlayerState.Of,
 		GetPlayerName = M.PlayerState.NameOf,
 		GetPlayerIdentity = M.PlayerState.IdentityOf,

@@ -52,14 +52,22 @@ local REPORT_AFTER_MS = 2000
 --
 -- Only the faults travel. A healthy boot sends nothing at all, so this costs one
 -- pass over a dozen records and no traffic on the normal path.
+--
+-- ONE NOTE A RESUME. Each `OPX.Note` is a formatted line and a net event, about
+-- 130 instructions, and every fault was noted in one go: at thirty-six modules a
+-- boot whose report arrived early -- every later module still coming up -- was
+-- the dearest resume of the client boot, and the next module added would have
+-- pushed it past the 4,500 the boot budget test holds it to. The thread yields
+-- between two notes, and reads the records rather than formatting a report line
+-- for every healthy module only to pattern-match it back apart.
 local function forwardModuleFaults()
 	local faults = {}
-	for _, line in ipairs(OPX.Modules.Report()) do
-		-- The report is formatted `id state reason`, padded. The state is the
-		-- second field whatever the padding does.
-		local state = line:match('^%S+%s+(%S+)')
-		if state ~= nil and not HEALTHY[state] then
-			faults[#faults + 1] = line:gsub('%s+', ' ')
+	local records = OPX.Modules.All()
+	for index = 1, #records do
+		local record = records[index]
+		if record ~= nil and not HEALTHY[record.State] then
+			faults[#faults + 1] = ('%s %s %s'):format(tostring(record.Id), tostring(record.State),
+				tostring(record.Reason or ''))
 		end
 	end
 	if #faults == 0 then return end
@@ -68,6 +76,7 @@ local function forwardModuleFaults()
 	-- module: the line is about `inventory` failing, not about `diagnostics`.
 	for index = 1, #faults do
 		OPX.Note('modules', ('client module: %s'):format(faults[index]))
+		Wait(0)
 	end
 end
 

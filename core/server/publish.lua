@@ -11,7 +11,7 @@
 -- What this file adds is the PROMISE. `opx:in:*` is this resource's own wiring
 -- and changes shape whenever a module needs it to; `opx:on:*` on the server is
 -- the curated surface a creator writes against, and its payloads are the ones
--- README.md "For creators" lists. Every one of them is `(source, payload)`:
+-- docs/MANUAL.md "For creators" lists. Every one of them is `(source, payload)`:
 -- the player id the change is about (nil for a character who is not online), and
 -- one plain table built for the occasion -- never a live record, which would
 -- hand the bus a copy of PlayerData nobody meant to publish.

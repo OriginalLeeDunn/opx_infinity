@@ -61,13 +61,16 @@ export function weightOf(stack: Stack, entry: CatalogEntry | undefined, fallback
   return each * stack.count
 }
 
-/** Grams under a kilogram, kilograms above it, both to one decimal at most. */
+/** Grams under a kilogram, kilograms above it, both to one decimal at most -- written
+    with the language's decimal mark, as the give list's distances already were: a
+    French bag read `12.5kg` beside `1,2 m`. */
 export function grams(value: number, config: ScreenConfig): string {
   const kg = config.labels.kg || 'kg'
   const g = config.labels.g || 'g'
   if (value < 1000) return `${Math.round(value)}${g}`
   const whole = value / 1000
-  return `${whole >= 100 ? Math.round(whole) : Math.round(whole * 10) / 10}${kg}`
+  const shown = whole >= 100 ? Math.round(whole) : Math.round(whole * 10) / 10
+  return `${String(shown).replace('.', config.labels.decimal || '.')}${kg}`
 }
 
 /** 0..100, for the load gauge. Clamped: a container over its limit reads full. */

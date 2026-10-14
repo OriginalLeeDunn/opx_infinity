@@ -80,26 +80,10 @@ local function plateOf(value)
 	return value
 end
 
---- The words a key's label carries for a model: a catalogue label as it is, or a
---- TweakDB record turned into something a player can read.
--- `Vehicle.v_standard2_villefort_cortes_player` reads `Villefort Cortes`: the
--- namespace, the `v_` prefix, the class-and-size token (`standard2`, `sport1`
--- -- a word ENDING IN A DIGIT, so `militech_` in a record without one is kept)
--- and the `_player` suffix are the engine's filing, not the car's name.
+--- The words a key's label carries for a model. Shared with the garage list
+--- now, so a car is called the same thing on its key and in the garage.
 local function modelName(model)
-	if type(model) ~= 'string' or model == '' then return nil end
-	local name = model
-	if name:find('^Vehicle%.') then
-		name = name:gsub('^Vehicle%.', ''):gsub('^v_', ''):gsub('_player$', '')
-		name = name:gsub('^%a+%d+_', '', 1)
-		name = name:gsub('_', ' '):gsub('(%a)([%w]*)', function(first, rest)
-			return first:upper() .. rest
-		end)
-	end
-	name = name:gsub('%c', '')
-	if name == '' then return nil end
-	if #name > MODEL_MAX then name = name:sub(1, MODEL_MAX) end
-	return name
+	return OPX.Vehicle.DisplayName(model, MODEL_MAX)
 end
 
 --- A key's label: the model and the plate, or the plate alone.
@@ -194,6 +178,24 @@ function M.Count(target, plate)
 	local counted = inventory.CountWhere(target, M.ITEM, { plate = plate })
 	if type(counted) ~= 'table' or not counted.ok then return 0 end
 	return tonumber(counted.value) or 0
+end
+
+--- Whether a bag holds a key to one live vehicle, by the host's id.
+-- @author dop42
+--
+-- LOOKED UP, NEVER MINTED, the rule `Toggle` follows: a vehicle nobody ever cut
+-- a key for has no plate, and minting one to ask the question would only prove
+-- that nobody holds it. For a caller deciding whether a vehicle is this
+-- player's to use -- `hauling` selling out of a trunk -- without turning a lock.
+-- @param target Source|CitizenId
+-- @param vehicleId any the host's id
+-- @return boolean
+function M.Holds(target, vehicleId)
+	local snapshot = snapshotOf(vehicleId)
+	if snapshot == nil then return false end
+	local identity = lookup(vehicleId, snapshot)
+	if identity == nil then return false end
+	return M.Count(target, identity.plate) > 0
 end
 
 --- Cuts one key to a plate into a bag. Always one more: the caller decided.
@@ -349,7 +351,10 @@ local function reaches(source, vehicleId, snapshot)
 		return false
 	end
 	local dx, dy, dz = x - hx, y - hy, z - hz
-	return dx * dx + dy * dy + dz * dz <= M.REACH * M.REACH
+	-- The eye row offers the key out to REACH from where the client stood; this
+	-- measures where the player was last observed, so it allows REACH_SLACK.
+	local reach = OPX.Spots.ServerReach(M.REACH)
+	return dx * dx + dy * dy + dz * dz <= reach * reach
 end
 
 --- Locks or unlocks a vehicle for a connection that holds its key and stands by it.
@@ -416,7 +421,13 @@ local function onToggleRequested(payload)
 	local src = tonumber(source)
 	if not src then return end
 	if OPX.Cooling(src, 'vehiclekeys.toggle', TOGGLE_MS) then
-		return OPX.NotifyLocale(src, 'vehiclekeys.tooFast', nil, 'error')
+		return OPX.NotifyLocale(src, 'vehiclekeys.tooFast', nil, 'warning')
+	end
+	-- Not from the floor: the lock is a hand on the car, and the down screen is
+	-- the client's. Asked on the net door only -- the contract's callers decide
+	-- for themselves.
+	if OPX.Life.Down(src) then
+		return tell(src, Result.Err('error.incapacitated'))
 	end
 	-- `payload.vehicleId` is the only field read. Anything else in the table --
 	-- a plate, a label, a "locked" -- is a claim and goes nowhere.
@@ -459,6 +470,7 @@ function M.Api()
 	OPX.Api.Provide('vehiclekeys', 1, {
 		Identity = M.Identity,
 		Count = M.Count,
+		Holds = M.Holds,
 		Give = M.Give,
 		GiveFor = M.GiveFor,
 		Ensure = M.Ensure,

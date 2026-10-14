@@ -73,20 +73,31 @@ end
 local function priceOf(row)
 	local clock = Recipes.Clock(row.seconds)
 	if row.price > 0 then
-		return ('%s  %s'):format(clock, OPX.Math.GroupDigits(row.price))
+		return ('%s  %s'):format(clock, OPX.Locale.Money(row.price, row.money))
 	end
 	return clock
 end
 
 --- Why a row is greyed, in words, or nil when it is not.
 -- Through the catalogue rather than printed raw: `short` is a machine name and
--- the player is owed a sentence. A code with no sentence behind it is still
--- shown, as itself, so a missing translation looks like a missing translation
--- rather than like a row with no reason.
+-- the player is owed a sentence. A code with no sentence behind it -- a bench
+-- owner's own `canUse` answer -- reads as the generic one and goes to the log;
+-- it used to be printed as `crafting.some_code` on the row.
+-- The log line only on a refusal, never on a row: rows are redrawn every
+-- frame the screen changes.
+local function sentenceFor(code, logIt)
+	local key = 'crafting.' .. tostring(code)
+	if OPX.Locale.Exists(key) then return locale(key) end
+	if logIt then
+		Open77.log.warn(('[crafting] a refusal with no sentence: %s'):format(tostring(code)))
+	end
+	return locale('crafting.not_for_you')
+end
+
 local function refusalOf(row)
 	if row.ok then return nil end
 	if row.error == nil then return locale('crafting.not_for_you') end
-	return locale('crafting.' .. row.error)
+	return sentenceFor(row.error)
 end
 
 --- The whole menu spec for a view.
@@ -319,16 +330,16 @@ function M.Start()
 		draw(payload)
 	end)
 
-	RegisterNetEvent(M.Event.REFUSED, function(benchKey, code)
+	RegisterNetEvent(M.Event.REFUSED, function(benchKey, code, screen)
 		if type(code) ~= 'string' then return end
-		OPX.Toast.Locale('crafting.' .. code, nil, 'error')
+		OPX.Toast.Show({ kind = 'error', message = sentenceFor(code, true) })
 
 		-- A REFUSAL THAT MEANS THE SCREEN CANNOT EXIST TAKES IT DOWN; one that
 		-- means a row cannot be pressed does not. Walking out of reach with the
 		-- list open is the case that matters: the refresh that follows is refused
 		-- `too_far`, and leaving the list up would leave a screen the player can
 		-- still press rows on from across the street.
-		if code == Refusal.TOO_FAR or code == Refusal.NO_SUCH_BENCH
+		if screen == true or code == Refusal.TOO_FAR or code == Refusal.NO_SUCH_BENCH
 			or code == Refusal.NO_CHARACTER or code == Refusal.NOT_FOR_YOU
 			or code == Refusal.NO_POSITION then
 			shut(code)

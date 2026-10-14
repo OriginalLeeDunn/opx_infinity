@@ -244,7 +244,7 @@ FORMS.kick = {
 	submit = function(values, arg)
 		local tokens = { Command.MODERATE_KICK, tostring(arg) }
 		if M.Trimmed(values.reason, 120) then tokens[3] = values.reason end
-		menu().Confirm(tokens, 'admin.confirm.kick')
+		menu().Confirm(tokens, 'admin.confirm.kick', nil, nil, locale('admin.menu.kick'))
 	end,
 }
 
@@ -264,7 +264,7 @@ FORMS.ban = {
 	submit = function(values, arg)
 		local tokens = { Command.MODERATE_BAN, tostring(arg), values.duration }
 		if M.Trimmed(values.reason, 120) then tokens[4] = values.reason end
-		menu().Confirm(tokens, 'admin.confirm.ban')
+		menu().Confirm(tokens, 'admin.confirm.ban', nil, nil, locale('admin.menu.ban'))
 	end,
 }
 
@@ -277,7 +277,8 @@ FORMS.announce = {
 		} }
 	end,
 	submit = function(values)
-		menu().Confirm({ Command.WORLD_ANNOUNCE, values.message }, 'admin.confirm.announce')
+		menu().Confirm({ Command.WORLD_ANNOUNCE, values.message }, 'admin.confirm.announce', nil, nil,
+			locale('admin.menu.announce'))
 	end,
 }
 

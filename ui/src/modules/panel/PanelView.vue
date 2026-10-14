@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { emit } from '@/bridge/channel'
 import { guard } from '@/bridge/diag'
 import { acquireFocus } from '@/bridge/focus'
-import { list, num, table, text } from '@/bridge/types'
+import { list, num, table, text, records } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
 import { GLYPHS } from '@/modules/target/glyphs'
@@ -221,9 +221,13 @@ interface PanelView {
   columns: 1 | 2
 }
 
-/* panel.js's numbers, kept: the window is sized by measured height, so a column that is
-   short on one screen and tall on another shows what fits rather than a fixed count. */
-const ROW_HEIGHT = 58
+/* The window is sized by measured height, so a column that is short on one screen and
+   tall on another shows what fits rather than a fixed count. These are only the guess
+   used before the first row has been drawn: once one exists its real height and the
+   grid's real gap are measured and used instead (#118). The guess was panel.js's 58px,
+   while the row this file draws is 40px -- a third of every window stood empty under
+   its last row. */
+const ROW_HEIGHT = 40
 const ROW_GAP = 4
 const HOVER_MS = 110
 const LEAVE_MS = 160
@@ -280,6 +284,8 @@ const thumb = reactive<Record<string, number>>({})
 
 const gridEl = ref<HTMLElement | null>(null)
 const gridHeight = ref(0)
+/** One row plus the gap under it, as last measured off a drawn row. 0 until one is. */
+const rowPitch = ref(0)
 
 /** The window of the open category the page is holding. See `Tiles`. */
 const tiles = reactive<Tiles>({ slot: '', entries: [] })
@@ -327,7 +333,7 @@ function label(key: string, vars?: Record<string, number | string>): string {
 }
 
 function readButtons(value: unknown): Button[] {
-  return list<Payload>(value).map((entry) => {
+  return records(value).map((entry) => {
     const icon = text(entry.icon)
     return {
       id: text(entry.id),
@@ -371,7 +377,7 @@ function apply(payload: Payload): void {
   if (given('subtitle')) view.subtitle = text(payload.subtitle)
   if (given('intro')) view.intro = text(payload.intro)
   if (given('tabs')) {
-    view.tabs = list<Payload>(payload.tabs).map((tab) => ({
+    view.tabs = records(payload.tabs).map((tab) => ({
       id: text(tab.id),
       label: text(tab.label),
       marked: tab.marked === true,
@@ -380,7 +386,7 @@ function apply(payload: Payload): void {
   }
   if (given('tab')) view.tab = text(payload.tab)
   if (given('sliders')) {
-    const incoming = list<Payload>(payload.sliders).map((entry) => ({
+    const incoming = records(payload.sliders).map((entry) => ({
       id: text(entry.id),
       label: text(entry.label),
       count: Math.max(0, num(entry.count)),
@@ -432,7 +438,22 @@ function apply(payload: Payload): void {
  * fill, and every box after the hole would carry an index that is off by the size of
  * it -- which is a player clicking a jacket and being dressed in a different one.
  */
+/** A window applied, then -- if it added boxes -- the grid topped up while it does not
+    yet overflow. `askForTiles` was only ever reached from a scroll event, and a first
+    window that fits without scrolling (a tall screen, a short window from the caller)
+    never fires one: the "loading" line stayed up forever over a grid that would not
+    grow. Only after a window that GREW, so a caller answering with nothing cannot turn
+    this into a request loop. */
 function applyTiles(value: unknown): void {
+  if (readTiles(value)) void nextTick(topUpTiles)
+}
+
+function topUpTiles(): void {
+  const el = tilesEl.value
+  if (el && el.scrollTop + el.clientHeight >= el.scrollHeight - TILE_LOOKAHEAD) askForTiles()
+}
+
+function readTiles(value: unknown): boolean {
   if (tilesTimer !== undefined) clearTimeout(tilesTimer)
   tilesTimer = undefined
   fetching.value = false
@@ -441,7 +462,7 @@ function applyTiles(value: unknown): void {
   if (slot === '') {
     tiles.slot = ''
     tiles.entries = []
-    return
+    return false
   }
   const labels = list<unknown>(source.labels)
   const images = list<unknown>(source.images)
@@ -453,10 +474,11 @@ function applyTiles(value: unknown): void {
   if (slot !== tiles.slot || from === 1) {
     tiles.slot = slot
     tiles.entries = entries
-    return
+    return entries.length > 0
   }
-  if (from !== tiles.entries.length + 1) return
+  if (from !== tiles.entries.length + 1) return false
   tiles.entries = tiles.entries.concat(entries)
+  return entries.length > 0
 }
 
 /** The tab actually drawn: the one Lua named if it still exists, else the first. */
@@ -483,7 +505,9 @@ const shown = computed(() => {
 const at = computed(() => Math.max(0, Math.min(cursor.value, shown.value.length - 1)))
 
 const windowSize = computed(() => {
-  const rows = Math.max(1, Math.floor((gridHeight.value + ROW_GAP) / (ROW_HEIGHT + ROW_GAP)))
+  const pitch = rowPitch.value > 0 ? rowPitch.value : ROW_HEIGHT + ROW_GAP
+  const gap = rowPitch.value > 0 ? rowGap : ROW_GAP
+  const rows = Math.max(1, Math.floor((gridHeight.value + gap) / pitch))
   return rows * (view.columns === 1 ? 1 : 2)
 })
 
@@ -536,9 +560,54 @@ watch(query, () => {
   cursor.value = 0
 })
 
+/** The grid's own row gap, read with the row; see `rowPitch`. */
+let rowGap = ROW_GAP
+
+/**
+ * THE WINDOW'S TWO MEASUREMENTS, and why neither can feed back into the other (#118).
+ *
+ * The grid's height is the remainder of a column of definite height: `.grid` is
+ * `flex: 1 1 0` with `min-height: 0`, so its size is decided by what is ABOVE and
+ * BELOW it -- the dial, the readout, the summary, the status line -- and never by the
+ * rows inside it. The row's height is its own padding and one line of type, and does
+ * not depend on the grid at all. So a measure changes the window, the window changes
+ * which rows are drawn, and drawing them changes neither number: one pass, no loop.
+ */
 function measure(): void {
-  gridHeight.value = gridEl.value?.clientHeight ?? 0
+  const grid = gridEl.value
+  gridHeight.value = grid?.clientHeight ?? 0
+  const row = grid?.querySelector<HTMLElement>('.row') ?? null
+  if (grid && row) {
+    // `offsetHeight` and not the bounding box: the column is tilted, and a
+    // perspective projection would report every row at a different height.
+    const gap = parseFloat(getComputedStyle(grid).rowGap)
+    rowGap = Number.isFinite(gap) ? gap : ROW_GAP
+    rowPitch.value = row.offsetHeight + rowGap
+  }
 }
+
+/* THE GRID IS MEASURED WHENEVER IT CHANGES SIZE, not only on open and on a window
+   resize. It is the flexible box in a full-height column, so the dial, the readout,
+   the summary and the status line arriving with the first items all take height from
+   it -- and a window sized at open, before any of them existed, held more rows than
+   now fit: the last ones were cut through by the grid's own overflow, the cursor's
+   among them. Content cannot feed back into this: the grid's height is the column's
+   remainder, never its rows'. */
+let sizer: ResizeObserver | null = null
+
+watch(gridEl, (element, previous) => {
+  if (typeof ResizeObserver === 'undefined') return
+  if (sizer === null) sizer = new ResizeObserver(() => measure())
+  if (previous) sizer.unobserve(previous)
+  if (element) sizer.observe(element)
+}, { flush: 'post' })
+
+/* The first rows drawn are the first chance to measure one. Only the edge from none to
+   some: after that the pitch is known, and a window that slides draws rows of the same
+   height. */
+watch(() => visible.value.length > 0, (some) => {
+  if (some) measure()
+}, { flush: 'post' })
 
 function clearHoverTimers(): void {
   if (hoverTimer !== undefined) clearTimeout(hoverTimer)
@@ -617,6 +686,7 @@ useBridge('opx:panel:open', (payload: Payload) => {
   guard('panel:open', () => {
     if (!isHandle(payload.handle)) return
     release?.()
+    cancelWipe()
     blank()
     handle.value = payload.handle
     apply(payload)
@@ -647,7 +717,7 @@ useBridge('opx:panel:items', (payload: Payload) => {
   guard('panel:items', () => {
     if (!mine(payload)) return
     const batch: Item[] = []
-    for (const entry of list<Payload>(payload.items)) {
+    for (const entry of records(payload.items)) {
       const id = text(entry.id)
       if (!id) continue
       const itemLabel = text(entry.label)
@@ -697,13 +767,33 @@ useBridge('opx:panel:confirm', (payload: Payload) => {
   }, undefined)
 })
 
+/* A CLOSED PANEL KEEPS WHAT IT WAS SHOWING UNTIL THE FADE HAS RUN. `blank()` in the
+   same tick as the close emptied the view under a 150ms fade: the fitting room's rail
+   lost its sliders and the items column -- an empty bay -- faded out in its place, and
+   any other panel collapsed to its frame. The hover timers, the dialog and the focus
+   still go at once; the rest follows when nothing can see it. */
+const WIPE_MS = 240
+let wipe: ReturnType<typeof setTimeout> | undefined
+
+function cancelWipe(): void {
+  if (wipe !== undefined) clearTimeout(wipe)
+  wipe = undefined
+}
+
 useBridge('opx:panel:close', (payload: Payload) => {
   guard('panel:close', () => {
     if (payload.handle !== undefined && !mine(payload)) return
     handle.value = null
-    blank()
+    open.value = false
+    clearHoverTimers()
+    closeDialog()
     release?.()
     release = undefined
+    cancelWipe()
+    wipe = setTimeout(() => {
+      wipe = undefined
+      if (!open.value) blank()
+    }, WIPE_MS)
   }, undefined)
 })
 
@@ -713,6 +803,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  sizer?.disconnect()
+  sizer = null
+  cancelWipe()
   window.removeEventListener('resize', measure)
   clearHoverTimers()
   releaseDialog?.()
@@ -743,9 +836,13 @@ function choose(item: Item): void {
   emit('opx:panel:select', { handle: handle.value, item: item.id })
 }
 
-/** A row clicked: the dial moves to it as well, so the two never disagree. */
-function pick(item: Item, offset: number): void {
-  cursor.value = windowStart.value + offset
+/** A row clicked: the dial moves to it as well, so the two never disagree.
+    Found by id rather than by the row's offset in the window: a row is memoised
+    (`v-memo` in the template) and keeps the handler it was drawn with, so an
+    offset captured then would be stale as soon as the window slid under it. */
+function pick(item: Item): void {
+  const index = shown.value.findIndex((entry) => entry.id === item.id)
+  if (index >= 0) cursor.value = index
   choose(item)
 }
 
@@ -873,10 +970,13 @@ function scrubSlot(slider: Slider, raw: string): void {
 
 /** Let go, or an arrow key pressed: that is the choice, and it does not wait. */
 function settleSlot(slider: Slider): void {
-  if (view.busy || slider.disabled) return
+  // The drag ends whether or not the commit may go out. Returning on `busy` before
+  // this left `dragging` naming the slot, so the caller's own index was ignored for
+  // it from then on and the thumb sat on an uncommitted preview.
   if (slideTimer !== undefined) clearTimeout(slideTimer)
   slideTimer = undefined
   dragging = null
+  if (view.busy || slider.disabled) return
   if (handle.value === null) return
   emit('opx:panel:slide',
     { handle: handle.value, id: slider.id, index: standing(slider), commit: true })
@@ -1014,9 +1114,16 @@ function filter(value: string): void {
           </div>
 
           <div ref="gridEl" class="grid" :class="{ busy: view.busy }" :style="gridStyle">
+            <!-- MEMOISED ON WHAT A ROW SHOWS (#115). The dial moves `at` on every
+                 input event of a drag, and without the memo every row of the
+                 window was rebuilt for it; now a row is redrawn only when its own
+                 chosen, cursor or disabled state, or its words, change. Anything
+                 added to this row must be added to the memo too. -->
             <button
               v-for="(item, offset) in visible"
               :key="item.id"
+              v-memo="[item.id === chosen, item.id !== chosen && windowStart + offset === at,
+                       item.disabled || view.busy, item.label, item.detail]"
               type="button"
               class="row op-frame"
               :class="{
@@ -1027,7 +1134,7 @@ function filter(value: string): void {
               }"
               :disabled="item.disabled || view.busy"
               data-augmented-ui="tr-clip border"
-              @click="pick(item, offset)"
+              @click="pick(item)"
               @mouseenter="pointAt(item.id)"
               @mouseleave="pointAway"
             >
@@ -1299,9 +1406,17 @@ function filter(value: string): void {
               <span class="tile-name op-eyebrow">{{ label('nothing') }}</span>
             </button>
 
+            <!-- MEMOISED ON WHAT A BOX SHOWS (#115). A thumb dragged on the track
+                 below writes `thumb` on every input event, and `standing()` reads
+                 it, so without the memo all of the category's boxes -- up to 677 --
+                 were rebuilt per event to move one `is-on`. Now only the box
+                 leaving the thumb and the one arriving under it are. Anything added
+                 to this box must be added to the memo too. -->
             <button
               v-for="box in boxes"
               :key="box.index"
+              v-memo="[standing(openSlider) === box.index, openSlider.disabled || view.busy,
+                       box.label, box.name, box.image, broken[box.name] === true]"
               type="button"
               class="tile op-frame"
               :class="{
@@ -1327,7 +1442,13 @@ function filter(value: string): void {
               <span class="tile-name op-eyebrow">{{ box.label }}</span>
             </button>
 
-            <p v-if="moreToLoad" class="tile-more op-copy">
+            <!-- Also while the category's FIRST window is on its way: the old grid goes
+                 at once on a tab change, and with only "Nothing" left in it the category
+                 read as empty until the boxes landed. -->
+            <p
+              v-if="moreToLoad || (openSlider.count > 0 && tiles.slot !== openSlider.id)"
+              class="tile-more op-copy"
+            >
               {{ label('loading') }}
             </p>
           </div>
@@ -1735,10 +1856,12 @@ function filter(value: string): void {
   transition: color var(--op-dur-fast) linear;
 }
 
+/* The menu's hover: denser and 1.5px, not lit. Lit red at 2px is what a chosen
+   control wears, and a pointer passing over a view button is not a choice. */
 .view-btn:hover:not(:disabled),
 .view-btn:focus-visible {
-  --aug-border-bg: var(--op-red);
-  --aug-border-all: 2px;
+  --aug-border-bg: var(--op-red-deep);
+  --aug-border-all: 1.5px;
   color: var(--op-text);
   outline: none;
 }
@@ -1838,11 +1961,16 @@ function filter(value: string): void {
   transition: color var(--op-dur-fast) linear;
 }
 
-.tile:hover:not(:disabled),
-.tile:focus-visible {
-  --aug-border-bg: var(--op-red);
-  --aug-border-all: 2px;
+/* HOVER IS THE MENU'S HOVER: denser, not lit. It was the chosen tile's exact frame,
+   so a pointer resting on a jacket made it read as the one being worn. */
+.tile:hover:not(:disabled):not(.is-on),
+.tile:focus-visible:not(.is-on) {
+  --aug-border-bg: var(--op-red-deep);
+  --aug-border-all: 1.5px;
   color: var(--op-text);
+}
+
+.tile:focus-visible {
   outline: none;
 }
 
@@ -1978,7 +2106,9 @@ function filter(value: string): void {
    second, worse slider sitting beside the real one, and on this surface they
    are also the one piece of chrome nothing in the theme can style. */
 .slot-number {
-  width: 3ch;
+  /* Three digits AND their tracking: the box carries `.op-eyebrow`'s letter-spacing,
+     and at a bare 3ch the third digit of a 677-record category scrolled out of it. */
+  width: calc(3ch + 3 * var(--op-track-micro));
   margin: 0;
   padding: 0;
   border: 0;
@@ -2019,7 +2149,10 @@ function filter(value: string): void {
   grid-template-columns: repeat(var(--columns, 2), minmax(0, 1fr));
   gap: var(--op-space-1);
   align-content: start;
-  flex: 1 1 auto;
+  /* A ZERO BASIS, so the grid's height is the column's remainder and never its
+     rows': the window is sized from this height, and a basis of `auto` would let
+     the rows it draws feed back into the measurement that chose them (#118). */
+  flex: 1 1 0;
   min-height: 0;
   overflow: hidden;
   transition: opacity var(--op-dur-fast) var(--op-ease);
@@ -2199,6 +2332,13 @@ function filter(value: string): void {
   gap: var(--op-space-3);
   padding: var(--op-space-2) var(--op-space-3);
   padding-right: calc(var(--op-space-3) + var(--op-cut-sm));
+}
+
+/* The frame answers the keyboard, as `.slot-step` does: the entry has no outline and no
+   box of its own, so without this the caret was the only sign the search had focus. */
+.field:focus-within {
+  --aug-border-bg: var(--op-red);
+  --aug-border-all: 2px;
 }
 
 .field-label {

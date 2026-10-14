@@ -21,20 +21,41 @@ local function nowMs()
 	return lastMs
 end
 
---- Cleans display text to MAX_LENGTH characters, never nil.
-local function clean(value)
-	return OPX.Text.Clean(value, M.Settings.MAX_LENGTH, '...') or ''
+-- Longest author a line may carry; a player's own name is bounded the same way
+-- by the character module. Declared up here because a player's line uses it
+-- too: it was declared below that, so a player's name was cut at the message
+-- length (240) instead.
+local MAX_AUTHOR = 64
+
+-- The three settings every line reads, resolved once in Init from the config.
+--
+-- READ BOUNDED, WITH A DEFAULT. They were read raw on every line, so a config
+-- block missing MAX_LENGTH raised on every message (`maximum * 4` on nil) and
+-- one missing RATE_MS raised comparing against nil: the chat went silent for
+-- everybody, with a stack trace per line as the only clue. `MAX_LENGTH = 0`
+-- turned every message into "...".
+local tuning = {}
+
+local function bounded(value, low, high, default)
+	local number = OPX.Math.Finite(value)
+	if number == nil or number < low or number > high then return default end
+	return math.floor(number)
 end
 
---- Reads what the host vouches for about a connection.
--- Guarded twice: the reader may be absent on a build without it, and a reader
--- that is present can still raise.
-local function identityOf(player)
-	local players = Open77.players
-	if type(players) ~= 'table' or type(players.identity) ~= 'function' then return nil end
-	local read, identity = pcall(players.identity, player)
-	if not read or type(identity) ~= 'table' then return nil end
-	return identity
+--- Cleans display text to MAX_LENGTH characters, never nil.
+local function clean(value)
+	return OPX.Text.Clean(value, tuning.maxLength, '...') or ''
+end
+
+--- Whether a connection may put a line in front of everybody: a loaded
+--- character, or a staff grant.
+local function mayBroadcast(player)
+	local character = OPX.Api.Get('character')
+	if character == nil or type(character.GetPlayer) ~= 'function' then return true end
+	if character.GetPlayer(player) ~= nil then return true end
+	local right = tuning.staffPermission
+	local read, allowed = pcall(function() return Open77.acl.isAllowed(player, right) end)
+	return read and allowed == true
 end
 
 --- Relays a player's message to everyone, attributed to its connection.
@@ -48,50 +69,46 @@ local function onSaid(text)
 	-- advance it, and pay for a bounded walk every time.
 	local at = nowMs()
 	local previous = lastSaidMs[player]
-	if previous ~= nil and at - previous < M.Settings.RATE_MS then return end
+	if previous ~= nil and at - previous < tuning.rateMs then
+		-- SAID, ONCE A BURST. The box has already closed and cleared on the
+		-- client, so a second line typed quickly simply never appeared for
+		-- anyone. The toast is cooled itself: a flood earns one, not one each.
+		if not OPX.Cooling(player, 'chat:tooFast', 2000) then OPX.Refuse(player, 'chat.tooFast') end
+		return
+	end
 	lastSaidMs[player] = at
+
+	-- A CONNECTION WITH NO CHARACTER DOES NOT SPEAK TO THE SERVER, the owner's
+	-- ruling (2026-10, after the hostile-net-events audit). This line goes to
+	-- every client, and it went out for any slot the host had admitted: one on
+	-- the character screen, or one whose entry failed and left it behind the
+	-- gate. Staff (`STAFF_PERMISSION`) still may -- they are the people a player
+	-- stuck on that screen needs to reach -- and the console never comes through
+	-- here at all: it speaks through the `chat` contract. With no character
+	-- contract there is nobody to ask, and the chat keeps working.
+	if not mayBroadcast(player) then
+		if not OPX.Cooling(player, 'chat:notLoaded', 2000) then
+			OPX.Refuse(player, 'chat.notLoaded')
+		end
+		return
+	end
 
 	local said = clean(text)
 	if said:match('^%s*$') then return end
 
 	-- `source` is the authenticated connection: a client cannot speak for
-	-- another. The displayed name is the player's own and is a label, never an
-	-- identity. Without one, the first eight characters of the account say
-	-- something an operator can act on; a session id says nothing to anyone once
-	-- the player has gone.
+	-- another.
 	--
-	-- THE CHARACTER FIRST, AND IT NEVER WAS. This comment has always said "the
-	-- displayed name is the player's own", and the code went straight to
-	-- `Open77.players.identity`, whose `name` is the displayName the Master
-	-- vouches for -- the account's gamertag. So a player who had typed a
-	-- character name still spoke under their gamertag, on the first connection
-	-- and on the hundredth, and the `chat.author.unknown` branch below was dead
-	-- code: the platform always knows a connected session.
-	--
-	-- Optional rather than required: a runtime without the character module is
-	-- one where the gamertag IS the only name there is, and the box must still
-	-- work there.
-	local name
-	local character = OPX.Api.Get('character')
-	if character ~= nil then
-		local held = character.GetPlayer(player)
-		local charInfo = held and held.PlayerData and held.PlayerData.charInfo
-		local first = type(charInfo) == 'table' and charInfo.firstName or nil
-		local last = type(charInfo) == 'table' and charInfo.lastName or nil
-		if type(first) == 'string' and first ~= '' and type(last) == 'string' and last ~= '' then
-			name = first .. ' ' .. last
-		else
-			name = type(first) == 'string' and first ~= '' and first or nil
-		end
-	end
-
-	local identity = identityOf(player)
-	if name == nil then name = identity and identity.name end
-	if type(name) ~= 'string' or name == '' then name = nil end
-	local unknown = identity and identity.userId and identity.userId:sub(1, 8) or tostring(player)
+	-- NEVER A NAME TO A STRANGER, the owner's decision (#91). This line goes to
+	-- EVERY client on the server, and it was signed with the character's name --
+	-- and before that with the account's gamertag, and with the first eight
+	-- characters of the durable account id when neither was known. Each told the
+	-- whole city something only people who have met the speaker should know. The
+	-- line is signed with the server id instead: what a report to staff needs,
+	-- the same `#12` the give list shows, and nothing a stranger can put a name to.
 	TriggerClientEvent(M.Event.MESSAGE, -1, {
 		kind = 'chat',
-		author = clean(name or locale('chat.author.unknown', { id = unknown })),
+		author = OPX.Text.Clean(locale('chat.author.player', { id = player }), MAX_AUTHOR, '...') or '',
 		text = said,
 	})
 end
@@ -102,7 +119,7 @@ end
 local function onReady()
 	local player = tonumber(source) or 0
 	if player <= 0 then return end
-	if OPX.Cooling(player, 'chat.ready', M.Settings.READY_MS) then return end
+	if OPX.Cooling(player, 'chat.ready', tuning.readyMs) then return end
 
 	-- Core owns the list, and with it the rule that a restricted command is only
 	-- offered to a player the ACL would let run it.
@@ -149,9 +166,6 @@ end
 -- would arrive as a class the stylesheet has no rule for and read like a player.
 local LINE_KINDS = { chat = true, system = true, info = true, warning = true, error = true }
 
--- Longest author a server line may carry; a player's own name is bounded the
--- same way by the character module.
-local MAX_AUTHOR = 64
 
 -- Largest radius a broadcast may name, in metres. A bigger one is "everybody",
 -- which is what leaving `radius` out already says.
@@ -272,6 +286,14 @@ end
 -- @author dop42
 function M.Init()
 	lastSaidMs = {}
+	local settings = type(OPX.Config.MODULES.chat) == 'table' and OPX.Config.MODULES.chat or {}
+	tuning = {
+		maxLength = bounded(settings.MAX_LENGTH, 1, 2000, 240),
+		rateMs = bounded(settings.RATE_MS, 0, 60000, 800),
+		readyMs = bounded(settings.READY_MS, 0, 600000, 5000),
+		staffPermission = type(settings.STAFF_PERMISSION) == 'string'
+			and settings.STAFF_PERMISSION ~= '' and settings.STAFF_PERMISSION or 'command.opx.admin',
+	}
 end
 
 --- Publishes the server's voice: one line to one player, or to many.

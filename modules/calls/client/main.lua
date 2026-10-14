@@ -90,6 +90,9 @@ local jobs = {}
 -- built from `OPX.Event`, and the same constant `modules/menu` reads.
 local PAUSE_KEY = 'open77:pauseKey'
 
+-- When the hologram opened, for Escape's layer order.
+local holoOpenedAtMs = 0
+
 -- The view seam, and the one channel every payload travels on.
 local EVENT_VIEW = M.Event.VIEW
 
@@ -230,6 +233,11 @@ local function onState(payload)
 		routeVoice()
 	elseif hadCall ~= nil and nowCall == nil then
 		play(sounds.HANG_UP)
+		-- AND THE ROUTE GOES BACK. Nothing set it back when the call ended, so
+		-- the intent stayed `all` for the rest of the session -- and a player
+		-- another resource puts on a voice channel (a radio) spoke into it from
+		-- their first holocall on, without pressing anything.
+		routeVoice('proximity')
 	end
 
 	-- THE PROJECTION KNOWS ABOUT THE CALL TOO. It is not only the screen the
@@ -262,7 +270,7 @@ end
 -- Re-asserted on the sweep as well as on the state change, because `open-voice`
 -- owns the push-to-talk key and drives the same native; if it re-states the
 -- intent, this takes it back within half a second rather than for good.
-function routeVoice()
+function routeVoice(intent)
 	local api = Open77.voice
 	if type(api) ~= 'table' or type(api.setTransmitting) ~= 'function' then return end
 	if type(api.status) ~= 'function' then return end
@@ -277,7 +285,7 @@ function routeVoice()
 	if type(talking) ~= 'boolean' then talking = status.pushToTalk end
 	if type(talking) ~= 'boolean' then return end
 
-	pcall(api.setTransmitting, talking, 'all')
+	pcall(api.setTransmitting, talking, intent or 'all')
 end
 
 -- Re-arms the ring while an invite is waiting, and re-asserts the voice route
@@ -333,6 +341,14 @@ function M.FromView(action, payload)
 		-- what was missing is that the ASKING side had no screen of its own.
 		-- The page puts the question; this is the yes.
 		return M.Invite(type(payload) == 'table' and payload.id or nil, 'contact')
+	end
+	if action == 'forget' then
+		-- A row's reference, as the server minted it with the list; the server
+		-- alone knows which contact it stands for, and judges it again.
+		local ref = type(payload) == 'table' and payload.ref or nil
+		if type(ref) ~= 'string' or #ref > 8 then return end
+		TriggerServerEvent(M.Event.FORGET, ref)
+		return
 	end
 	if action == 'diag' then
 		OPX.Note('calls', ('view: %s'):format(tostring(type(payload) == 'table'
@@ -418,6 +434,14 @@ function M.DeclineOrHangUp()
 	return M.HangUp()
 end
 
+--- The decline key. Whether a press is this module's at all -- a cancelable
+--- bar, a carried crate or an emote may hold it -- is decided before this runs,
+--- by the contest `bind` enters it in (`OPX.Spots.Key.Owns`).
+-- @author dop42
+function M.OnDeclineKey()
+	return M.DeclineOrHangUp()
+end
+
 --- Asks to call, to add, or to share a contact with one player.
 ---
 --- ONE VERB FOR ALL THREE, because the server derives which of them this is
@@ -492,7 +516,8 @@ function M.PlayerRows()
 			id = 'callShare',
 			label = locale('calls.row.share'),
 			icon = 'person',
-			group = locale('calls.group'),
+			-- NO FOLDER. It sat alone inside a `Holocall` folder on the eye: one
+			-- more press to reach the only row in it.
 			order = 60,
 			distance = ROW_DISTANCE,
 			canInteract = function(context) return targetOf(context) ~= nil end,
@@ -604,6 +629,7 @@ end
 function M.OpenHolo()
 	if holoOpen then return true end
 	holoOpen = true
+	holoOpenedAtMs = OPX.Now()
 	-- Drawn before the roster arrives, with whatever the last one held. The
 	-- screen must appear on the key press rather than on a round trip: a
 	-- hologram that opens a beat after the key is a hologram that feels broken.
@@ -681,7 +707,7 @@ function M.Start()
 	-- `DEFAULT = false` switches one off for a server that binds it elsewhere,
 	-- and there is then no way in by that route -- a configuration rather than a
 	-- fault, so it is said once and not warned about.
-	local function bind(block, fallbackId, fallbackName, press)
+	local function bind(block, fallbackId, fallbackName, press, wants)
 		local declared = type(block) == 'table' and block or {}
 		local key = declared.DEFAULT
 		if type(key) ~= 'string' or key == '' then
@@ -696,14 +722,23 @@ function M.Start()
 		-- key, or `true` and the key -- and reading only one of them logged a
 		-- working mapping as a failure everywhere else in this resource before
 		-- it was written down. Both are accepted; anything else is reported.
-		local called, ok, answer = pcall(RegisterKeyMapping,
-			tostring(declared.ID or fallbackId),
-			locale(declared.NAME or fallbackName), key, press)
+		-- A key typed into another surface is not a key pressed in the world --
+		-- every other mapping in this resource already said so and these three
+		-- did not -- and a press another feature on the same key owns is not
+		-- this one's (see `OPX.Spots.Key.Owns`).
+		local id = tostring(declared.ID or fallbackId)
+		local called, ok, answer = pcall(RegisterKeyMapping, id,
+			locale(declared.NAME or fallbackName), key, function()
+				if OPX.Spots.Captured() or not OPX.Spots.Key.Owns(id) then return end
+				press()
+			end)
 		if not called then
 			OPX.Note('calls', ('%s was not mapped: %s'):format(fallbackId, tostring(ok)))
 		elseif ok == false or (ok == nil and answer == nil) then
 			OPX.Note('calls', ('%s could not take %q: %s')
 				:format(fallbackId, key, tostring(answer)))
+		elseif wants ~= nil then
+			OPX.Spots.Key.Contend({ tag = 'calls', id = id, default = key, wants = wants })
 		end
 	end
 
@@ -717,12 +752,29 @@ function M.Start()
 	-- already answer false with no invite, so the guard is theirs and not a
 	-- second copy of the same question.
 	bind(M.Settings.ANSWER_KEY, 'opx.calls.answer', 'calls.key.answer',
-		function() M.Accept() end)
+		function() M.Accept() end,
+		-- Y is also the hotbar peek, which stays silent while a call rings.
+		function()
+			if state.invite ~= nil then return OPX.Spots.Key.Rank('RINGING') end
+			return nil
+		end)
 	-- THE SAME KEY HANGS UP. Refusing wins while something rings at you, then
 	-- withdrawing what you are ringing out, then leaving the call -- see
 	-- `M.DeclineOrHangUp` for why the middle one comes before the last.
+	--
+	-- AND THE KEY IS CONTESTED. X is also the progress cancel, the crate drop
+	-- and the emote stop. Something ringing at the player outranks a crate and
+	-- an emote -- the projection is up saying "X to refuse" -- and hanging up a
+	-- call that is merely going on ranks below all of them: putting a crate down
+	-- or ending a dance in the middle of a call used to end the call too.
 	bind(M.Settings.DECLINE_KEY, 'opx.calls.decline', 'calls.key.decline',
-		function() M.DeclineOrHangUp() end)
+		function() M.OnDeclineKey() end,
+		function()
+			if state.invite ~= nil then return OPX.Spots.Key.Rank('RINGING') end
+			if state.outgoing ~= nil then return OPX.Spots.Key.Rank('OUTGOING') end
+			if state.call ~= nil then return OPX.Spots.Key.Rank('CALL') end
+			return nil
+		end)
 
 	-- ESCAPE CLOSES IT, and it is not a key this module may bind. The pause
 	-- plugin swallows Escape before any surface sees it and re-raises it under
@@ -730,8 +782,19 @@ function M.Start()
 	-- so binding  here would be asking for a key the platform has already
 	-- taken. Closing only when the projection is OPEN matters: the sphere pops
 	-- unbidden while a call rings, and Escape must not answer a call.
+	-- And only when it is the TOP layer: a menu opened over it takes Escape.
+	local layer = OPX.Spots.Key.Layer('calls', function() return holoOpen and holoOpenedAtMs or nil end)
 	AddEventHandler(PAUSE_KEY, function()
+		if not OPX.Spots.Key.TopLayer(layer) then return end
 		if holoOpen then M.CloseHolo() end
+	end)
+
+	-- GOING DOWN CLOSES THE PANEL, as it closes the chat box. The down screen
+	-- takes the keyboard, so none of the panel's own ways out could reach it,
+	-- and after the revive it was still open and still holding the cursor. A
+	-- call itself is not touched: the server decides who stays on one.
+	AddEventHandler(OPX.Event(OPX.Channel.LOCAL, 'downed', 'changed'), function(payload)
+		if type(payload) == 'table' and payload.down == true and holoOpen then M.CloseHolo() end
 	end)
 
 	-- THE ONE ROW ON THE EYE. `target` is optional to this module, so its absence
@@ -770,6 +833,9 @@ function M.Stop()
 	-- VM no longer answers for. Emptied here; the server's next push after a
 	-- restart draws it back.
 	holoOpen = false
+	-- A call live when the module stops leaves the route where `onState` would
+	-- have put it back on the hang-up.
+	if state.call ~= nil then routeVoice('proximity') end
 	state = { call = nil, invite = nil, outgoing = nil }
 	drawHolo()
 end

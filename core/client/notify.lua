@@ -175,6 +175,11 @@ function OPX.Toast.Show(definition)
 		stinger = stingerOf(definition.stinger, 'a toast'),
 	}
 
+	-- What this id addressed before, so a refused REPLACEMENT leaves the toast
+	-- that is still on screen addressable. It was dropped with the refused one,
+	-- and every later `Update` or `Dismiss` of an id the page still drew answered
+	-- `no_such_toast`.
+	local previous = live[id]
 	live[id] = toast
 	-- BOTH ANSWERS ARE READ. `OPX.Surface.Send` returns `(sent, refused)`: the
 	-- second is true when the host took the call but REJECTED the payload as too
@@ -186,7 +191,7 @@ function OPX.Toast.Show(definition)
 	-- "Reading the catalogue" for good.
 	local sent, refused = OPX.UI.Send('overlay', 'notify:show', toast)
 	if not sent or refused then
-		live[id] = nil
+		live[id] = previous
 		return nil, refused and 'payload_refused' or 'surface_unavailable'
 	end
 	return id
@@ -202,6 +207,8 @@ end
 -- @return string|nil
 -- @return string|nil why it was refused
 function OPX.Toast.Locale(key, params, kind, icon)
+	-- The situation's kind for an error or a warning: see `OPX.Result.Kind`.
+	if kind == 'error' or kind == 'warning' then kind = OPX.Result.Kind(key, kind) end
 	return OPX.Toast.Show({ kind = kind, message = locale(key, params), icon = icon })
 end
 
@@ -272,8 +279,13 @@ function OPX.Toast.Update(id, patch)
 	-- refused leaves Lua believing the page is showing the new text.
 	local sent, refused = OPX.UI.Send('overlay', 'notify:update', toast)
 	if not sent or refused then
+		-- WRITTEN OUT, NOT `was ~= ABSENT and was or nil`. That is the and/or trap
+		-- `ABSENT` was introduced to avoid: a prior value of `false` made the
+		-- `and` answer false and the `or` answer nil, so the rollback DELETED a
+		-- field it was meant to restore -- exactly the case the sentinel's own
+		-- comment names as the reason it is not `false`.
 		for key, was in pairs(prior) do
-			toast[key] = was ~= ABSENT and was or nil
+			if was == ABSENT then toast[key] = nil else toast[key] = was end
 		end
 		return false, refused and 'payload_refused' or 'surface_unavailable'
 	end
@@ -367,9 +379,20 @@ function OPX.Toast.Attach()
 		-- RefusalKey, so rendering it raw is never a leak of an internal code.
 		local code = payload.code
 		if type(code) ~= 'string' then return end
+		-- The params are the server's (`refusalParams`, core/server/answer.lua),
+		-- re-checked here: only strings and numbers reach the sentence.
+		local params = nil
+		if type(payload.params) == 'table' then
+			params = {}
+			for key, value in pairs(payload.params) do
+				if type(key) == 'string' and (type(value) == 'string' or type(value) == 'number') then
+					params[key] = value
+				end
+			end
+		end
 		local raised, why = OPX.Toast.Show({
 			kind = payload.kind or 'error',
-			message = locale(code),
+			message = locale(code, params),
 			icon = wireIcon(payload.icon, 'a refusal'),
 		})
 		if raised == nil then undrawn('a server refusal', why) end

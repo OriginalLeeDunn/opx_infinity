@@ -20,8 +20,34 @@ local World = M.World
 -- Every known pile by id: id, x, y, z and bucket.
 local drops = {}
 
+-- THE SAME PILES AS AN ARRAY, and where each id sits in it, so the scan below
+-- can walk them a slice at a time with a cursor. Kept in step by `track` and
+-- `untrack`, which are O(1): a removal moves the last pile into the hole.
+local list = {}
+local slotOf = {}
+
 -- Piles arriving in parts, gathered until the part marked `done`.
 local incoming = nil
+
+-- The routing bucket the server says this player is in, or nil until it has
+-- said. Every bucket's piles come to every client (see `SendDrops`), and this
+-- is what keeps a pile of another instance on the same spot from being drawn.
+local bucket = nil
+
+-- THE SCAN, IN SLICES. `DROPS.MAX` goes to 2,048 piles and every bucket's come
+-- here, and the scan used to measure the distance to all of them, then sort,
+-- inside one scheduler resume shared with three other jobs. The client budget is
+-- per resume and an overrun kills the loop silently, taking every job on it.
+-- So one pass looks at `SCAN_SLICE` piles, keeps the near ones, and only the
+-- pass that reaches the end of the list sorts what it kept and moves the row.
+local SCAN_SLICE = 128
+local SCAN_MS = 100
+local cursor = 1
+local gathering = {}
+
+-- The nearest piles the last whole sweep found, nearest first. What the row
+-- points at and what a selection is matched against.
+local nearest = {}
 
 -- The name this module registers its target rows under. It is the module id, and
 -- the target registry reads a module id as an owner that is always live.
@@ -70,14 +96,56 @@ function World.Seated()
 	return read and inside == true
 end
 
---- The nearest known piles within the prompt radius, nearest first.
-local function nearbyDrops(here, limit)
-	local near = {}
-	if here == nil then return near end
-	for _, drop in pairs(drops) do
-		local away = gap(here, drop)
-		if away <= Options.DROP_PROMPT_RADIUS then near[#near + 1] = { drop = drop, gap = away } end
+--- Adds a pile to the scan list, or replaces the one with its id.
+local function track(drop)
+	local at = slotOf[drop.id]
+	if at == nil then
+		at = #list + 1
+		slotOf[drop.id] = at
 	end
+	list[at] = drop
+end
+
+--- Takes a pile out of the scan list, moving the last one into its place.
+local function untrack(id)
+	local at = slotOf[id]
+	if at == nil then return end
+	local last = #list
+	local moved = list[last]
+	list[at] = moved
+	list[last] = nil
+	slotOf[id] = nil
+	if moved ~= nil and at ~= last then slotOf[moved.id] = at end
+end
+
+--- Whether a pile is in the bucket this player is in, as far as is known.
+local function sameBucket(drop)
+	return bucket == nil or (tonumber(drop.bucket) or 0) == bucket
+end
+
+--- Looks at the next slice of piles; answers the nearest ones once a sweep ends.
+-- At most `SCAN_SLICE` distances per call, whatever the size of the list, and
+-- the sort only ever sees the piles that were within the prompt radius.
+-- @return table[]|nil the nearest piles, nearest first, when this call finished
+--   a sweep; nil while one is still under way
+local function scanSlice(here, limit)
+	local last = math.min(#list, cursor + SCAN_SLICE - 1)
+	if here ~= nil then
+		for index = cursor, last do
+			local drop = list[index]
+			if drop ~= nil and sameBucket(drop) then
+				local away = gap(here, drop)
+				if away <= Options.DROP_PROMPT_RADIUS then
+					gathering[#gathering + 1] = { drop = drop, gap = away }
+				end
+			end
+		end
+	end
+	cursor = last + 1
+	if cursor <= #list then return nil end
+
+	local near = gathering
+	gathering, cursor = {}, 1
 	table.sort(near, function(left, right) return left.gap < right.gap end)
 	local out = {}
 	for index = 1, math.min(#near, limit) do out[index] = near[index].drop end
@@ -146,9 +214,13 @@ function World.TakePile(context)
 		return false
 	end
 
+	-- Matched against the nearest piles the scan last found, not the whole
+	-- list: a row only exists for those, and walking two thousand piles in one
+	-- callback is the budget overrun the slicing above is there to avoid.
 	local best, bestGap = nil, PILE_RADIUS
-	for _, drop in pairs(drops) do
-		local away = gap(at, drop)
+	for index = 1, #nearest do
+		local drop = nearest[index]
+		local away = drops[drop.id] ~= nil and gap(at, drop) or math.huge
 		if away <= bestGap then best, bestGap = drop, away end
 	end
 	if best == nil then return false end
@@ -258,7 +330,21 @@ local function pass()
 	local target = M.Contracts.target
 	if target == nil or not Options.DROPS then return end
 	local here = M.Screen.Own() ~= nil and position() or nil
-	syncPileRow(target, nearbyDrops(here, PILE_ROW_MAX))
+	local found = scanSlice(here, PILE_ROW_MAX)
+	if found == nil then return end
+	nearest = found
+	syncPileRow(target, found)
+end
+
+-- The scheduler job, reachable so the suite can count what one resume costs.
+World.Pass = pass
+
+--- How many piles this client knows of, and the bucket it filters them by.
+-- @author dop42
+-- @return integer
+-- @return integer|nil
+function World.Known()
+	return #list, bucket
 end
 
 --- Registers the handlers the server pushes piles on.
@@ -268,16 +354,37 @@ function World.Wire()
 		if type(part) ~= 'table' then return end
 		-- Gathered until the part marked `done`, and started over on `first`: a
 		-- half-arrived list must not replace a whole one.
-		if part.first == true or incoming == nil then incoming = {} end
-		local list = type(part.drops) == 'table' and part.drops or {}
-		for index = 1, #list do
-			local drop = list[index]
+		if part.first == true or incoming == nil then incoming = { byId = {}, list = {}, at = {} } end
+		if part.bucket ~= nil then bucket = Common.Integer(part.bucket, 0, 2147483647) end
+		local arrived = type(part.drops) == 'table' and part.drops or {}
+		-- One part at a time, and a part is at most 64 piles: the array the scan
+		-- walks is built here as the parts come, never in one loop at the end.
+		for index = 1, math.min(#arrived, 64) do
+			local drop = arrived[index]
 			if type(drop) == 'table' and Common.Integer(drop.id, -2147483647, -1) then
-				incoming[drop.id] = drop
+				if incoming.at[drop.id] == nil then
+					incoming.list[#incoming.list + 1] = drop
+					incoming.at[drop.id] = #incoming.list
+				else
+					incoming.list[incoming.at[drop.id]] = drop
+				end
+				incoming.byId[drop.id] = drop
 			end
 		end
 		if part.done ~= true then return end
-		drops, incoming = incoming, nil
+		drops, list, slotOf = incoming.byId, incoming.list, incoming.at
+		incoming = nil
+		cursor, gathering = 1, {}
+		pileKey = nil
+	end)
+
+	-- The server's word on which bucket this player is in. It has no client
+	-- read, so the server says it on every hello and on every move.
+	RegisterNetEvent(M.Event.BUCKET, function(value)
+		local read = Common.Integer(value, 0, 2147483647)
+		if read == nil or read == bucket then return end
+		bucket = read
+		cursor, gathering = 1, {}
 		pileKey = nil
 	end)
 
@@ -285,10 +392,28 @@ function World.Wire()
 		if action == 'add' and type(value) == 'table' and
 			Common.Integer(value.id, -2147483647, -1) then
 			drops[value.id] = value
-			if incoming then incoming[value.id] = value end
+			track(value)
+			if incoming and incoming.at[value.id] == nil then
+				incoming.list[#incoming.list + 1] = value
+				incoming.at[value.id] = #incoming.list
+				incoming.byId[value.id] = value
+			end
 		elseif action == 'remove' then
+			if value == nil then return end
 			drops[value] = nil
-			if incoming and value ~= nil then incoming[value] = nil end
+			untrack(value)
+			-- A pile removed while a list is still arriving leaves that list too,
+			-- the same way: the last pile moves into its place.
+			if incoming and incoming.byId[value] ~= nil then
+				incoming.byId[value] = nil
+				local at = incoming.at[value]
+				local last = #incoming.list
+				local moved = incoming.list[last]
+				incoming.list[at] = moved
+				incoming.list[last] = nil
+				incoming.at[value] = nil
+				if moved ~= nil and at ~= last then incoming.at[moved.id] = at end
+			end
 		else
 			return
 		end
@@ -310,5 +435,5 @@ function World.Wire()
 	end
 	registerVehicleRows(target)
 	registerStashRows(target)
-	OPX.Scheduler.Every('inventory.piles', 1000, pass)
+	OPX.Scheduler.Every('inventory.piles', SCAN_MS, pass)
 end

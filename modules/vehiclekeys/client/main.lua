@@ -63,16 +63,41 @@ function M.Start()
 			'works when used from the bag')
 		return
 	end
+	-- ONE ROW THAT SAYS WHICH WAY. `Lock / unlock` with a tick box made the
+	-- player decode a check mark; the eye now shows `Lock vehicle` or `Unlock
+	-- vehicle` from what the host reads, and keeps the two-way row only for a
+	-- vehicle whose lock this client cannot read. All three send the same turn
+	-- of the key, which the server decides.
+	-- Beside the trunk (22): a key is what decides whether the trunk opens.
+	local function usable(context) return vehicleOf(context) ~= nil and holdsAKey() end
 	local registered = target.RegisterVehicles(OWNER, {
-		id = 'vehiclekeys.toggle',
-		label = locale('vehiclekeys.row.toggle'),
-		icon = 'key',
-		distance = M.REACH,
-		canInteract = function(context) return vehicleOf(context) ~= nil and holdsAKey() end,
-		checked = lockedOf,
-		onSelect = onToggle,
-		-- Beside the trunk (22): a key is what decides whether the trunk opens.
-		order = 21,
+		{
+			id = 'vehiclekeys.lock',
+			label = locale('vehiclekeys.row.lock'),
+			icon = 'key',
+			distance = M.REACH,
+			canInteract = function(context) return usable(context) and lockedOf(context) == false end,
+			onSelect = onToggle,
+			order = 21,
+		},
+		{
+			id = 'vehiclekeys.unlock',
+			label = locale('vehiclekeys.row.unlock'),
+			icon = 'key',
+			distance = M.REACH,
+			canInteract = function(context) return usable(context) and lockedOf(context) == true end,
+			onSelect = onToggle,
+			order = 21,
+		},
+		{
+			id = 'vehiclekeys.toggle',
+			label = locale('vehiclekeys.row.toggle'),
+			icon = 'key',
+			distance = M.REACH,
+			canInteract = function(context) return usable(context) and lockedOf(context) == nil end,
+			onSelect = onToggle,
+			order = 21,
+		},
 	})
 	if not registered.ok then
 		OPX.Note('vehiclekeys', ('the lock row was refused: %s'):format(tostring(registered.error)))
