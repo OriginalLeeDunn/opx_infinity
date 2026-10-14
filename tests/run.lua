@@ -31384,27 +31384,31 @@ do
 			#control.vehiclePins >= 1 and control.vehiclePins[#control.vehiclePins].frozen == true,
 			tostring(#control.vehiclePins) .. ' pin(s)')
 
-		-- A SECOND SUMMON, while one is in the air. `ONE_AT_A_TIME` is the
-		-- engine's own rule and the config keeps it, so the refusal has to be
-		-- NAMED on the second response -- and its squad still stands, on the
-		-- ground ring, because a division that answers with nothing is worse than
-		-- one that answers on foot. The fallback is the documented one; what must
-		-- not happen is a silent stage.
+		-- A SECOND SUMMON, while one squad is in the air. Past `LIMITS.MAXTAC_SQUADS`
+		-- (one, as shipped) a cyberpsycho is still at MaxTac's stage -- the stars,
+		-- the alarm and the call-out are the ledger's and unchanged -- but the
+		-- bodies standing for them are NCPD's top stage until a squad is free
+		-- (`Response.Refill`). What must not happen is a second airframe, or a
+		-- silent stage.
 		local fourth = 84
 		load(fourth, 'citizen-ncpd-d')
 		local second = Response.Apply('citizen-ncpd-d', fourth, 5)
-		local refusedByName = false
-		for _, refusal in ipairs(second.ok == true and second.value.refused or {}) do
-			if tostring(refusal):find('one_at_a_time', 1, true) ~= nil then refusedByName = true end
-		end
-		check('a second summon while one is in the air is refused by name',
-			refusedByName, table.concat(second.ok == true and second.value.refused or {}, ', '))
-		check('and that division still stands, on foot, rather than not at all',
-			second.value.npcs >= groundElement + second.value.filled and second.value.filled > 0
+		check('a second summon while a squad is out is held by NCPD\'s top stage, not flown',
+			second.ok == true and second.value.queued == true and second.value.wanted == 5
+				and second.value.division == ncpd.DIVISION.NCPD and second.value.stage < 5,
+			second.ok == true and ('stage %s, wanted %s, %s'):format(tostring(second.value.stage),
+				tostring(second.value.wanted), tostring(second.value.division)) or tostring(second.error))
+		check('and that response stands on the ground, with no second airframe',
+			second.ok == true and second.value.npcs > 0
 				and airframeFrom(avAfterFirst) == nil and AV.Inbound() == 1,
-			('%d on foot (%d of them the air squad), %d in the air'):format(
-				second.value.npcs, second.value.filled, AV.Inbound()))
+			second.ok == true and ('%d on foot, %d in the air'):format(second.value.npcs, AV.Inbound()) or '')
 		Response.Release('citizen-ncpd-d')
+		-- The rest of this section is the flight, the drop and the crew door, one
+		-- aircraft at a time: written for the street with no ceiling (the old
+		-- shape, `LIMITS = false`), so the squad still standing from the first
+		-- summon does not hold the next stage at NCPD's.
+		local shippedLimits = ncpd.Settings.LIMITS
+		ncpd.Settings.LIMITS = false
 
 		-- ── the route ───────────────────────────────────────────────────────
 		local squadFrom = #control.npcCreates
