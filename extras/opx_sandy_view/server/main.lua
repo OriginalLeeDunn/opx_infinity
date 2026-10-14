@@ -21,4 +21,14 @@ AddEventHandler('onResourceStart', function(name)
 	-- markers, toasts and V's lines -- given back from the platform's policy.
 	print('[opx_sandy_view] the base game\'s missions are playable on every player\'s game ' ..
 		'(r6/scripts/opx_infinity/OpxQuests.reds; each client log says whether it runs)')
+	-- 1.4.17: Phantom Liberty's main story waits for a switch nothing sets, so
+	-- Songbird never calls in a session; Dogtown's people, gate and gigs stay open.
+	print('[opx_sandy_view] Phantom Liberty\'s main story waits in this world: Songbird does not call, ' ..
+		'Dogtown stays open (archive/pc/mod/opx_songbird.archive: ep1.questphase node [14] reads opx_songbird_on)')
+	-- 1.4.18: the game's own minimap, round and at the bottom-right corner
+	-- (its frame and HUD slot are data in the archive; the N on the bezel is the
+	-- REDscript). The map inside is the game's, moving with the player.
+	print('[opx_sandy_view] the minimap is round, at the bottom-right of every player\'s screen ' ..
+		'(archive/pc/mod/opx_minimap.archive: the game\'s minimap.inkwidget and prototype_hud.inkhud; ' ..
+		'r6/scripts/opx_infinity/OpxMinimap.reds: the N on the bezel)')
 end)

@@ -34678,8 +34678,8 @@ do
 				and reds:find('native func Open77PlayerResetTrace', 1, true) == nil
 				and reds:find('if !asked {', 1, true) ~= nil
 				and reds:find('tenths', 1, true) == nil and reds:find('IsControlledByLocalPeer()', 1, true) ~= nil
-				and manifest:find('version "1.4.15"', 1, true) ~= nil
-				and reds:find('opx_sandy_view 1.4.15.', 1, true) ~= nil)
+				and manifest:find('version "1.4.21"', 1, true) ~= nil
+				and reds:find('opx_sandy_view 1.4.17.', 1, true) ~= nil)
 		check('and exempts this body from the owner\'s own clock -- the view\'s claim, reason open77:opx_sandy_view ' ..
 			'-- the way SetTimeDilationGlobal does for `sandevistan`, and gives it back on a new body',
 			reds:find('IsTimeDilationActive(n"open77:opx_sandy_view")', 1, true) ~= nil
@@ -34964,7 +34964,7 @@ do
 					and quests:find('quests.GetFact(n"q301_started")', 1, true) ~= nil
 					and quests:find('"Phantom Liberty a minute on: ep1_active "', 1, true) ~= nil)
 			check('and the package ships it',
-				manifest:find('OpxQuests.reds', 1, true) ~= nil and quests:find('opx_sandy_view 1.4.15.', 1, true) ~= nil,
+				manifest:find('OpxQuests.reds', 1, true) ~= nil and quests:find('opx_sandy_view 1.4.17.', 1, true) ~= nil,
 				('%d byte(s) of REDscript'):format(#quests))
 
 			-- 1.4.14: THE MAP, STEP BY STEP IN THE CLIENT LOG. Opening the map
@@ -35729,7 +35729,7 @@ do
 		viewExports.engage(0.15, 8000, 250)
 		local wearBoosting = viewExports.wear(1)
 		viewExports.release(0)
-		check('and never over the owner\'s boost', wearBoosting == false and viewExports.info().version == '1.4.15')
+		check('and never over the owner\'s boost', wearBoosting == false and viewExports.info().version == '1.4.17')
 		do
 			-- 1.4.9: the ripperdoc runs a boost for up to 40 s, 45 s with its ease;
 			-- the owner's claim was capped at 20 s, which would have handed the

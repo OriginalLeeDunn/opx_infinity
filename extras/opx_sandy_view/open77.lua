@@ -21,7 +21,15 @@
 -- base game's missions, playable in a session, below; from 1.4.13 it opens
 -- Phantom Liberty on a world that never started it; from 1.4.14 it writes the
 -- fullscreen map's steps to the client log; 1.4.15 stops opening the map from
--- crashing the game) and, from 1.4.0,
+-- crashing the game; 1.4.16 refuses Songbird's call, so the expansion's story
+-- no longer starts by itself; 1.4.17 keeps the story itself shut, below), from
+-- 1.4.17 `archive/pc/mod/opx_songbird.archive` (the game's own
+-- `ep1\quest\ep1.questphase` with one fact name changed, built from the game's
+-- files by `tools/songbird/patch.py`; until committed, both are in
+-- `Claude outputs/opx_sandy_view-1.4.17/`), from 1.4.18 (premultiplied from 1.4.21)
+-- `archive/pc/mod/opx_minimap.archive` and `r6/scripts/opx_infinity/
+-- OpxMinimap.reds` (the round minimap at the bottom-right, below; the
+-- archive built from the game's own files by `tools/minimap/`) and, from 1.4.0,
 -- `archive/pc/mod/opx_sandy_ghost.archive` (source in `src/archive/`, built
 -- from the base game's own files by `tools/ghost/`; 1.4.0-1.4.7 also shipped
 -- an ArchiveXL `opx_sandy_ghost.xl`, gone in 1.4.8; the legs of a female V's
@@ -171,6 +179,121 @@
 -- "Dog Eat Dog". The male save is left as it is. Every player boots the game
 -- again through the launcher once (the preload changed).
 --
+-- 1.4.21: THE WHITE SQUARE, FOUND (reported 2026-10-03 with a screenshot: "white
+-- square overlay on top still" -- the ring, the N and the arrow over an opaque
+-- white square, the map gone). It was the texture. The game's UI textures are
+-- PREMULTIPLIED -- its own atlas_minimap_1080p.xbm stores black in every
+-- transparent pixel and colour ~= alpha at the edges (ratio 1.007) -- and the
+-- game blends every UI image as  tex.rgb * tint * opacity + dst * (1 - tex.a *
+-- opacity). Our atlas stored WHITE where alpha was 0, so each 450-unit image of
+-- the frame ADDED its tint over its whole square: the red bezel (0.92) and the
+-- cyan zone ring (0.9) summed to white, and 1.4.18's pink map with darker domes
+-- was the same sum. The atlas is now premultiplied (`tools/minimap/atlas.py`),
+-- `verify.py` checks it and composites the frame the way the game blends it
+-- (`composite.py`: 1.4.20's archive comes out as the white square of the
+-- screenshot, 1.4.21's as a dark round map in its ring, the corners untouched),
+-- and the images drawn from the atlas no longer carry the game's nine-slice flag
+-- (our parts have no slices). 1.4.20's account below -- the script re-setting the
+-- atlas -- was wrong. The script's 2 s / 10 s report adds the autodrive glow and,
+-- as a control, the hidden `weathericon` of the game's own atlas (1.4.20 said the
+-- combat glow, at opacity 0 until a fight, was `false`). Every player boots the
+-- game again through the launcher once (the preload changed).
+--
+-- 1.4.20: NO SQUARE OVER THE CIRCLE (reported 2026-10-03 with two screenshots:
+-- "i see circle but there is still square overlay over it"). 1.4.19's REDscript
+-- checked the frame one second in, found the texture parts not there yet (its
+-- log: every part false, the N badge too) and handed each image its atlas again
+-- from script -- and an image handed an atlas and a part from script before the
+-- atlas has loaded draws a white square: the bezel, drawn over the map, became
+-- the opaque white square, as 1.4.18's script-made N badge had been a white
+-- square of its own. The script now touches no texture at all: the N badge is an
+-- image of the library itself (the square's old corner `fluff`, MiniMapContainer's
+-- first child -- drawn on top -- and in no animation, retextured to the atlas's
+-- `north` part in the archive), which `OpxMinimap.reds` only moves onto the bezel
+-- and shows; and the frame check only reports, at 2 and 10 seconds, with a part
+-- of the game's own atlas as the yardstick (`opx_sandy_view minimap: frame at 2
+-- s: mask disc ..., dots gridRect ...`). The texture, stored the way the game
+-- reads it, is 1.4.19's. Every player boots the game again through the launcher
+-- once (the preload changed).
+--
+-- 1.4.19: THE ROUND MINIMAP, AS DRAWN (reported 2026-10-03 with a screenshot:
+-- "mini map is square"). 1.4.18 moved the map to the bottom-right and named
+-- the district above it, but in game the map stayed square and pink, a dome
+-- filled its lower half, a soft ring sat in one corner and a mirrored N stood
+-- by the arrow. All of it was the atlas read upside down: the game samples an
+-- atlas with v = 0 at the LAST row of the texture data -- its own
+-- atlas_minimap_1080p.xbm is stored that way (its `minimap_mask` part, UV v
+-- 0.004-0.883, is data rows 30-255 of 256, its N glyphs upside down) -- and
+-- 1.4.18 stored ours top-down, so every part came from the other half of the
+-- texture. The texture is now stored bottom-up; simulating the game's sampling
+-- on the game's own atlas and on ours (`tools/minimap/`) draws the game's N,
+-- arrow and mask upright and ours as a disc, a ring, a glow and an N. Also: the
+-- library now declares the atlas among the resources its items draw from
+-- (`externalDependenciesForInternalItems`, as it declares the game's own), so it
+-- is loaded before the map's mask is built; the archive lists each file's hard
+-- imports as its dependencies, as the game's archives do (the minimap's 15, the
+-- HUD layout's 71); and the N badge is drawn from the district-name canvas --
+-- `unmaskedContainer`, where 1.4.18 put it, is turned half a turn by the game
+-- (the badge drew opposite where it was placed, under the frame) -- at the map's
+-- rotation + 90 degrees, the game's geometry having north to the right when
+-- unrotated. One second after the player attaches, the client log says whether
+-- every part of the frame found its texture (`opx_sandy_view minimap: frame:
+-- mask disc true, backing disc true, bezel ring true, ...`). Every player boots
+-- the game again through the launcher once (the preload changed).
+--
+-- 1.4.18: THE MINIMAP, ROUND AND AT THE BOTTOM (asked 2026-10-03: "disable
+-- [the mini map] and make a new one that is circle ... on bottom of screen not
+-- top ... with real cyberpunk map that updates and moves as the player moves").
+-- It is still the game's own minimap -- the native controller draws the real
+-- Night City streets, every pin, the GPS line and the player's arrow, and moves
+-- and turns them with the player as it always did -- because nothing a
+-- resource can draw knows the map that well. What changed is its frame and its
+-- place, as data, in `archive/pc/mod/opx_minimap.archive` (built from the
+-- game's own files by `tools/minimap/`, which says how): the game's
+-- `minimap.inkwidget` with its mask and backing a disc, a red bezel ring, the
+-- combat / autodrive highlights a glow inside the rim, the zone notice framed
+-- by the ring, edge pins clamped onto the bezel, the district name above the
+-- circle and the square's corner decorations off (no widget added, removed or
+-- reordered: the game's animations address them by index); and the game's
+-- `prototype_hud.inkhud` with the minimap's entry taken out of the top-right
+-- slot it shared with the wanted bar and the quest list and anchored to the
+-- screen's bottom-right corner. A fourth REDscript, `OpxMinimap.reds`, keeps
+-- an N on the bezel where north is (the map turns with the camera), 30 times
+-- a second, and writes its first ten seconds to the client log (`opx_sandy_view
+-- minimap: north badge on the bezel ...`, then `heading ... deg, map rotation
+-- ... deg, N at ... deg`). The quest fact `opx_minimap_off` = 1 hides the
+-- badge. opx_infinity moved its key prompts up to clear the circle and put the
+-- voice line inside its vitals column. Every player boots the game again
+-- through the launcher once (the preload changed).
+--
+-- 1.4.17: THE STORY ITSELF WAITS (reported 2026-10-01 12:06 UTC: "still
+-- getting songbird quest and can hear her"). 1.4.16 refused her call in the
+-- phone system, but the quest and its holocall scene belong to the quest graph,
+-- which went on without the phone: the 12:03 UTC join logged the refusals, then
+-- `quest Active`, "Talk to the mystery caller" and `q301_started 1`, and her
+-- voice played. The story starts at `ep1\quest\ep1.questphase` node [14]
+-- (waits for `ep1_active >= 1`) -> [16] -> [22] -> [9] `ep1_main_quests`. The
+-- preload now also carries `archive/pc/mod/opx_songbird.archive`: that file
+-- with ONE string changed, node [14] waiting for `opx_songbird_on >= 1` (no
+-- other chunk changes; `tools/songbird/patch.py` checks it). Nothing sets that
+-- fact, so the main story never starts in a session; every other reader of
+-- `ep1_active` (open world, minor quests, gigs) is a different node, so what
+-- 1.4.13 opened stays open. The call refusal stays too (the male save's story
+-- is already under way). `opx_songbird_on` set to 1 opens both again. The
+-- client log's "a minute on" line now ends `q301_started 0, opx_songbird_on 0
+-- (the story waits, as it should ...)`. Every player boots the game again
+-- through the launcher once (the preload changed).
+--
+-- 1.4.16: SONGBIRD'S CALL, REFUSED (reported 2026-10-01: "the Songbird quest
+-- keeps popping up when I join, saying go to Dogtown"). Opening Phantom Liberty
+-- (1.4.13) started its story on every join: Songbird's holocall rang some
+-- twenty seconds in, and "Dog Eat Dog" went active and was tracked ("Go to the
+-- Dogtown border") the moment the call started. `OpxQuests.reds` now refuses a
+-- call with Songbird in a session before anything rings, so the story never
+-- starts; Dogtown's people, its gate and its gigs stay open. The quest fact
+-- `opx_songbird_on` set to 1 lets her calls through again. Every player boots
+-- the game again through the launcher once (the preload changed).
+--
 -- 1.4.15: OPENING THE MAP NO LONGER CRASHES THE GAME. The crash probe's record
 -- (an access violation, a read at 0x38, `Cyberpunk2077.exe+0xBF9A5D`) is the
 -- game's own native `IMappin.GetScriptData` reading the data pointer of a
@@ -239,7 +362,7 @@
 -- A change to the .reds needs a server restart AND every player's launcher to
 -- boot the game again (the required-mod digest changes).
 resource "opx_sandy_view"
-version "1.4.15"
+version "1.4.21"
 open77_version ">=0.0.1"
 auto_start true
 

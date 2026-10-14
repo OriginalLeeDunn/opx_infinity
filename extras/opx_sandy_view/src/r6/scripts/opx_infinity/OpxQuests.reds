@@ -1,8 +1,11 @@
 // OPX Infinity -- the base game's missions, playable in a multiplayer session.
-// opx_sandy_view 1.4.15. (1.4.11: the missions; 1.4.13: Phantom Liberty opened on
+// opx_sandy_view 1.4.17. (1.4.11: the missions; 1.4.13: Phantom Liberty opened on
 // a world that never started it -- see "Phantom Liberty" below; 1.4.14: the
 // fullscreen map's steps in the client log -- see "the map log" below; 1.4.15:
-// opening the map no longer crashes the game -- see "markers" below.)
+// opening the map no longer crashes the game -- see "markers" below; 1.4.16:
+// Songbird's call refused, so the expansion's story no longer starts by itself
+// on joining -- see "Songbird" below; 1.4.17: the story itself waits -- its main
+// quests stay shut, so her holocall scene never plays either -- same section.)
 //
 // WHY MISSIONS STALLED. Open77's multiplayer policy switches off, for the whole
 // session, the pieces of the base game a side job waits on (read from the
@@ -105,6 +108,12 @@ private func OnTriggerCall(request: ref<questTriggerCallRequest>) -> Void {
   let game: GameInstance = this.GetGameInstance();
   if !IsDefined(request) || !OpxQuestsOn(game) {
     wrappedMethod(request);
+    return;
+  };
+  // Songbird's call (1.4.16): refused before anything rings -- see "Songbird".
+  if OpxQuestsSongbirdRefused(game, request) {
+    OpxQuestsTrace("call " + EnumValueToString("questPhoneCallPhase", Cast<Int64>(EnumInt(request.callPhase)))
+      + " with songbird refused: the Phantom Liberty story does not start by itself in a session");
     return;
   };
   let contactName: CName;
@@ -1620,7 +1629,9 @@ public func SetProgress(progress: Float) -> Void {
 // body attaches in a session world, each of the two facts that reads 0 is set
 // to 1 (the value the male save carries). The base game's graph does the rest:
 // the communities spawn, the gate opens, and Songbird calls to start "Dog Eat
-// Dog". A world that already has both facts (the male save) is left as it is.
+// Dog" (from 1.4.16 that call is refused, and from 1.4.17 the story itself
+// waits: see "Songbird" below). A world that already has both facts (the male
+// save) is left as it is.
 // Nothing is saved: the session's world ends with the session. The two lines
 // it writes to the client log say what it found, and a minute later whether
 // the story started (`q301_started`).
@@ -1659,7 +1670,8 @@ public static func OpxQuestsPhantomLiberty(game: GameInstance) -> Void {
     quests.SetFact(n"ep1_side_content", 1);
   };
   OpxQuestsTrace("Phantom Liberty opened on this world (ep1_active " + ToString(active)
-    + " -> 1, ep1_side_content " + ToString(side) + " -> 1): Dogtown's people, its gate and the story start");
+    + " -> 1, ep1_side_content " + ToString(side) + " -> 1): Dogtown's people and its gate (the story waits"
+    + " for opx_songbird_on: opx_songbird.archive keeps its main quests shut, and Songbird's call is refused)");
   let tick: ref<OpxQuestsPhantomLibertyTick> = new OpxQuestsPhantomLibertyTick();
   tick.game = game;
   tick.report = true;
@@ -1669,10 +1681,81 @@ public static func OpxQuestsPhantomLiberty(game: GameInstance) -> Void {
 public static func OpxQuestsPhantomLibertyReport(game: GameInstance) -> Void {
   let quests: ref<QuestsSystem> = GameInstance.GetQuestsSystem(game);
   let started: Int32 = quests.GetFact(n"q301_started");
-  let verdict: String = started >= 1 ? "Songbird's call came and Dog Eat Dog began" : "Dog Eat Dog has not begun yet";
+  let on: Int32 = quests.GetFact(n"opx_songbird_on");
+  let verdict: String;
+  if started >= 1 {
+    verdict = on >= 1 ? "opx_songbird_on is set: Dog Eat Dog began, as the base game has it"
+      : "Dog Eat Dog began although opx_songbird_on is not set: this game is not running opx_songbird.archive"
+        + " -- boot it through the launcher";
+  } else {
+    verdict = "the story waits, as it should: Dog Eat Dog has not begun and Songbird has not called";
+  };
   OpxQuestsTrace("Phantom Liberty a minute on: ep1_active " + ToString(quests.GetFact(n"ep1_active"))
     + ", ep1_side_content " + ToString(quests.GetFact(n"ep1_side_content"))
-    + ", q301_started " + ToString(started) + " (" + verdict + ")");
+    + ", q301_started " + ToString(started) + ", opx_songbird_on " + ToString(on) + " (" + verdict + ")");
+}
+
+// ------------------------------------------------------------- Songbird ----
+// WHY (reported 2026-10-01: "the Songbird quest keeps popping up when I join,
+// saying go to Dogtown"). Opening Phantom Liberty on a female V's world (1.4.13)
+// starts its story too: some twenty seconds later Songbird's holocall rings, the
+// phone wrapper above lets it through, and the moment the call starts "Dog Eat
+// Dog" goes active and is tracked -- "Talk to the mystery caller", then "Go to
+// the Dogtown border". A session starts over from the pristine save every time,
+// so it came back on every join. A join's client log:
+//
+//   Phantom Liberty opened on this world (ep1_active 0 -> 1, ...)
+//   call IncomingCall with songbird
+//   call StartCall with songbird
+//   quest Active: LocKey#81863
+//   tracking: Talk to the mystery caller.
+//   call EndCall with songbird
+//   tracking: Go to the Dogtown border.
+//
+// WHAT THIS DOES. In a session, a call with Songbird (`songbird`, as the caller
+// or as the one called) is refused before anything happens: no ringtone, no
+// call on screen, no contact list -- the platform's own answer to every call,
+// kept for this one. "Dog Eat Dog", which goes active when her call starts,
+// never does: nothing is tracked and no toast shows. What 1.4.13 opened stays
+// open (Dogtown's people, its gate, its gigs and street stories). On the male
+// save, where the story is already under way, a later call of Songbird's is
+// refused the same way.
+//
+// 1.4.17: THE STORY ITSELF WAITS (reported 2026-10-01 12:06 UTC: "still getting
+// songbird quest and can hear her"). Refusing the call was not enough: the call
+// is the phone system's, but the quest and its holocall SCENE are the quest
+// graph's, and that graph went on without the phone. The 12:03 UTC join's log:
+//
+//   call IncomingCall with songbird refused: ...
+//   call StartCall with songbird refused: ...
+//   quest Active: LocKey#81863
+//   tracking: Talk to the mystery caller.
+//   Phantom Liberty a minute on: ..., q301_started 1 (...)
+//   tracking: Go to the Dogtown border.
+//
+// Where the story starts: `ep1\quest\ep1.questphase`, top-level node [14]
+// waits for `ep1_active >= 1`, then [16] -> [22] -> [9] `ep1_main_quests`,
+// whose q301 waits ten seconds, rings Songbird and plays her holocall scene.
+// Every other reader of `ep1_active` (the open world, the minor quests, the
+// expansion's additional game elements) is a different node. So this preload
+// now carries `archive/pc/mod/opx_songbird.archive`: the game's own
+// ep1.questphase with ONE string changed -- node [14] waits for
+// `opx_songbird_on >= 1` instead (built from the game's files by
+// `tools/songbird/patch.py`, which checks that no other chunk changed). Nothing
+// sets that fact, so the main story never starts in a session and no scene of
+// hers plays; what 1.4.13 opened stays open. A world whose story is already
+// under way (the male save: node [14] passed long ago) is not affected -- the
+// call refusal above still holds there. The "a minute on" line says which it
+// was: `q301_started 0` and "the story waits, as it should".
+//
+// SWITCH: the quest fact `opx_songbird_on` set to 1 opens the main quests
+// (node [14]) and lets Songbird's calls through again: the story starts as the
+// base game has it.
+public static func OpxQuestsSongbirdRefused(game: GameInstance, request: ref<questTriggerCallRequest>) -> Bool {
+  if GetFact(game, n"opx_songbird_on") != 0 {
+    return false;
+  };
+  return Equals(request.caller, n"songbird") || Equals(request.addressee, n"songbird");
 }
 
 // ----------------------------------------------------------- self-check ----

@@ -1,6 +1,6 @@
 // OPX Infinity -- the base game's own Sandevistan, for the ripperdoc's
 // Sandevistans (opx_infinity, modules/ripperdoc/client/sandevistan.lua), on the
-// player's own machine. opx_sandy_view 1.4.15.
+// player's own machine. opx_sandy_view 1.4.17.
 //
 // WHAT THE BASE GAME DOES. `SandevistanEvents.OnEnter` (2.31):
 //

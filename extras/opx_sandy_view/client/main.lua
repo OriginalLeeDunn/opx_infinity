@@ -101,5 +101,5 @@ end)
 
 --- What this resource is, for opx_infinity's report.
 exports('info', function()
-	return { version = '1.4.15', reason = 'open77:' .. GetCurrentResourceName(), holding = holding }
+	return { version = '1.4.17', reason = 'open77:' .. GetCurrentResourceName(), holding = holding }
 end)
