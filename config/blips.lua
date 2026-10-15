@@ -71,32 +71,32 @@
 -- answer is in the server journal rather than in somebody's memory.
 --
 -- ============================================================================
--- COLOUR: PER BLIP SINCE THE NATIVE INK ADAPTER GREW ONE
+-- COLOUR AND ICONS: THE NATIVE SVG ADAPTER
 -- ============================================================================
 --
--- THIS SECTION USED TO SAY THERE CANNOT BE A COLOUR SETTING, and it was true
--- when it was written (build 2.31.13+op77.76): `Open77.blips` refused `color`
--- by name, a Cyberpunk mappin carries no colour field of its own, and the only
--- colour a pin had was the one baked into its sprite. That is why `SPRITE`
--- below is named for what it does, and that part stands -- picking `danger`
--- over `objective` is still how a blip becomes red with no tint at all.
+-- This section used to say there could be no colour here: `Open77.blips`
+-- refused `color` by name (`unsupported_option:color`), because a vanilla
+-- mappin carries no colour field and its look lives on a UI profile every pin
+-- of the same sprite shares. That was true of the platform this was written
+-- against and is no longer the whole story.
 --
--- WHAT CHANGED is the platform's own per-widget Ink adapter: `color` is now a
--- real `create`/`update`/`setColor` field, exactly `#RRGGBB`/`#RRGGBBAA` (the
--- alpha bytes live in it, because `alpha` is refused), and a custom SVG `icon`
--- compiles under the real mappin widget. So a CATEGORY may carry `COLOR`
--- below, and -- the case the owner asked for -- a headquarters station names
--- its OWN sprite, icon and colour per station, in `config/headquarters.lua`'s
--- `BLIP` block. The engine still refuses `colour`, `alpha`, `opacity`, `scale`,
--- `category`, `shortRange` and `kind` by name, and a boot warning names those.
+-- THE NATIVE SVG ADAPTER (an OPEN//77 client piece, experimental) draws a
+-- declared SVG in place of the sprite's graphic as native Ink geometry, and
+-- takes a per-blip `#RRGGBB` / `#RRGGBBAA` -- for THIS pin only, nobody else's.
+-- The mappin underneath is still the vanilla one: selection, tooltips, tracking
+-- and the visibility the SPRITE's profile gives all stay. So every category
+-- below carries both: SPRITE for where it shows and for the clients without
+-- the adapter, ICON + COLOR for what it looks like on the ones with it.
 --
--- WHAT IS STILL TRUE and worth keeping: a per-blip colour touches only the one
--- pin (the platform's own measurements: opacity and scale remain per SPRITE,
--- on the shared UI runtime profile), and an operator who writes the British
--- spelling gets a boot warning naming the category rather than a key that is
--- quietly dropped. The platform's own guide makes that argument better than
--- this comment can: "A property accepted and silently discarded is worse than
--- one that is missing, because nothing in the resource can tell the difference."
+-- WHICH CLIENT HAS IT is asked, not assumed: the module sends an icon only
+-- where `Open77.blips.setColor` exists (the platform's own test for the
+-- adapter), and a create refused for the icon is made again with the sprite
+-- alone and noted once. `COLOUR` (British), `ALPHA`, `OPACITY` and `SCALE` are
+-- still not fields and are still refused at boot, each pointing at the one
+-- that does the job: COLOR, or SIZE.
+--
+-- A HEADQUARTERS STATION names its OWN sprite, icon and colour per station, in
+-- `config/headquarters.lua`'s `BLIP` block, on the same fields.
 --
 -- ============================================================================
 -- SPRITES, AND WHICH ONES ARE ACTUALLY ON THE BIG MAP
@@ -192,9 +192,26 @@ OPX.Config.MODULES.blips = {
 	-- and the cap instead of a silent refusal on the 129th create.
 	MAX = 128,
 
-	-- Each category: whether it is drawn, which vanilla sprite it wears (which,
-	-- per the long note above, IS its colour), the words that name it, and how
-	-- far away it stays visible.
+	-- Each category: whether it is drawn, which vanilla sprite it wears, the
+	-- words that name it, how far away it stays visible -- and, since the native
+	-- SVG adapter, a real icon and its colour.
+	--
+	-- ICON is the name of an .svg in `web/blips/` ('garage' or 'garage.svg'; the
+	-- manifest declares the folder with `files`). SIZE is 16..128 native Ink
+	-- units (48 by default). COLOR is '#RRGGBB' or '#RRGGBBAA' and recolours the
+	-- whole icon; false keeps the SVG's own colours. The shipped icons are Lucide
+	-- line icons (`web/blips/LICENSE-LUCIDE.txt`), drawn white and tinted here.
+	--
+	-- THE SPRITE STAYS, AND STILL MATTERS. It decides where the pin is visible
+	-- (an icon does not lift a HUD-only profile onto the world map) and it is what
+	-- a client without the SVG adapter draws, so keep a map-capable one. An icon
+	-- the client refuses -- too complex, undeclared -- is logged once and the pin
+	-- falls back to the sprite; it is never lost. To add an icon: drop the .svg in
+	-- `ui/public/blips/` (the build copies it to `web/blips/`), keep every stroke
+	-- inside its viewBox, no text, gradients, masks or filters. Prefer butt caps
+	-- and bevel joins: round ones are cut into many small polygons, and with a
+	-- few dozen pins that ran the client out of its blip visual budget
+	-- (`blip_visual_budget_exceeded`, seen on the garages and the dealership).
 	--
 	-- RANGE is metres, 0..4000, and 0 MEANS NO GATE -- always visible. It is
 	-- Open77's own doing rather than an engine field: it measures the distance
@@ -228,6 +245,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Garage',
 			RANGE = 0,
 			WALLS = false,
+			ICON = 'garage',
+			SIZE = 48,
+			COLOR = '#5EF6FF',
 		},
 
 		-- Where cars are bought. `objective` rather than `vehicle` so a dealer is
@@ -239,6 +259,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Vehicle Dealer',
 			RANGE = 0,
 			WALLS = false,
+			ICON = 'dealer',
+			SIZE = 48,
+			COLOR = '#FFD400',
 		},
 
 		-- Clothing shops. `clothes` is the `ServicePoint*` variant for exactly
@@ -255,6 +278,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Clothing Shop',
 			RANGE = 400,
 			WALLS = false,
+			ICON = 'clothes',
+			SIZE = 48,
+			COLOR = '#FF6AD5',
 		},
 
 		-- The shortcuts to places you cannot walk to. `fast_travel` is the
@@ -271,6 +297,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Shortcut',
 			RANGE = 0,
 			WALLS = false,
+			ICON = 'shortcut',
+			SIZE = 48,
+			COLOR = '#B38CFF',
 		},
 
 		-- Job sites: every gunsmith BENCH, every hauling yard and every hauling
@@ -282,6 +311,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Job Site',
 			RANGE = 0,
 			WALLS = false,
+			ICON = 'job',
+			SIZE = 48,
+			COLOR = '#FF9F1C',
 		},
 
 		-- Bank branches (`/opx.bank.add`), where a paycheck is drawn as cash.
@@ -309,6 +341,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Gas Station',
 			RANGE = 0,
 			WALLS = false,
+			ICON = 'fuel',
+			SIZE = 48,
+			COLOR = '#FFE14D',
 		},
 	},
 }

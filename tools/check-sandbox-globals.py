@@ -58,8 +58,13 @@ def strip_code(text):
     """Comments and string literals removed, so prose and messages never trip it."""
     text = re.sub(r"--\[\[.*?\]\]", " ", text, flags=re.S)
     text = re.sub(r"--[^\n]*", " ", text)
-    text = re.sub(r'"(\\.|[^"\\])*"', ' "" ', text)
-    text = re.sub(r"'(\\.|[^'\\])*'", " '' ", text)
+    # A short string never crosses a line. Letting the class match a newline was a
+    # hole: one stray quote (a `'--'` literal whose dashes the comment pass cut)
+    # opened a "string" that swallowed hundreds of lines of code, and a removed
+    # global inside them -- `getmetatable` in modules/inventory/shared/catalog.lua
+    # -- went unseen and raised on every client.
+    text = re.sub(r'"(\\.|[^"\\\n])*"', ' "" ', text)
+    text = re.sub(r"'(\\.|[^'\\\n])*'", " '' ", text)
     return text
 
 

@@ -13,13 +13,15 @@ import type { Payload } from '@/bridge/types'
  * class per theme would each have needed the same list of values and a way to
  * keep it in step with this one.
  *
- * NOTHING THAT ARRIVES HERE IS CSS. The wire carries numbers only -- a colour is
+ * NOTHING THAT ARRIVES HERE IS CSS. The wire carries numbers -- a colour is
  * three integers, a chamfer is a count of pixels -- and this file is what turns
  * them into `rgb(...)`, `px` and `deg`. That is not defensive dressing over a
  * string API: there is no string API. An operator's accent is parsed out of
  * `#RRGGBB` in Lua and travels as its channels, so no text an operator typed ever
  * reaches a stylesheet, and a payload cannot carry a declaration, a `}` or a
- * second property however it was produced.
+ * second property however it was produced. The one word on it is the style,
+ * and it is checked against `STYLES` below and lands in an attribute, never in
+ * a declaration.
  *
  * THE BOUNDS BELOW EXIST TWICE, here and in `modules/theme/shared/palette.lua`.
  * That is deliberate and it is the house rule rather than an oversight: the page
@@ -73,6 +75,17 @@ const KNOBS: Record<string, Knob> = {
   cutLg: { property: '--op-cut-lg', kind: 'px', min: 1, max: 80 }
 }
 
+/**
+ * The looks this page can draw, as `modules/theme/shared/palette.lua` lists them.
+ * A style is not CSS either: it is one of these words, written onto the root as
+ * `data-op-style`, and a style's own stylesheet selects on it. A word not in
+ * here is refused, so the attribute can only ever hold a value this file named.
+ */
+const STYLES: ReadonlySet<string> = new Set(['cyberpunk'])
+
+/** The attribute the style stylesheets select on. */
+const STYLE_ATTRIBUTE = 'data-op-style'
+
 function clamp(value: number, low: number, high: number): number {
   return value < low ? low : value > high ? high : value
 }
@@ -123,9 +136,19 @@ export function applyTheme(payload: Payload): void {
   // Cleared first, so this is idempotent and a key dropped from a later payload
   // goes back to the stylesheet rather than lingering from the previous one.
   for (const knob of Object.values(KNOBS)) root.style.removeProperty(knob.property)
+  root.removeAttribute(STYLE_ATTRIBUTE)
 
   const refused: string[] = []
   for (const key of Object.keys(payload)) {
+    if (key === 'style') {
+      const style = payload[key]
+      if (typeof style === 'string' && STYLES.has(style)) {
+        root.setAttribute(STYLE_ATTRIBUTE, style)
+      } else {
+        refused.push(key)
+      }
+      continue
+    }
     const knob = own(KNOBS, key)
     if (!knob) {
       refused.push(key)

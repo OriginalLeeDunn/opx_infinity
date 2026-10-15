@@ -98,6 +98,7 @@ function M.Start()
 	end)
 
 	M.Commands.Register()
+	M.Population.Start()
 
 	-- The seed runs here, the rolls run on a job. Under pcall because this one is
 	-- on the boot stack: a raise from a host read at seed time would take the

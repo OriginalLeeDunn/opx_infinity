@@ -1,8 +1,9 @@
 --- One accent hex to the whole OPX ladder, and the bounds every knob is held to.
 -- @author dop42
 --
--- THE PAGE IS TOLD NUMBERS, NEVER CSS. Nothing this file produces is a string:
--- a colour crosses the wire as three integers and every other knob as one
+-- THE PAGE IS TOLD NUMBERS, NEVER CSS. The one string this file produces is the
+-- style, and it is a word from `STYLES` below, never the operator's own text: a
+-- colour crosses the wire as three integers and every other knob as one
 -- number, and `design-system/theme.ts` is what turns them into
 -- `rgb(...)`/`px`/`deg` and writes them onto the root. A theme that travelled as
 -- text would be an operator-supplied string interpolated into a stylesheet,
@@ -35,6 +36,21 @@ M.Palette = {}
 local Palette = M.Palette
 
 local Clamp = OPX.Math.Clamp
+
+-- The looks the page knows how to draw, and the only words that may cross the
+-- wire. A style is NOT CSS either: it is a name from this list, and the page
+-- holds the same list and turns it into one attribute on its root
+-- (`data-op-style`), which its own stylesheets select on. A word not in here is
+-- dropped on both sides, so no operator text ever reaches the document.
+--
+--   cyberpunk   the house look: red, outlined, chamfered, tilted, interlaced.
+--               What `tokens.css` draws on its own.
+--
+-- One look today. A second is a word here and in `theme.ts`, a block of the
+-- same name in `config/theme.lua`, and a stylesheet scoped to
+-- `:root[data-op-style="<word>"]` imported by `boot/createSurface.ts`.
+local STYLES = { cyberpunk = true }
+Palette.STYLES = STYLES
 
 -- What a colour key is allowed to be once it has crossed the wire. Triplets are
 -- separate from the scalars because their bound is the same for all three
@@ -236,7 +252,14 @@ function Palette.Sanitise(payload)
 	if type(payload) ~= 'table' then return clean, notes end
 
 	for key, value in pairs(payload) do
-		if TRIPLETS[key] then
+		if key == 'style' then
+			if type(value) == 'string' and STYLES[value] then
+				clean.style = value
+			else
+				notes[#notes + 1] = ('style %s is not a known style and was dropped')
+					:format(tostring(value))
+			end
+		elseif TRIPLETS[key] then
 			local triple = {}
 			local usable = type(value) == 'table'
 			for channelIndex = 1, 3 do
@@ -276,6 +299,13 @@ end
 
 --- Turns the operator's block into the payload the page is sent.
 --
+-- THE STYLE PICKS WHICH KNOBS ARE READ. `STYLE` names a look, and a block keyed
+-- by that same name (`cyberpunk = { ACCENT = ... }`) holds that look's knobs, so
+-- switching look is one word and each look keeps its own tuning: a red accent
+-- written for the cyberpunk surface does not follow the operator onto the
+-- minimal one. A style with no block of its own reads the knobs at the top
+-- level, which is also what a block written before styles existed has.
+--
 -- A NIL KNOB PRODUCES NO KEY. This is the whole of requirement "an operator who
 -- configures nothing sees what shipped": the page only ever writes the
 -- properties it is handed, so an empty payload leaves `tokens.css` untouched and
@@ -288,7 +318,19 @@ function Palette.Resolve(settings)
 	settings = type(settings) == 'table' and settings or {}
 	local raw, notes = {}, {}
 
-	local accent = settings.ACCENT
+	local knobs = settings
+	local style = settings.STYLE
+	if style ~= nil then
+		if type(style) ~= 'string' or not STYLES[style] then
+			notes[#notes + 1] = ('STYLE %q is not a known style and was refused')
+				:format(tostring(style))
+		else
+			raw.style = style
+			if type(settings[style]) == 'table' then knobs = settings[style] end
+		end
+	end
+
+	local accent = knobs.ACCENT
 	if accent ~= nil then
 		local rgb = Palette.Rgb(accent)
 		if rgb == nil then
@@ -311,7 +353,7 @@ function Palette.Resolve(settings)
 	-- voice is blue has nothing white-hot to escalate to that a blue HUD will
 	-- not read as another blue. Left nil it is derived from the accent like
 	-- every other rung, which is the shipped behaviour.
-	local alarm = settings.ALARM
+	local alarm = knobs.ALARM
 	if alarm ~= nil then
 		local rgb = Palette.Rgb(alarm)
 		if rgb == nil then
@@ -326,7 +368,7 @@ function Palette.Resolve(settings)
 	-- heavier, which is the relation the shipped 0.58 / 0.78 / 0.90 already are.
 	-- Splitting them into three knobs would let an operator put the quiet plate
 	-- above the lit one, which has no meaning.
-	local opacity = settings.PLATE_OPACITY
+	local opacity = knobs.PLATE_OPACITY
 	if opacity ~= nil then
 		local number = tonumber(opacity)
 		if number == nil or not OPX.Math.IsFinite(number) then
@@ -343,7 +385,7 @@ function Palette.Resolve(settings)
 	-- number an operator reasons about is "how much of the house scanline",
 	-- which is the only reading under which 2 is a sane thing to type. Sanitise
 	-- holds the result at 0.15 however high the intensity goes.
-	local interlace = settings.INTERLACE
+	local interlace = knobs.INTERLACE
 	if interlace ~= nil then
 		local number = tonumber(interlace)
 		if number == nil or not OPX.Math.IsFinite(number) then
@@ -354,7 +396,7 @@ function Palette.Resolve(settings)
 		end
 	end
 
-	local tilt = settings.TILT
+	local tilt = knobs.TILT
 	if tilt ~= nil then
 		local number = tonumber(tilt)
 		if number == nil or not OPX.Math.IsFinite(number) then
@@ -368,7 +410,7 @@ function Palette.Resolve(settings)
 	-- three sizes are not three decisions either: a chip, a toast and a bay are
 	-- the same chamfer at three scales, and an operator who wants squarer corners
 	-- wants all three squarer.
-	local cut = settings.CUT
+	local cut = knobs.CUT
 	if cut ~= nil then
 		local number = tonumber(cut)
 		if number == nil or not OPX.Math.IsFinite(number) then

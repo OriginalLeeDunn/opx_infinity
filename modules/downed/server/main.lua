@@ -37,8 +37,15 @@ local giveUpMs = 120000
 local DEATH_GRACE_MS = 30000
 local RESTORE_GRACE_MS = 600000
 
--- Downed players by id: sinceMs, waiting, waitingSinceMs, position and citizenId.
+-- Downed players by id: sinceMs, waiting, waitingSinceMs, position, citizenId,
+-- and `stage` -- 'wounded' (alive, held on the ground) or 'dead' (flatlined).
 local down = {}
+
+-- The two stages of being down. See `WOUNDED` in `config/downed.lua`.
+local WOUNDED, DEAD = 'wounded', 'dead'
+
+-- The damage arbiter this module installed, kept so `Stop` can take it away.
+local arbiter = nil
 
 -- Stored down rows waiting for the kill that restores them, by player id.
 local restoring = {}
@@ -78,6 +85,25 @@ local function audit(event, playerId, ok, detail)
 		source = playerId,
 		message = detail,
 	})
+end
+
+-- Whether the server holds a lethal hit at the edge: MODE = 'wounded'.
+local function woundedMode()
+	return M.Settings.MODE ~= 'death'
+end
+
+-- The WOUNDED block, read with its floors.
+local function woundedSettings()
+	local raw = type(M.Settings.WOUNDED) == 'table' and M.Settings.WOUNDED or {}
+	local finish = type(raw.FINISH) == 'table' and raw.FINISH or {}
+	return {
+		health = math.max(1, math.floor(OPX.Math.Finite(raw.HEALTH) or 1)),
+		bleedOutMs = math.floor(math.max(0, math.min(3600, OPX.Math.Finite(raw.BLEED_OUT_S) or 300)) * 1000),
+		freeze = raw.FREEZE ~= false,
+		pose = type(raw.POSE) == 'string' and raw.POSE:match('^[%w_]+$') and raw.POSE or nil,
+		finishPlayers = finish.PLAYERS == true,
+		finishOthers = finish.OTHERS == true,
+	}
 end
 
 -- The life phase without the underscore the client spells and the server does not.
@@ -152,6 +178,7 @@ local function pushState(playerId)
 	local atMs = OPX.Now()
 	TriggerClientEvent(EVENT_STATE, playerId, {
 		down = true,
+		stage = record.stage,
 		waiting = record.waiting,
 		downForMs = atMs - record.sinceMs,
 		giveUpInMs = math.max(0, record.sinceMs + giveUpMs - atMs),
@@ -163,7 +190,7 @@ local function pushState(playerId)
 end
 
 -- Opens a record for a player who died, resuming a restored row, and stores it.
-local function goDown(playerId, life, citizenId)
+local function goDown(playerId, life, citizenId, stage)
 	if down[playerId] ~= nil then return end
 	local position = type(life) == 'table' and type(life.position) == 'table' and life.position
 		or positionOf(playerId)
@@ -188,6 +215,7 @@ local function goDown(playerId, life, citizenId)
 		position = position,
 		bucket = bucket,
 		citizenId = citizenId,
+		stage = stage or DEAD,
 	}
 	if record.waiting then record.waitingSinceMs = record.sinceMs end
 	down[playerId] = record
@@ -198,6 +226,7 @@ local function goDown(playerId, life, citizenId)
 	OPX.Publish(EVENT_CHANGED, playerId, {
 		citizenId = citizenId,
 		down = true,
+		stage = record.stage,
 		waiting = record.waiting,
 		restored = resumed ~= nil,
 	})
@@ -206,9 +235,47 @@ end
 
 -- Closes a player's record, audits why, pushes it, and clears the stored row
 -- unless it is kept for a character leaving the world still down.
+-- Lets go of a wounded body: the freeze, the pose and the stopped regeneration.
+-- Each is this resource's own claim, and each is also dropped by the platform on
+-- a death, a respawn or a disconnect, so a call that finds nothing is harmless.
+local function releaseBody(playerId, record)
+	if record == nil or record.stage ~= WOUNDED then return end
+	if record.frozen then pcall(Open77.players.setFrozen, playerId, false) end
+	if record.posePlayback ~= nil and type(Open77.animations) == 'table'
+		and type(Open77.animations.stopAt) == 'function' then
+		pcall(Open77.animations.stopAt, record.posePlayback)
+	end
+	if type(Open77.stats) == 'table' and type(Open77.stats.setHealthRegenEnabled) == 'function' then
+		pcall(Open77.stats.setHealthRegenEnabled, playerId, true)
+	end
+	record.frozen, record.posePlayback = nil, nil
+end
+
+-- Holds a wounded body on the ground: frozen where it fell, playing the pose,
+-- not regenerating. Any of the three may be refused; the arbiter is what keeps
+-- a wounded player from fighting, and it does not depend on them.
+local function holdBody(playerId, record)
+	local wounded = woundedSettings()
+	if type(Open77.stats) == 'table' and type(Open77.stats.setHealthRegenEnabled) == 'function' then
+		pcall(Open77.stats.setHealthRegenEnabled, playerId, false)
+	end
+	if wounded.freeze and type(Open77.players.setFrozen) == 'function' then
+		local read, ok = pcall(Open77.players.setFrozen, playerId, true)
+		record.frozen = read and ok == true
+	end
+	if wounded.pose ~= nil and type(Open77.animations) == 'table'
+		and type(Open77.animations.play) == 'function' then
+		local read, playback = pcall(Open77.animations.play, playerId, wounded.pose, { loop = true })
+		if read and type(playback) == 'table' and type(playback.playbackId) == 'string' then
+			record.posePlayback = playback.playbackId
+		end
+	end
+end
+
 local function getUp(playerId, why, keep)
 	local record = down[playerId]
 	if record == nil then return end
+	releaseBody(playerId, record)
 	down[playerId] = nil
 	-- The page is over and so is any treatment: the pins come down on every
 	-- medic's map and a medic still kneeling is told why the bar stopped.
@@ -310,8 +377,30 @@ end
 -- Opens a record only for a dead player with a character loaded, and closes one
 -- as soon as the body is alive again or the character has left.
 local function observe(playerId)
-	if down[playerId] ~= nil then
-		if not isDead(playerId) then return getUp(playerId, 'alive') end
+	local record = down[playerId]
+	if record ~= nil then
+		if record.stage == WOUNDED then
+			-- FLATLINE: a finishing blow, the bleed-out, or anything that went round
+			-- the arbiter. The record stays: the body is still down, only deader.
+			if isDead(playerId) then
+				releaseBody(playerId, record)
+				record.stage = DEAD
+				audit('downed.flatline', playerId, true, nameOf(playerId) or '?')
+				pushState(playerId)
+				OPX.Publish(EVENT_CHANGED, playerId, { citizenId = record.citizenId, down = true,
+					stage = DEAD, waiting = record.waiting })
+				return
+			end
+			-- Healed past the floor by something else -- a staff heal, an item
+			-- some other resource gave -- is up.
+			local read, health = pcall(Open77.players.getHealth, playerId)
+			local current = read and type(health) == 'table' and finiteNumber(health.health) or nil
+			if current ~= nil and current > woundedSettings().health + 1 then
+				return getUp(playerId, 'healed')
+			end
+		elseif not isDead(playerId) then
+			return getUp(playerId, 'alive')
+		end
 		if inWorld(playerId) == false then getUp(playerId, 'no character loaded', true) end
 		return
 	end
@@ -369,15 +458,40 @@ local function nearestHospital(origin)
 end
 
 -- Revives a downed player where the body lies: the one path every revive takes.
-local function reviveNow(playerId, why)
+-- `options` may carry the caller's own `health` share and `graceMs`, bounded the
+-- same way as REVIVE; what it leaves out comes from REVIVE.
+local function reviveNow(playerId, why, options)
+	local record = down[playerId]
+	if record ~= nil and record.stage == WOUNDED and not isDead(playerId) then
+		-- ALIVE ALREADY: a revive of a wounded body is a heal past the floor and a
+		-- release, not a life transition.
+		local revive = type(M.Settings.REVIVE) == 'table' and M.Settings.REVIVE or {}
+		options = type(options) == 'table' and options or {}
+		local share = clamp(options.health or revive.HEALTH, 0.01, 1.0, 0.35)
+		local read, health = pcall(Open77.players.getHealth, playerId)
+		local maximum = read and type(health) == 'table' and finiteNumber(health.maxHealth) or nil
+		if maximum == nil or maximum <= 0 then return false, 'no_health' end
+		releaseBody(playerId, record)
+		local ok, reason = Open77.players.setHealth(playerId, math.max(woundedSettings().health + 2,
+			math.floor(maximum * share)))
+		if not ok then
+			holdBody(playerId, record)
+			audit('downed.revive', playerId, false, why .. ': ' .. tostring(reason))
+			return false, tostring(reason or 'refused')
+		end
+		audit('downed.revive', playerId, true, why .. ' (wounded)')
+		getUp(playerId, 'revived by ' .. why)
+		return true
+	end
 	if not isDead(playerId) then return false, 'not_down' end
 	local admitted, code = admit(playerId)
 	if not admitted then return false, code end
 
 	local revive = type(M.Settings.REVIVE) == 'table' and M.Settings.REVIVE or {}
+	options = type(options) == 'table' and options or {}
 	local ok, reason = Open77.players.revive(playerId, {
-		health = clamp(revive.HEALTH, 0.01, 1.0, 0.35),
-		graceMs = math.floor(clamp(revive.GRACE_MS, 0, 60000, 3000)),
+		health = clamp(options.health or revive.HEALTH, 0.01, 1.0, 0.35),
+		graceMs = math.floor(clamp(options.graceMs or revive.GRACE_MS, 0, 60000, 3000)),
 	})
 	if not ok then
 		audit('downed.revive', playerId, false, why .. ': ' .. tostring(reason))
@@ -434,6 +548,15 @@ local function onWait()
 				Open77.log.error('[downed] the distress signal could not be sent: ' .. tostring(count))
 			end
 		end
+
+		-- THE DISTRESS SIGNAL IS PUBLIC. It used to stop at this record, so a
+		-- player asking for help reached nobody: `medical` hears it here and turns
+		-- it into a call on the board of every service that answers them.
+		OPX.Publish(EVENT_CHANGED, playerId, {
+			citizenId = record.citizenId,
+			down = true,
+			waiting = true,
+		})
 	end
 	pushState(playerId)
 end
@@ -444,7 +567,8 @@ local function onGiveUp()
 	local playerId = tonumber(source) or 0
 	if playerId <= 0 or cooled(playerId, 'giveUp') then return end
 	local record = down[playerId]
-	if record == nil or not isDead(playerId) then return pushState(playerId) end
+	local wounded = record ~= nil and record.stage == WOUNDED and not isDead(playerId)
+	if record == nil or not (wounded or isDead(playerId)) then return pushState(playerId) end
 	if OPX.Now() - record.sinceMs < giveUpMs then
 		refuse(playerId, 'too_soon')
 		return pushState(playerId)
@@ -466,6 +590,37 @@ local function onGiveUp()
 	-- seconds after a death, and the world bucket is the floor.
 	local bucket = record.bucket
 	if bucket == nil and here ~= nil then bucket = tonumber(here.bucket) end
+
+	local fade = type(M.Settings.FADE) == 'table' and M.Settings.FADE or {}
+	local fadeMs = math.floor(clamp(fade.MS, 0, 5000, 600))
+	-- THE SCREEN GOES BLACK BEFORE THE BODY MOVES, so the player wakes at the
+	-- medical center instead of watching the city stream in around them. The
+	-- fade is the platform's own quest fade; its client-side ceiling means a
+	-- fade-in that never arrives costs a pause, never a black screen.
+	local fading = fade.ENABLED ~= false and type(Open77.players.fade) == 'function'
+
+	-- A WOUNDED BODY IS ALIVE, so it is not respawned -- the platform refuses a
+	-- respawn of the living -- but moved, behind the teleport's own fade, and
+	-- patched up to the same share a respawn would have left.
+	if wounded then
+		releaseBody(playerId, record)
+		local pending, refused = Open77.players.teleport(playerId,
+			{ x = point.x, y = point.y, z = point.z },
+			{ heading = point.heading, dismount = true, fadeOutMs = fadeMs, fadeInMs = fadeMs })
+		if pending == nil then
+			holdBody(playerId, record)
+			audit('downed.giveUp', playerId, false, tostring(refused))
+			return refuse(playerId, 'respawn_refused')
+		end
+		local read, health = pcall(Open77.players.getHealth, playerId)
+		local maximum = read and type(health) == 'table' and finiteNumber(health.maxHealth) or 100
+		pcall(Open77.players.setHealth, playerId, math.max(woundedSettings().health + 2,
+			math.floor(maximum * clamp(respawn.HEALTH, 0.01, 1.0, 0.5))))
+		audit('downed.giveUp', playerId, true, tostring(point.label or '') .. ' (wounded)')
+		return getUp(playerId, 'gave up')
+	end
+
+	if fading then pcall(Open77.players.fade, playerId, true, fadeMs, { timeoutMs = 15000 }) end
 	local ok, reason = Open77.players.respawn(playerId, {
 		position = { x = point.x, y = point.y, z = point.z },
 		heading = point.heading,
@@ -474,11 +629,109 @@ local function onGiveUp()
 		graceMs = math.floor(clamp(respawn.GRACE_MS, 0, 60000, 5000)),
 	})
 	if not ok then
+		if fading then pcall(Open77.players.fade, playerId, false, fadeMs) end
 		audit('downed.giveUp', playerId, false, tostring(reason))
 		return refuse(playerId, 'respawn_refused')
 	end
 	audit('downed.giveUp', playerId, true, tostring(point.label or ''))
 	getUp(playerId, 'gave up')
+	if fading then
+		CreateThread(function()
+			Wait(math.floor(clamp(fade.HOLD_MS, 0, 10000, 1500)))
+			pcall(Open77.players.fade, playerId, false, fadeMs)
+		end)
+	end
+end
+
+-- ── the wounded stage ───────────────────────────────────────────────────────
+--
+-- A LETHAL HIT IS HELD AT THE EDGE. With MODE = 'wounded' the platform's damage
+-- arbiter (`Open77.combat.onDamage`) sees every hit before it lands; one that
+-- would kill a player with a character loaded is cut down to leave them at
+-- WOUNDED.HEALTH, and the player goes down ALIVE. Alive is the whole point: a
+-- living body can be carried, cuffed, searched and finished, and a dead one can
+-- be none of those. Death itself -- the flatline -- comes after: a finishing blow
+-- WOUNDED.FINISH allows, the bleed-out clock, or anything that went round the
+-- arbiter. From there everything is as it always was.
+--
+-- THE ARBITER RUNS ON THE SERVER TICK, inside the damage path: it reads, decides
+-- and answers, and the stage change itself goes to a thread. `pendingWound`
+-- covers the frames between the two, so a second bullet in the same burst is
+-- judged as hitting a wounded body and not as another lethal hit.
+
+-- Players a lethal hit was held for, whose record is being opened.
+local pendingWound = {}
+
+local function isWounded(playerId)
+	if pendingWound[playerId] then return true end
+	local record = down[playerId]
+	return record ~= nil and record.stage == WOUNDED
+end
+
+-- Opens the wounded record for a player whose lethal hit was held.
+local function enterWounded(playerId)
+	local loaded, citizenId = inWorld(playerId)
+	if loaded ~= true or down[playerId] ~= nil then
+		pendingWound[playerId] = nil
+		return
+	end
+	goDown(playerId, nil, citizenId, WOUNDED)
+	pendingWound[playerId] = nil
+	local record = down[playerId]
+	if record == nil then return end
+	local wounded = woundedSettings()
+	if wounded.bleedOutMs > 0 then record.bleedAtMs = OPX.Now() + wounded.bleedOutMs end
+	pcall(Open77.players.setHealth, playerId, wounded.health)
+	holdBody(playerId, record)
+end
+
+-- The damage arbiter. Answers false to cancel a hit, a number to cut it, nil to
+-- let it land as it is.
+local function arbitrate(event)
+	if type(event) ~= 'table' then return nil end
+	local victim = math.tointeger(tonumber(event.victim))
+	local attacker = math.tointeger(tonumber(event.attacker))
+
+	-- A WOUNDED PLAYER DOES NOT FIGHT. The freeze and the screen take the
+	-- controls; this takes the bullets, whatever a modified client still sends.
+	if attacker ~= nil and attacker ~= victim and isWounded(attacker) then return false end
+	if victim == nil then return nil end
+
+	if isWounded(victim) then
+		local wounded = woundedSettings()
+		local byPlayer = attacker ~= nil and attacker > 0 and attacker ~= victim and nameOf(attacker) ~= nil
+		if (byPlayer and wounded.finishPlayers) or (not byPlayer and wounded.finishOthers) then
+			return nil
+		end
+		return false
+	end
+
+	local amount = finiteNumber(event.amount)
+	if amount == nil or amount <= 0 then return nil end
+	local read, health = pcall(Open77.players.getHealth, victim)
+	local current = read and type(health) == 'table' and finiteNumber(health.health) or nil
+	if current == nil or current - amount > 0 then return nil end
+	-- Only a body with a character in it goes down: the join body and the
+	-- roster body belong to nobody, and dying there is what they are for.
+	if inWorld(victim) ~= true then return nil end
+
+	pendingWound[victim] = true
+	CreateThread(function() enterWounded(victim) end)
+	local keep = current - woundedSettings().health
+	if keep <= 0 then return false end
+	return keep
+end
+
+-- Ends the wounded stage of whoever bled out.
+local function bleed()
+	local atMs = OPX.Now()
+	for playerId, record in pairs(down) do
+		if record.stage == WOUNDED and record.bleedAtMs ~= nil and atMs >= record.bleedAtMs then
+			record.bleedAtMs = nil
+			local ok, reason = Open77.players.kill(playerId, { cause = 'script', weapon = 'opx:downed:bleedout' })
+			audit('downed.bleedout', playerId, ok == true, ok and (nameOf(playerId) or '?') or tostring(reason))
+		end
+	end
 end
 
 -- Stores a departing player's down record for their character, then forgets
@@ -491,7 +744,7 @@ local function departed(rawPlayerId)
 		local ran, failure = pcall(M.Trauma.Departed, playerId)
 		if not ran then Open77.log.error('[downed] the trauma books could not let go: ' .. tostring(failure)) end
 	end
-	unplaced[playerId] = nil
+	unplaced[playerId], pendingWound[playerId] = nil, nil
 
 	local prefix = tostring(playerId) .. ':'
 	for slot in pairs(lastRequest) do
@@ -534,8 +787,10 @@ end
 -- @param playerId integer
 -- @param caller string the name the caller is audited under
 -- @param why string|nil a short reason, audited after the caller's name
+-- @param options table|nil { health = 0.01..1, graceMs = 0..60000 }, a medical
+--   service's own share; REVIVE fills what it leaves out
 -- @return Result
-local function revive(playerId, caller, why)
+local function revive(playerId, caller, why, options)
 	local by = callerOf(caller)
 	if by == nil then return Result.Err('invalid_caller') end
 	if not mayRevive(by) then
@@ -548,7 +803,7 @@ local function revive(playerId, caller, why)
 	if type(why) == 'string' and why ~= '' then
 		said = by .. ': ' .. (OPX.Text.Clean(why, 64, '...') or '-')
 	end
-	local ok, reason = reviveNow(target, said)
+	local ok, reason = reviveNow(target, said, options)
 	if not ok then return Result.Err(reason) end
 	return Result.Ok(true)
 end
@@ -564,9 +819,35 @@ local function isDown(playerId)
 	if record == nil then return Result.Ok({ down = false, waiting = false }) end
 	return Result.Ok({
 		down = true,
+		stage = record.stage,
 		waiting = record.waiting,
 		downForMs = OPX.Now() - record.sinceMs,
 	})
+end
+
+--- Lets a caller carry a wounded body: lifts this module's freeze and pose while
+--- `carried` is true, and puts them back when it is false. A dead body cannot be
+--- carried at all, so it is refused.
+-- @author dop42
+-- @param playerId integer
+-- @param caller string the name the caller is audited under
+-- @param carried boolean
+-- @return Result
+local function setCarried(playerId, caller, carried)
+	local by = callerOf(caller)
+	if by == nil then return Result.Err('invalid_caller') end
+	local target = playerOf(playerId)
+	local record = target and down[target] or nil
+	if record == nil then return Result.Err('not_down') end
+	if record.stage ~= WOUNDED then return Result.Err('not_wounded') end
+	if carried then
+		releaseBody(target, record)
+		record.carried = by
+	else
+		record.carried = nil
+		holdBody(target, record)
+	end
+	return Result.Ok(true)
 end
 
 --- Every downed player, those waiting for help first, then the longest down.
@@ -582,6 +863,7 @@ local function list()
 		rows[#rows + 1] = {
 			id = playerId,
 			name = nameOf(playerId),
+			stage = record.stage,
 			waiting = record.waiting,
 			downForMs = atMs - record.sinceMs,
 			position = position and { x = position.x, y = position.y, z = position.z,
@@ -639,6 +921,7 @@ function M.Api()
 		IsDown = isDown,
 		Revive = revive,
 		List = list,
+		SetCarried = setCarried,
 	})
 end
 
@@ -676,6 +959,20 @@ function M.Start()
 		CreateThread(function() observe(id) end)
 	end)
 
+	if woundedMode() then
+		local combat = Open77.combat
+		if type(combat) == 'table' and type(combat.onDamage) == 'function' then
+			local read, installed = pcall(combat.onDamage, arbitrate)
+			arbiter = read and installed or nil
+		end
+		if arbiter == nil then
+			Open77.log.warn('MODE is wounded but the damage arbiter could not be installed: ' ..
+				'every lethal hit is a death, as in MODE death')
+		else
+			Open77.log.info('downed: a lethal hit leaves a player wounded, not dead')
+		end
+	end
+
 	local function scan()
 		for _, playerId in ipairs(playerIds()) do observe(playerId) end
 		for playerId in pairs(down) do
@@ -695,7 +992,10 @@ function M.Start()
 	local seen, failure = pcall(scan)
 	if not seen then Open77.log.error('life scan failed: ' .. tostring(failure)) end
 
-	OPX.Scheduler.Every('downed:scan', SCAN_MS, scan)
+	OPX.Scheduler.Every('downed:scan', SCAN_MS, function()
+		scan()
+		bleed()
+	end)
 
 	checkLocales()
 
@@ -705,8 +1005,17 @@ function M.Start()
 	Open77.log.info(('downed: give up unlocks after %ds'):format(math.floor(giveUpMs / 1000)))
 end
 
---- Takes the Trauma Team's AVs and their crews out of the world.
--- @author XEROX710
+--- Takes the Trauma Team's AVs and their crews out of the world, the arbiter away,
+--- and lets every wounded body go.
+-- @author XEROX710, dop42
 function M.Stop()
 	if M.Team ~= nil then M.Team.Stop() end
+	if arbiter ~= nil and type(Open77.combat) == 'table' and type(Open77.combat.offDamage) == 'function' then
+		pcall(Open77.combat.offDamage, arbiter)
+	end
+	arbiter = nil
+	for playerId, record in pairs(down) do releaseBody(playerId, record) end
 end
+
+-- Exposed for the tests: the arbiter and the bleed-out, by name.
+M.Wounded = { Arbitrate = arbitrate, Bleed = bleed, IsWounded = isWounded }

@@ -1873,7 +1873,7 @@ button {
 .row.off {
   color: var(--op-text-faint);
   cursor: default;
-  --aug-border-bg: rgba(174, 211, 224, 0.14);
+  --aug-border-bg: var(--op-off-line);
 }
 
 /* A captioned separator: a mono eyebrow and a rule, no frame. */

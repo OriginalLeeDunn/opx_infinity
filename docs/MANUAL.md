@@ -583,6 +583,345 @@ consumption (no RPM on the server), and real station coordinates (unsurveyed -- 
 above). Needs in-game checking: the engine cut against a driver restarting, the eye
 spheres on real pumps, the `drop_point` sprite on the big map.
 
+### Down, wounded, and dead
+
+`modules/downed` + `config/downed.lua`. `MODE = 'death'` ships: a lethal hit kills and the
+down screen opens on the dead body. With `MODE = 'wounded'` (off by default) the server's
+damage arbiter (`Open77.combat.onDamage`) holds a hit that would kill a player with a
+character loaded at `WOUNDED.HEALTH`: the player goes down **alive** -- frozen where they
+fell, regeneration off, the `WOUNDED.POSE` workspot -- and every hit they deal is refused.
+They **flatline** (the dead stage, the screen as before) on a finishing blow
+`WOUNDED.FINISH` allows (players yes, NPCs and the world no, by default), when
+`BLEED_OUT_S` runs out, or from any death that went round the arbiter. A revive of a
+wounded body is a heal past the floor; GIVE UP teleports and patches instead of
+respawning the living, behind a fade (`FADE`).
+
+Contract `downed` (server): `IsDown(id)` and `List()` carry `stage` (`wounded` / `dead`),
+`Revive(id, caller, why, { health?, graceMs? })`, `SetCarried(id, caller, carried)` lifts
+the hold on a wounded body for a carry. Bus: `opx:on:downed:changed` also fires when a
+downed player asks for help (`waiting = true`).
+
+### Medical services
+
+`modules/medical` + `config/medical.lua`. A **service** is a config entry (`trauma`,
+`ripperdoc` ship): its job gate, `DISPATCH`, `SUBSCRIPTION` tiers and desks, `TREATMENTS`
+(`revive` / `heal`, items from the medic's bag, `FEE`, `PAY`, `ANIMATION`, `PROP`),
+`CARRY`, `BEDS` and `BILLING`. A downed player who asks for help -- or a subscriber whose
+tier has `AUTO_ALERT` the moment they go down -- becomes a call on the board of every
+service that answers them; members on duty get a toast and a map pin, take a call from
+the board (**F6**) and get a waypoint. ALT on a player opens what the medic may do: revive
+(a server-timed bar), heal (the platform's two-player `heal`, after the patient agrees;
+on a `BEDS` entry the patient is laid down instead), carry (the platform's `carry`, also
+on a wounded patient). The patient is billed, unpaid bills become debt settled at the
+desk, and a subscribers-only service treating a stranger charges
+`OFF_CONTRACT_MULTIPLIER`. `server/dispatch.lua` is the board on its own, no host call
+in it. Contract `medical` (server): `Subscription(id, service)`, `Calls(service?)`,
+`Services()`; bus `opx:on:medical:call`, `treated`, `subscribed`.
+
+### Underworld
+
+`modules/underworld` + `config/underworld.lua`. Dirty money is the `dirty_eddies` item
+(never a balance); every valued action goes through `server/op.lua` -- check, escrow the
+inputs before the bar, server-timed bar, re-check, destroy the escrow, create the value
+last, refund once on any other ending -- with a ledger row per movement
+(`/opx.underworld.ledger <cid>`) and per-hour mint caps. Black-market dealers rotate
+between spots, sell for dirty or (dearer) clean money and fence stolen goods; stores
+hold regrowing register charges, need a weapon in hand and police on duty, and raise
+an alarm (`police.Report` when that contract exists, else on-duty NCPD and MaxTac);
+fronts launder by batch under a daily cap; gang-gated crafting labs heat up; drugs
+use, addict and overdose; a street deal is the platform's two-player `give`. Gang gates
+use `OPX.JobGate.EvaluateGroups`. Survey every entry with `/opx.underworld.capture`.
+
+### Ripperdoc
+
+`ripperdoc` (`modules/ripperdoc`, `config/ripperdoc.lua`) puts chrome in and takes it
+out at **clinics**. Reviving and healing are `medical`'s, not this module's. A clinic is
+chairs, a parts stash (`inventory` stash) and a wholesale terminal; several clinics and
+every chrome live in the one config, and anything at `0,0,0` is disabled and named at
+boot (`/opx.ripperdoc.clinics` lists the state).
+
+The loop, all server-side: the doc (job `ripperdoc`, on duty where the clinic says so)
+ALTs a patient sitting in a chair -> **chart** (humanity, capacity, installed chrome, what
+can go in: new parts from the stash, the doc's bag, the patient's own bag) -> **propose**
+-> the patient gets a **consent form** (price, humanity, risk) -> **escrow** (money, then
+the part) and a receipt row in `opx77_ripperdoc_operations` -> a server-timed **bar** on
+the doc -> the **dice** (`TIERS[*].FAIL x GRADE_MOD x clinic RISK`, black parts, worn
+parts, over capacity; weighted `OUTCOMES`) -> apply and **settle** (refund, `DOC_SHARE` to
+the doc, the rest to `TILL`).
+
+Gorilla Arms (`arms`/`gorilla_arms`) and Reinforced Tendons (`legs`/`double_jump`) are
+**native**: `Open77.cyberware.install/remove` with `{ expectedRevision, operationId }`,
+completed on `onCyberwareOperationCompleted` matched by ticket. The platform needs the
+player bound to a character; `open77_appearance` binds when it runs, otherwise
+`server/identity.lua` binds the citizen id on load. Without native cyberware the chrome is
+roleplay metadata (`NATIVE.FALLBACK_RP`). The body is two character metadata keys,
+`humanity` and `cyberware`. A crash is resumed from the receipts at boot: `reserved` is
+given back, `submitted` is replayed with the same operation id when the patient loads in.
+
+Contract `ripperdoc` (server): `Body(citizenId)`, `Clinics()`, `Chrome()`,
+`Operation(player)`; bus event `opx:on:ripperdoc:operated`.
+
+### Netrunner
+
+`modules/netrunner` + `config/netrunner.lua`. A runner ALTs an **access point** of a
+network with a **cyberdeck** (`cyberdeck_*`, never stacked) in the bag and starts a
+**breach**: one server `progress` bar per step of the node's `STEPS`, rolled by the
+server (`M.Roll`), odds and speed moved by deck TIER against ICE TIER. A failed step
+adds `BREACH.FAIL_TRACE` and runs again. Connected, the run's menu offers the
+**daemons** of the access point and of every door, camera and terminal node of the
+network: `door_unlock` (doorlock contract `GetFromName` + `SetState(id, 0, 'netrunner:<cid>')`,
+relocked after `UNLOCK_S` if still open), `camera_loop`, `datamine` (a bar, then a
+`data_shard` with `{ network, kind, value, hot, at, serial }`), `ice_pick`, `wipe_logs`.
+RAM lives on the deck's metadata (`ram`, `ramAt`, regen computed from the wall clock),
+is reserved before a bar and refunded on cancel. The server raises the trace every
+`TICK_MS` toward 100% in `ICE.TRACE_MS`; `ALERT_AT` warns the `ON_TRACE.JOBS`, 100%
+throws the runner out, locks the network for `COOLDOWN_S`, sends an `ALERT` (toast +
+waypoint) to on-duty members and adds NetWatch heat (`netwatch_heat` metadata; a
+Blackwall connect adds more; `FLAG_AT` locks the runner out for `LOCKOUT_H`).
+**Brokers** buy every shard in the bag: value x `BUY[kind]` x `HOT_PENALTY` while hot.
+
+Contract `netrunner` v1 (server): `CamerasBlind(network)`, `Objectives()`,
+`ValidateShard(player, slot, want)`, `Verify(contract, proof)`, `Session`, `Heat`,
+`Networks`, `JackOut`. Bus: `opx:on:netrunner:objective|traced|cameras|door`.
+Staff: `/opx.netrunner.capture <network> <node> [kind]`, `/opx.netrunner.networks`.
+Every position ships as `0,0,0` and its network stays disabled until surveyed.
+
+### Police
+
+`modules/police` + `config/police.lua`. A **service** is a config entry (`ncpd`,
+`maxtac`, `arasaka_sec` ship): its job gate, `CAPABILITIES` (`cuff`, `escort`, `frisk`,
+`fine`, `jail`, `impound`, each with a minimum grade -- a verb not listed is not held),
+`DISPATCH.RECEIVES` (crime codes from `CRIMES`, `'*'` for all), `ACCOUNT`, and for
+corpo security `ENCLAVES` (no authority outside a surveyed sphere). `STATIONS` hold
+the building (jail only inside), `DESK` (pay fines), `EVIDENCE` (stash
+`police_evidence_<station>`), `CELLS` and `RELEASE`.
+
+Calls: `/911 <text>` (any player, cooldown), alarms through the contract, and a 10-00
+when an on-duty member goes down; members get a toast and an SVG pin, the board is
+**F5** (F6 is medical's), take -> waypoint. ALT on a player: cuff (item `handcuffs`,
+registered at boot; a wounded suspect at once, a standing one after a 3 s server bar
+he can walk out of), uncuff, escort (`playerInteractions` `escort`, no consent;
+`downed.SetCarried` around a wounded suspect), frisk (bag listed, a stack confiscated
+into the nearest locker), fine (form; paid from `BANK`, the rest becomes `debt` on the
+record, `OFFICER_CUT_PERCENT` of what was paid to the officer, the rest to `accounts`
+when it exists), jail (form; inside a station, a cell, a leash, released at
+`RELEASE`). ALT on a car: impound (`vehicles.SetState(plate, 'impounded', GARAGE)`, or
+the wreck removed). Cuffs, sentence and debt live in character metadata `police` and are
+re-applied on load; a cuffed player's hits are refused by a `combat.onDamage` arbiter
+and his client holds `allowWeapons/Shoot/Aim/Dodge/Jump/Interaction` false, re-applied
+every second.
+
+Contract `police` v1 (server): `Report{ crime, label?, position?, radius?,
+description?, source?, priority?, dedupe? }` -> Result (underworld's alarms),
+`Alert{ kind, jobs, label, coords, level, runner }` -> boolean (netrunner's trace;
+false when no service holds those jobs), `OnDutyCount()` -> number, `IsCuffed(id)`,
+`IsJailed(id)` -> bool, seconds, `Calls(service?)`, `Services()`. Bus
+`opx:on:police:call|cuffed|fined|jailed`. Staff: `/opx.police.capture <kind> <name>`
+(no args lists the stations' state), `/opx.police.release <id>`,
+`/opx.police.unimpound <plate>`.
+
+### Bar
+
+`modules/bar` + `config/bar.lua`: bartenders, bars and food stalls. A **venue** is a
+counter, a back-room stash (`inventory` stash) and an optional supplier point, worked by
+its `JOBS` and/or `GANGS` (`bartender` by default; Totentanz also lets Maelstrom in and
+banks into the `maelstrom` gang treasury). Five lore venues ship -- the Afterlife,
+Lizzie's Bar, El Coyote Cojo, Totentanz, a Jig-Jig Street noodle stall -- all at
+`0,0,0`, disabled and named at boot until their COUNTER and STASH are surveyed
+(`/opx.bar.venues` lists the state).
+
+The loop, all server-side: staff buy **stock** at the supplier into the stash (paid
+from the venue `accounts` treasury when that contract exists, else from the buyer's
+BANK; money first, stock second, refunded if the stash is full) -> **mix** at the
+counter: a recipe of the venue `MENU` is checked against the stash, a server-timed
+`progress` bar runs, everything is re-checked, the ingredients leave the stash and the
+drink lands in the bartender's bag (on the stash shelf if the bag is full); a cancel
+uses nothing -> **serve**: ALT on a customer, pick a drink they carry from the venue's
+`PRICES`, the platform's two-player `give` with consent; on completion the drink moves
+and the customer is billed through `invoices` (`source = 'bar'`, `cutPct =
+STAFF_CUT_PCT`, the venue `ACCOUNT`) or, without it, charged directly with the
+bartender's cut paid out and the house share deposited to `accounts` (all to the
+bartender without it). The items (the Afterlife's cocktails named after legends,
+Broseph ale, noodles, the stock) are registered at boot; a drink's `THIRST`/`HUNGER`
+become its `use.status`, moved by `needs` when it is used, and its `ALCOHOL` raises a
+server-side drunk level played with `Open77.effects.screen('drunk')` on the drinker.
+
+Contract `bar` v1 (server): `Venues()`, `Items()`, `DrunkLevel(player)`. Bus:
+`opx:on:bar:mixed|bought|served`.
+
+### Taxi
+
+`modules/taxi` + `config/taxi.lua`. A **company** is a config entry (`delamain` ships on
+job `cabbie`; `nccab`, an indie example, ships disabled until its job exists): job gate,
+`DISPATCH`, `FARE` (`BASE`, `PER_KM`, `MIN`, `MAX`, a `NIGHT` surge read off the weather
+clock), `DRIVER_CUT_PCT`, `ACCOUNT`, optional `VEHICLES` allow-list and `NPC_FARES`.
+Anybody types **`/taxi`** (`/taxi <company>`, `/taxi cancel`, `/taxi stop`): the call goes
+on the board of every on-duty driver (toast + map pin); a driver opens it with **`/cab`**,
+takes the call (waypoint; the customer is told the car record and an ETA in the
+company's voice -- the Delamain AI or a human dispatcher). The **meter is the server's**:
+it starts when the customer sits in the vehicle whose driver's seat the driver holds
+(`Open77.vehicles.getPlayerSeat`), adds one clamped segment of the driver's position per
+`SCAN_MS` (`MAX_SPEED`), and stops after `EXIT_SAMPLES` samples with the customer out. The
+fare is billed through `invoices` when it runs (company share to `accounts`), else taken
+with `RemoveMoney` and split (`accounts.Deposit` or all to the driver). A driver may also
+start the meter for whoever already sits in the cab (**hail**), or, with the board empty,
+take a **street fare**: drive to a pickup, then to a destination; paid by the company on
+the straight distance, minted, capped per driver per rolling hour, refused when the trip
+log is faster or shorter than the road. `server/dispatch.lua` is the board on its own
+(the medical board's pattern, copied). Contract `taxi` v1 (server): `Calls(company?)`,
+`Ride(player)`, `Companies()`; bus `opx:on:taxi:call`, `opx:on:taxi:ride`.
+
+### Justice
+
+`modules/justice` + `config/justice.lua`. Jobs `lawyer` (Associate, Partner) and
+`judge` (Judge, Chief Judge). At a **City Hall desk** (ALT sphere, `CITY_HALLS`) a
+citizen buys a **licence** of `LICENCES` (driving, weapons, business, netrunning):
+the `FEE` leaves the purse first, then the line `{ issued, expires, serial, by }` is
+written in the character metadata `licences`, then a `licence_card` (never stacked,
+not droppable) carrying `{ kind, holder, serial, expires }` goes in the bag. A
+`CLEAN` licence is refused under an active warrant or a felony newer than
+`CLEAN_DAYS`. The desk also shows the citizen's own record, takes the **bail** a
+judge set on their warrant and dismisses their lawyer. Fees, bail and court fines go
+to `CITY_ACCOUNT` through `accounts.Deposit` (burned, logged, without it).
+
+The **criminal record** is `opx77_justice_records` (kind offence|verdict|warrant,
+code, fine, jail, bail, officer, paid, active, expunged). Police (`POLICE` gate) and
+judges read anyone's (ALT on a player, or the bench's lookup); a lawyer reads only a
+**client's**: a lawyer ALTs a player, the player consents, `opx77_justice_counsel`
+holds the row. From the client file a lawyer asks to **expunge** an entry; a judge
+approves or denies it from the **bench** (self ALT row "Legal office"), signs
+**warrants** with bail, raises or lifts bail, revokes licences, opens a **case**
+(`opx77_justice_cases`) and closes it with a **verdict**: guilty writes a verdict
+entry and bills the fine through `invoices.Issue` (`source = 'justice'`, no cut,
+toward the city account; paid on `opx:on:invoices:paid`), else straight from a
+present defendant's bank, else unpaid on the record; jail minutes are asked of
+`police.Jail(player, { minutes, reason, by, source })` when that function exists.
+
+Contract `justice` v1 (server; the database calls yield): `AddRecord(citizenId,
+{ code, label?, kind?, fine?, jail?, bail?, officer?, officerName?, notes?, source?,
+paid?, felony? })`, `GetRecord(citizenId, { expunged? })`, `HasWarrant(citizenId)`,
+`HasLicence(citizenId, kind)` -> `boolean, state`, `Licences`, `IssueLicence`,
+`RevokeLicence(citizenId, kind, reason?, by?)`, `Crimes()`. Bus:
+`opx:on:justice:record|licence`. Staff: `/opx.justice.desks`, `/opx.justice.capture <key>`.
+
+### Workplace: duty, uniforms, service vehicles
+
+`modules/workplace` + `config/workplace.lua`. A **station** belongs to one job and holds
+up to three ALT spheres: **DUTY** (clock in / out through character `SetJobDuty`; a job
+held as a secondary membership is made primary first when `SWITCH_PRIMARY`; a
+`defaultDuty` job has no clock and the validator refuses one), **WARDROBE** (the job's
+`OUTFITS`, per `MIN_GRADE`: a uniform is a set of equipment slots written through
+`appearance.SaveClothing`, which re-dresses the puppet; the civilian record is kept on
+the `workplace_civvies` metadata BEFORE the uniform is written and put back by "Back to
+civilian", by going off duty (`RESTORE_OFF_DUTY`), by losing the job, or at the next
+login of a character no longer in that job) and **GARAGE** (the job's `FLEET`, per
+`MIN_GRADE`, narrowed per station by `VEHICLES`: `Open77.vehicles.create` on the `PAD`
+with `ttlMs`, no row, a key through `vehiclekeys.GiveFor`; one per player; handed back
+at the pad within `RETURN_RADIUS`, and taken back with every key revoked on off duty,
+job change, logout, disconnect, or when the host removes it). Every job decision goes
+through `OPX.JobGate`. Sirens and lights are the police module's.
+
+Contract `workplace` v1 (server): `OnDuty(player)` -> `(bool, job)`, `Fleet(job)`,
+`Out(player)`, `Recall(player, reason)`, `InUniform(player)`. Bus:
+`opx:on:workplace:duty|uniform|fleet`. Staff: `/opx.workplace.capture <station>
+<duty|wardrobe|garage|pad>` (the pad line carries the heading), `/opx.workplace.stations`.
+Every point ships as `0,0,0` and stays disabled until surveyed.
+
+### Corpo
+
+`modules/corpo` + `config/corpo.lua`. Several corps in one file (Arasaka and Militech
+enabled; Kang Tao, Biotechnica, Petrochem shipped `ENABLED = false` as examples). An
+employee (primary job = the corp's `JOB`, clocked in if `ON_DUTY`) ALTs one of the corp's
+**OFFICES** and reads the **assignments board**, generated by the server from the
+`ASSIGNMENTS` templates (`deliver` a tagged `corpo_briefcase`/`corpo_datashard` to another
+office, a drop or a **rival's** drop; `retrieve` = a server bar at a TERMINAL, then
+deliver the shard; `sweep` = stay `HOLD_MS` on a FLOOR, timed by the server tick; `escort`
+= a server NPC VIP that follows the employee to a DESTINATION, `Open77.npcs.get` read by
+the server). The board never shows where an assignment ends. Completion is proven by the
+item's assignment id **and** serial at the right place. The corp pays: `accounts.Withdraw`
+(`job`, corp key, op id `corpo:<id>:<serial>:pay`) when the contract runs, else new money
+under `MINT.PER_HOUR` (tunable `CORPO_MINT_PER_HOUR`). **Standing** per corp lives in the
+`corpo` metadata (`MIN_STANDING` unlocks templates); `QUARTER.TARGET` done in a quarter
+pays `QUARTER.BONUS` once. **Espionage**: a rival corp's employee ALTs a courier carrying a
+`STEALABLE` item (server bar `STEAL_MS`), the shard changes bags, the victim fails, the
+thief hands it in at one of their own offices. **Security**: `ENCLAVES` (same job gate as
+the elevators' floors) warn a trespasser and alert on-shift security (grade >=
+`SECURITY_GRADE`); "Detain trespasser" (bar) hands the suspect to `police.Handoff` /
+`police.Report{ crime = 'trespass', source = 'corpo' }` when present, else alerts on-duty
+`POLICE_JOBS`, and walks them to `EJECT` (`SECURITY.EJECT`). A grade >= `PUBLISH_GRADE`
+may **outsource** an offer to the fixer board (`contracts.Post`, `funded = 'external'`, paid
+by the corp up front, refunded on `opx:on:contracts:failed|expired|cancelled`).
+
+Contract `corpo` v1 (server): `Standing(player, corp)`, `Active(player)`, `Corps()`,
+`CanEnter(player, corp, enclave)`, `Trespassing(player)`, `AddStanding(player, corp, delta)`.
+Bus: `opx:on:corpo:completed|failed|stolen|detained|trespass`.
+Staff: `/opx.corpo.capture <corp> <list> <key>`, `/opx.corpo.status`. Every place ships as
+`0,0,0` and is skipped until surveyed. Assignments live in memory (a restart ends them).
+
+### Radio
+
+`modules/radio` + `config/radio.lua`. A **channel** is a config entry (NCPD dispatch,
+NCPD command, MaxTac, Trauma, the shared `interagency` band for the three, ripperdoc,
+Delamain, Arasaka, Militech; gang frequencies ship `ENABLED = false`) gated by
+`JOBS` / `GANGS` through `OPX.JobGate.EvaluateGroups` (primary job, `ON_DUTY`), backed
+by one resource-owned `Open77.voice` channel in mode `radio` with a band-pass and hiss.
+`AUTO` channels are joined when the character qualifies and every channel is left when
+they stop (`opx:on:character:job` / `gang` / `loaded`, `opx:on:inventory:items` for the
+`radio` handset, registered at boot, `REQUIRE_ITEM`), plus a sweep. `/opx.radio` or
+using the handset opens the menu: power, join / leave, select, mute (per channel,
+server-side `canListen`). **A member is a listener until the talk key (CAPSLOCK,
+rebindable) is held**: the server lifts `canSpeak` on the selected channel for as long
+as it is held (`MAX_TALK_MS` cap, never while downed), so a holocall's `all` route or
+the platform's own voice key never reach a radio channel. Contract `radio` (server):
+`Join(player, channel)`, `Leave(player, channel)`, `Channels(player)`; bus
+`opx:on:radio:changed`. `/opx.radio.channels` (staff) lists them.
+
+### Business: treasuries and the HR terminal
+
+`modules/business` + `config/business.lua`. **Who is a boss is the grade table** in
+`config/character.lua`: `isBoss = true` opens the HR terminal (`/opx.boss`, or the ALT
+row at an office of `JOBS.<job>.OFFICES` / `GANGS.<gang>.OFFICES`, all `0,0,0` =
+disabled and named at boot), `bankAuth = true` also moves money between the boss's
+`POCKET` (cash) and the company account. The terminal lists the roster online and
+offline (`GetGroupMembers`), recruits a nearby player (an offer they sign or decline,
+`HIRE.RADIUS`, `HIRE.TTL_S`), fires, promotes, demotes and clocks inside the grade
+table under `RANK_RULE` (`below`: only people strictly below the boss, never up to their
+grade), and caps head count at `MAX_EMPLOYEES`. Every change goes through the character
+contract (`SetJob`/`SetGang` on a primary group, `AddPlayerTo*` on a secondary one,
+`RemovePlayerFrom*`, `SetJobDuty`), so `job:beforeSet` vetoes and the offline ledger hold.
+
+Contract `accounts` v1: `Balance`, `Deposit`, `Withdraw` (`insufficient_funds`),
+`Transfer`, `History`, each with an optional `opId` -- the ledger
+(`opx77_company_ledger`, `op_id` UNIQUE, written in the same transaction as the balance)
+makes the same opId one movement, answered with its first receipt; a debit is an
+`INSERT ... SELECT ... WHERE balance >= amount`, so it cannot overdraw. The balance table
+is the dealership's `opx77_company_accounts`, taken over as it is; the dealership still
+banks its sales itself and files them with `Note` (history + bus). Bus
+`opx:on:accounts:changed` and `opx:on:business:staff`. Contract `business` v1:
+`IsBoss(player, job, kind?)`, `Employees(job, kind?)`. Staff: `/opx.accounts <job|gang>
+<name> [deposit|withdraw <amount>]`.
+
+### Mechanic
+
+`modules/mechanic` + `config/mechanic.lua`, job `mechanic` (Grease Monkey / Mechanic /
+Shop Owner). Several **shops** (Autofixer Arroyo, Dakota's garage Rocky Ridge, Kabuki
+body shop), each with `BAYS`, a parts `STASH` and an impound `LOT`, all shipped at
+`0,0,0` (disabled, named at boot). **Workshop repair**: ALT on a vehicle standing in a
+bay, mechanic on duty; the damage in percent (worse of lost health and crushed body
+cells) sets the fee, the parts (`mech_parts`, stash first then bag) and the bar length;
+at the end the server re-checks, takes the parts, charges the customer (the owner if
+near, else the nearest player) and calls `Open77.vehicles.repair(id, 'full')` +
+`setHealth(1.0)` -- refused with `not_ours` (everything given back) for a car another
+resource spawned. With `invoices` the customer gets an invoice instead; the shop share
+goes to `accounts` (`job`, `ACCOUNT`) or, without it, to the mechanic. **Roadside kit**
+(`mech_repairkit`): anybody, anywhere, health up to `KIT.HEALTH` + `KIT.SCOPES`.
+**Calls**: `/mechanic [note]` and `/tow [note]` alert every mechanic on duty (toast +
+pin), `/mechboard` lists, takes (waypoint), drops and closes. **Tow**: `IMPOUND.JOBS`
+(mechanic 1+, ncpd, maxtac) impound a registered, empty vehicle through
+`vehicles.SetState(plate, 'impounded')`; the owner pays `RELEASE_FEE` at a shop's lot to
+get it back (`SetState 'stored'`, fee to the shop account). Contract `mechanic` v1
+(server): `Call`, `Calls`, `Shops`; bus `opx:on:mechanic:call|repaired|impounded|released`.
+
 ### Emotes
 
 `animations` offers **every animation the platform has** (**"toutes les animations,
@@ -785,8 +1124,9 @@ next to the volume, and they ship in this resource — `ui/public/audio/` in the
 **The announcement is drawn on this runtime's own overlay**, not by the platform's
 `open77_notifications` package, and that move is what makes the stingers possible at
 all: only the page that owns a toast's clock can hold a message back until the first
-clip has finished. `OPX.Notify` hands the sentence to a surface this runtime does not
-draw, so it could be told when to appear and never when to wait. The chat line still
+clip has finished. Every other server toast now reaches the same overlay too --
+`OPX.Notify` raises it on the runtime's own channel -- but as a sentence and a kind,
+with no stinger: holding a message back is the announcement's alone. The chat line still
 goes out on core's own result channel, exactly as before.
 
 **Nothing about the presentation crosses the wire.** The server sends the sentence and
@@ -821,11 +1161,105 @@ received, and the run that chose this format reported `packets 335, frames 34304
 peak 0.66` with no user gesture anywhere — so the clips play, and they play without a
 click.
 
-The order itself is proven in a browser rather than argued: `ui/harness/
-notify-stinger.html` mounts the real page on a fake bridge and a stubbed decoder and
-asserts the sequence — the message is not in the document while the opening clip plays,
-it appears when that clip ends, it goes when its lifetime ends, and only then does the
-closing clip start, with a refused playback still drawing the message.
+The order is: the message is not drawn while the opening clip plays, it appears when
+that clip ends, it goes when its lifetime ends, and only then does the closing clip
+start -- with a refused playback still drawing the message.
+
+### Contracts: the gig board
+
+`modules/contracts`, configured in `config/contracts.lua`. A **fixer** (`/postgig`)
+posts a gig and its reward plus `POST_FEE` leave their cash at once, **into escrow**; a
+**merc** (`/gigs`, or ALT on a district fixer NPC) takes it, first come first served.
+The server alone records the proof — a parcel handed over at a drop-off, a zone held
+for `HOLD_MS`, or a fixer's sign-off for a `manual` gig — and the settlement pays the
+merc the reward minus the fixer's cut (handed back to the fixer), moves street cred
+(character metadata `contracts`), and refunds the escrow on cancel, expiry or failure.
+
+Every eddie moves through one rule: a ledger row keyed `contracts:<id>:<phase>`
+(`opx77_contract_ledger`) is reserved, the money moves, the row is committed. A replay
+finds the receipt and moves nothing; a row a crash left `reserved` is marked
+`orphaned` and audited for staff, never guessed at. A gig that ends is written
+`settling` first, so a restart finishes paying it. Payouts use `AddMoneyOffline`: a
+merc who logged off is still paid.
+
+District fixers (`FIXERS`) stand as NPCs, open the board on ALT and — when no player
+fixer is on duty — post gigs from `TEMPLATES` paid in new money, capped by
+`MINT_PER_HOUR`; their cut is destroyed. A manual gig nobody signs off within
+`VALIDATE_TTL_S` is paid or goes `disputed` (`MANUAL_TIMEOUT`); staff settle it with
+`/opx.contracts.resolve <id> paid|failed`.
+
+Other modules post and measure through `OPX.Api.Get('contracts')`: `Post(spec)`,
+`Cancel`, `Get`, `List`, `ReportProof(id, proof)`, `Resolve(id, outcome)`,
+`RegisterObjectiveType(name, { validate, describe?, waypoint?, canStart?, start?,
+stop?, tick? })`. The bus is `opx:on:contracts:posted`, `accepted`, `paid`,
+`failed`, `expired`, `cancelled` — ids, type, citizen ids and reward, never a position.
+Every drop-off, zone and fixer ships at `0,0,0` and is disabled, by name, until surveyed.
+
+### Media: N54 News, WNS and the screamsheet
+
+`modules/media` + `config/media.lua`. Job `reporter` (Stringer 0 / Reporter 1 / Anchor 2 /
+Editor-in-chief 3, boss and bank). Which **newsroom** a reporter works for is character
+metadata `press = { network }` (default `DEFAULT_NETWORK`), set by an Editor-in-chief of that
+newsroom with `/pressnet <id> <network>` or by staff with `/opx.media.assign`. Several
+newsrooms live in one config (`n54`, `wns`, `screamsheet` ship), each with a `TAG`, an
+`ACCOUNT` (`accounts` treasury) and `DESKS`.
+
+**Breaking news** (`/breaking`, form, or `/breaking headline | text`; Anchor and up, on
+duty): the server sends `{ label, tag, headline, text, durationMs }` to every connected
+player on `opx:net:media:broadcast`, and each client draws it exactly like the staff
+announcement above -- `OPX.Toast.Show` on the runtime's overlay, one fixed id, the two
+stingers of the RECEIVING client's `BROADCAST.STINGER` -- plus a chat line on core's answer
+channel. Held to a per-newsroom cooldown, a global cooldown and an hourly count; audited;
+`/news` reads the feed back.
+
+**Field work**: `press_camera` used from the bag starts a server-timed bar; the camera must
+still be in its slot and the reporter within `MAX_DRIFT` when it ends. The `press_photo`
+item carries the server's reads (`x, y, z, bucket, at, by, crowd`). A real picture is taken
+only when `PHOTO.UPLOAD_URL` is set: `Open77.players.requestScreenshot` (permission
+`players.screenshot`) has the client POST its own game view there -- the platform never
+carries the bytes over the game transport, so without an external URL a photo is the
+record of a shot. `/story` files a `press_story` (headline, body, words). An editor **desk**
+(ALT) buys every piece of the seller's own byline: pieces leave the bag, then
+`accounts.Withdraw(kind, key, total, reason, opId)` or, with no `accounts`, new money under
+`SALES.MINT_PER_HOUR`, then `AddMoney`; any refusal puts back what moved. Freshness, old
+news (`REPEAT_*`) and a per-seller hourly cap shape the price. Stringers sell to any desk,
+staff only to their own newsroom.
+
+**Tips line**: `/tip <text>`, anybody, anonymous to the reporters on duty (the caller is in
+the audit journal only); `/tips` reads the last ones. **Kit**: `/presskit` gives an on-duty
+reporter their own `press_pass` and a `press_camera`; a pass used from the bag shows
+everybody within `PASS.SHOW_RADIUS` the bearer, newsroom and whether the accreditation
+still holds (`valid`, `revoked`, `unverified`). Client-to-server is ONE door,
+`opx:net:media:request` with `verb = breaking|story|sell`. Contract `media` (server):
+`NetworkOf(player)`, `Networks()`, `Feed()`; bus `opx:on:media:broadcast|sold|photo|tip`.
+Staff: `/opx.media.desks`, `/opx.media.capture <network> <desk>`. Every desk ships at
+`0,0,0` and is disabled, by name, until surveyed.
+
+### Invoices: bills with consent
+
+`modules/invoices` + `config/invoices.lua`. An employee whose PRIMARY job is in `JOBS`
+(grade, duty through `OPX.JobGate`) bills a player within `REACH`: ALT on them (**Send a
+bill**, then amount and reason) or `/opx.bill <id> <amount> <reason>`. The customer is
+prompted (**Pay now** / **Put it on my tab** / **Refuse**, `ANSWER_TTL_S` then expired).
+Paying takes `MONEY_TYPE` (BANK), `FALLBACK_TYPE` (cash) when the bank is short; the
+employee is paid the job's `CUT_PCT` and the rest goes to the job's company account
+through `accounts.Deposit(..., opId)` -- or to the employee when `ACCOUNT = false`, when
+`accounts` does not run (said once at boot) or when it refuses the deposit (audited).
+A bill accepted but not covered stays on the tab (`/opx.bills`, `opx77_invoices`,
+survives restarts, lapses after `UNPAID_TTL_S`, at most `MAX_UNPAID`); the employee
+withdraws an unpaid bill from the same list.
+
+Money moves like contracts: the bill is written `settling` first, each movement is a row
+`invoices:<id>:charge|cut|rest` in `opx77_invoice_ledger` (reserved, moved, committed),
+then `paid`. A restart finishes a `settling` bill from its receipts; a charge a crash left
+`reserved` is `orphaned` and the bill `disputed` for staff, never guessed at.
+
+Contract `invoices` v1 (server): `Issue{ issuer, target, amount, reason, account?, cutPct?,
+source? }` -> `Result{ id }` (yields; no reach or job check -- the caller decided),
+`Pending(player)` -> `Result{ rows }`, `Get(id)`, `Cancel(id)`. Bus
+`opx:on:invoices:issued`, `paid`, `refused`, `expired`, `cancelled` as `(source, { id,
+amount, account, source, issuerCid, targetCid })`. NCPD ships without an entry on purpose:
+a citation is a fine, not a service.
 
 ---
 
@@ -875,6 +1309,8 @@ local data = exports.opx_infinity:GetPlayerData(playerId)
 | `AddVehicle(target, record, { garage? })`, `GiveKeys(target, plate, model?)` | write |
 | `Notify(src, msg, kind?, ms?)`, `StartProgress(src, spec)`, `StopProgress(src, id?)` | write |
 | `RegisterCraftingBench(key, def)`, `UnregisterCraftingBench(key)` | write |
+| `GetInvoices(src)` (what a loaded player owes) | read |
+| `IssueInvoice(issuer, target, amount, reason, { account?, cutPct? }?)`, `CancelInvoice(id)` (only the caller's own bills) | write |
 
 `target` is a connected player id or a citizen id (an offline bag). **Who may call
 is the operator's**: `SERVER.EXPORTS.READ` (`'*'` out of the box) and
@@ -970,7 +1406,9 @@ litres, previous, percent, capacity, reason }`, `reason` one of `refuel`, `can`,
 `empty`, `ext:<caller>` -- driving is not announced, the bag already is); `opx:on:character:created` / `deleted`;
 `opx:on:inventory:items` (`{ citizenId, changes = { { name, delta, count } } }`,
 what a bag gained and lost by item name); `opx:on:vehicles:registered` / `state`
-(an impound); `opx:on:crafting:ordered` / `collected`; `opx:on:progress:finished`.
+(an impound); `opx:on:crafting:ordered` / `collected`; `opx:on:progress:finished`;
+`opx:on:invoices:issued` / `paid` / `refused` / `expired` / `cancelled` (a bill an
+`IssueInvoice` raised carries `source = 'ext:<caller>'`).
 Payloads are closed copies built
 for the bus, never live records — PlayerData's free-form `metadata` is not on it.
 

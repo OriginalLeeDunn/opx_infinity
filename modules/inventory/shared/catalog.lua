@@ -318,10 +318,20 @@ local RUNTIME_STATUS_MAX = 8
 -- the server sends a client that joins after they were registered.
 local runtime = {}
 
+-- The server's `getmetatable`, or nil on the client, whose sandbox removes it.
+-- Read once as a value, never called by name, so this shared file stays inside
+-- what both sandboxes provide (tools/check-sandbox-globals.py).
+local metatableOf = type(getmetatable) == 'function' and getmetatable or nil
+
 --- The first thing wrong with a runtime definition, or nil and the catalogue
 --- row it becomes.
 local function runtimeRow(raw)
-	if type(raw) ~= 'table' or getmetatable(raw) ~= nil then return 'definition' end
+	-- `getmetatable` is a server global only: the client sandbox has none, and a
+	-- bare call raised on every runtime item the moment modules began registering
+	-- theirs at boot -- so no client ever learnt them. Where it is missing, a
+	-- definition that came over the wire is a plain table anyway.
+	if type(raw) ~= 'table' then return 'definition' end
+	if metatableOf ~= nil and metatableOf(raw) ~= nil then return 'definition' end
 	local row = {}
 	for key, value in pairs(raw) do
 		local field = type(key) == 'string' and RUNTIME_FIELDS[key] or nil

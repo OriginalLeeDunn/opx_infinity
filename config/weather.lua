@@ -34,6 +34,21 @@ OPX.Config.MODULES.weather = {
 			MIN_SECONDS = 120, MAX_SECONDS = 300, TRANSITION_SECONDS = 35 },
 	},
 
+	-- THE AMBIENT WORLD, per routing bucket (`Open77.world.setPopulation`, see
+	-- modules/weather/server/population.lua). CROWD is a real fraction of the
+	-- vanilla pedestrian density, 0..1. TRAFFIC is a switch on 2.31 -- the engine
+	-- has no vehicle density modifier, so it is vanilla traffic or none. POLICE is
+	-- the game's own NCPD NPC spawns: off, because on this server the police are
+	-- players and a vanilla unit exists on one client only. A bucket with no row
+	-- keeps the host's own population (the vanilla world). Live changes:
+	-- `/opx.population <bucket> <crowd> <traffic on|off> <police on|off>`.
+	POPULATION = {
+		ENABLED = true,
+		BUCKETS = {
+			[0] = { CROWD = 0.8, TRAFFIC = true, POLICE = false },
+		},
+	},
+
 	COMMANDS = {
 		STATUS = { NAME = 'opx.weather', RESTRICTED = false },
 		PRESETS = { NAME = 'opx.weather.presets', RESTRICTED = false },
@@ -51,5 +66,6 @@ OPX.Config.MODULES.weather = {
 		-- a mission's own move of the clock gets) and then comes back. Nobody
 		-- else's sky moves. Open to every player; '' switches it off.
 		WAIT = { NAME = 'opx.wait', RESTRICTED = false },
+		POPULATION = { NAME = 'opx.population', RESTRICTED = true },
 	},
 }

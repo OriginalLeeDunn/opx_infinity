@@ -199,3 +199,88 @@ function OPX.JobGate.Problems(jobs, where, lines)
 	end
 	return lines
 end
+
+-- ── gangs, beside jobs ───────────────────────────────────────────────────────
+--
+-- A GANG IS A JOB WITH NO DUTY CLOCK, and that is the whole of the extension.
+-- `modules/doorlock` was the first to need a gang gate and got there by
+-- reshaping the snapshot -- the gang the character runs with read as `job`,
+-- every gang membership as `jobs` -- and handing it to `Evaluate` above. That is
+-- the right idea and it is now spelt once, here, so a lab, a front and a dealer
+-- (`modules/underworld`) ask the same five branches a door does instead of a
+-- sixth copy of them. `Evaluate` itself is untouched: every caller of it before
+-- this block reads exactly what it read.
+--
+-- Gang refusals carry their own words -- `gang_required`, `gang_grade_too_low`
+-- -- because "you need the job" said to somebody turned away from a Tyger Claws
+-- kitchen is a sentence about the wrong thing. Staleness and a missing
+-- character are the same failure whichever list was asked, and keep their names.
+
+-- The gang spelling of a job refusal, and the rank both share.
+local GANG_WORD = { job_required = 'gang_required', grade_too_low = 'gang_grade_too_low' }
+local GROUP_RANK = { job_stale = 0, no_character = 0, job_required = 1, gang_required = 1,
+	grade_too_low = 2, gang_grade_too_low = 2, off_duty = 3 }
+
+--- Decides a requirement that names jobs, gangs, or both: either list lets in.
+-- @author dop42
+--
+-- PUBLIC WHEN IT NAMES NEITHER, for the reason `Evaluate` gives. With both, a
+-- character passes on either one -- a front open to "the Valentinos, or a fixer"
+-- -- and the refusal is the closest near-miss across the two.
+-- @param requirement table|nil { jobs = { name = grade }, gangs = { name = grade }, onDuty }
+--   `onDuty` applies to the jobs only: a gang has no shift
+-- @param snapshot table|nil { job, jobs, gang, gangs, atMs }
+-- @param nowMs number
+-- @param policy table|nil as `Evaluate`
+-- @return boolean
+-- @return string|nil `Evaluate`'s codes, plus gang_required and gang_grade_too_low
+function OPX.JobGate.EvaluateGroups(requirement, snapshot, nowMs, policy)
+	requirement = type(requirement) == 'table' and requirement or NO_POLICY
+	local jobs, gangs = requirement.jobs, requirement.gangs
+	local hasJobs = type(jobs) == 'table' and next(jobs) ~= nil
+	local hasGangs = type(gangs) == 'table' and next(gangs) ~= nil
+	if not hasJobs and not hasGangs then return true, nil end
+
+	local held = type(snapshot) == 'table' and snapshot or nil
+	local worst = nil
+	if hasJobs then
+		local passed, why = OPX.JobGate.Evaluate({ jobs = jobs, onDuty = requirement.onDuty },
+			held and { job = held.job, jobs = held.jobs, atMs = held.atMs } or nil, nowMs, policy)
+		if passed then return true, nil end
+		worst = why
+	end
+	if hasGangs then
+		local gang = nil
+		if held then
+			gang = { job = type(held.gang) == 'table' and held.gang or { name = '' },
+				jobs = held.gangs, atMs = held.atMs }
+		end
+		local passed, why = OPX.JobGate.Evaluate({ jobs = gangs }, gang, nowMs, policy)
+		if passed then return true, nil end
+		why = GANG_WORD[why] or why
+		if worst == nil or (GROUP_RANK[why] or 0) > (GROUP_RANK[worst] or 0) then worst = why end
+	end
+	return false, worst
+end
+
+--- Lists what is wrong with one GANGS block: the same rule as a JOBS block.
+-- @author dop42
+-- @param gangs any
+-- @param where string
+-- @param lines table|nil
+-- @return string[]
+function OPX.JobGate.GangProblems(gangs, where, lines)
+	lines = lines or {}
+	if gangs == nil then return lines end
+	if type(gangs) ~= 'table' then
+		lines[#lines + 1] = where .. ': GANGS must be a table of name -> minimum grade'
+		return lines
+	end
+	for name, minimum in pairs(gangs) do
+		if type(name) ~= 'string' or finiteNumber(minimum) == nil then
+			lines[#lines + 1] = where ..
+				': GANGS entries are gang name -> minimum grade level, e.g. { tygerclaws = 0 }'
+		end
+	end
+	return lines
+end

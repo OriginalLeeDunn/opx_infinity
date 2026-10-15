@@ -458,7 +458,7 @@ onMounted(() => {
    row that is still there and cannot be used, which is the truth. */
 .dim .cap {
   color: var(--op-text-faint);
-  --aug-border-bg: rgba(174, 211, 224, 0.14);
+  --aug-border-bg: var(--op-off-line);
 }
 
 .dim .label,

@@ -67,6 +67,11 @@
      from borders, never from a shadow ramp. */
   --op-line: rgba(174, 211, 224, 0.30);
 
+  /* The frame of something unavailable: the same hairline at half the weight,
+     off the accent family entirely because it is the absence of a state. Five
+     files wrote it out as a literal, which a theme could not reach. */
+  --op-off-line: rgba(174, 211, 224, 0.14);
+
   /* A MARK ON A FILL, and never white. Almost nothing here is filled, so this
      has one shape to serve: the tick inside a checkbox whose box has gone red.
      `currentcolor` is the row's own red there, which is a red tick on a red

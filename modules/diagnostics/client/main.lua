@@ -32,6 +32,10 @@ local HEALTHY = { started = true, absent = true }
 -- had time to press anything.
 local REPORT_AFTER_MS = 2000
 
+-- How long the report waits past REPORT_AFTER_MS for every module to leave
+-- `declared` before it reports the ones that have not as stuck.
+local BOOT_WAIT_MS = 30000
+
 --- Puts every client module that did not come up in the SERVER journal.
 --
 -- WHY THIS EXISTS. A client module that fails is written to `Open77.log` -- a file
@@ -88,6 +92,23 @@ function M.Start()
 
 	CreateThread(function()
 		Wait(REPORT_AFTER_MS)
+		-- A MODULE STILL `declared` IS STILL COMING UP, NOT FAILED. With fifty
+		-- modules the boot can outlast REPORT_AFTER_MS, and every one not yet
+		-- started was noted as a fault -- forty-nine lines that spent the whole
+		-- session's note budget on a healthy boot and hid the real notes after it.
+		-- So the report waits for the boot to settle, bounded: one still
+		-- `declared` after BOOT_WAIT_MS is reported, because it is stuck.
+		local waited = 0
+		while waited < BOOT_WAIT_MS do
+			local pending = false
+			local records = OPX.Modules.All()
+			for index = 1, #records do
+				if records[index] ~= nil and records[index].State == 'declared' then pending = true break end
+			end
+			if not pending then break end
+			Wait(250)
+			waited = waited + 250
+		end
 		forwardModuleFaults()
 	end)
 

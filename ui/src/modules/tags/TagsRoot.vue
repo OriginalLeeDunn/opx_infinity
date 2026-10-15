@@ -297,7 +297,13 @@ useBridge('open77:anchors', (payload: Payload) => {
   <div class="tags">
     <!-- Keyed on the ANCHOR and not the player id: an anchor is re-pointed when a
          body respawns, so the element survives exactly as long as the tag does. -->
-    <div v-for="entry in drawn" :key="entry.row.anchor" class="tag" :style="styleFor(entry)">
+    <div
+      v-for="entry in drawn"
+      :key="entry.row.anchor"
+      class="tag"
+      :class="{ staff: entry.row.staff }"
+      :style="styleFor(entry)"
+    >
       <span
         v-if="technical"
         class="id"
@@ -514,49 +520,5 @@ useBridge('open77:anchors', (payload: Payload) => {
   font-variant-numeric: tabular-nums;
   color: var(--op-red-idle);
   opacity: 0.8;
-}
-
-/* =============================================================================
-   STAFF -- WHITE-HOT, AND NOT A REDDER RED. Rule 4 of the contract, the same
-   call the gauges and the chat's refusals make: red is this runtime's voice, so
-   it cannot also be its one thing that must stand out. A staff tag changes
-   FAMILY, which is legible across a street in a way that a second shade of red
-   is not.
-
-   IT MOVED ONTO THE SQUARE when the name plate came off. The family change used
-   to be carried by the plate going to a lit ground behind a white outline, with
-   the lettering following it; with no plate, colour on type would have been all
-   that was left, and three white words at distance are three red words that
-   happen to be pale. The square is the one box still drawn and the heaviest mark
-   on the tag, so it is what goes white-hot -- an outlined white box over a head
-   reads as "staff" from further away than any lettering does, and the names
-   change with it exactly as they did before.
-   ========================================================================== */
-.id.staff {
-  --aug-border-bg: var(--op-alarm);
-  --aug-border-all: 2.4px;
-  color: var(--op-alarm);
-}
-
-.plate.staff .name {
-  color: var(--op-alarm);
-}
-
-/* The whole column changes family with the square, or a white marker would sit
-   beside two runs still wearing the other palette. */
-.plate.staff .user,
-.plate.staff .cid {
-  color: var(--op-alarm);
-  opacity: 0.72;
-}
-
-/* The word itself, after the name and quieter than it: what is being said is
-   that this person is staff, and the name is still the part being read. */
-.badge {
-  font: 700 var(--op-fs-micro) / 1 var(--op-font-mono);
-  letter-spacing: var(--op-track-micro);
-  text-transform: uppercase;
-  color: var(--op-alarm);
-  opacity: 0.85;
 }
 </style>

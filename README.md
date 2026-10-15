@@ -126,8 +126,9 @@ one. The full guide is [Install](https://opx77-framework.github.io/opx77_doc/doc
    `opx_infinity 0.2.0 up`. `/opx.modules` and `/opx.version` print the same report in
    game. If something is off, see [Troubleshooting](https://opx77-framework.github.io/opx77_doc/docs/getting-started/troubleshooting).
 
-The platform's `open77_notifications` package is recommended: server toasts sent with
-`OPX.Notify` are drawn by it.
+Server toasts (`OPX.Notify`, `OPX.NotifyLocale`) are drawn by this resource's own
+overlay, in the configured theme. The platform's `open77_notifications` package is not
+needed for them.
 
 ## Configuration
 

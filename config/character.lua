@@ -335,6 +335,58 @@ OPX.Config.MODULES.character = {
 				[2] = { name = 'Owner', payment = 260, isBoss = true, bankAuth = true },
 			},
 		},
+
+		-- The bar of Night City: counsel for anyone who can pay (modules/justice).
+		lawyer = {
+			label = 'Lawyer',
+			type = 'legal',
+			defaultDuty = false,
+			offDutyPay = false,
+			grades = {
+				[0] = { name = 'Associate', payment = 240 },
+				[1] = { name = 'Partner', payment = 520, isBoss = true, bankAuth = true },
+			},
+		},
+
+		-- The Night City courts: warrants, bail, verdicts (modules/justice).
+		judge = {
+			label = 'Judge',
+			type = 'legal',
+			defaultDuty = false,
+			offDutyPay = true,
+			grades = {
+				[0] = { name = 'Judge', payment = 600 },
+				[1] = { name = 'Chief Judge', payment = 900, isBoss = true, bankAuth = true },
+			},
+		},
+
+		-- Journalists: N54 News, WNS and the screamsheet (config/media.lua says
+		-- which newsroom; a Stringer is the freelancer who sells to any desk).
+		reporter = {
+			label = 'Reporter',
+			type = 'media',
+			defaultDuty = false,
+			offDutyPay = false,
+			grades = {
+				[0] = { name = 'Stringer', payment = 80 },
+				[1] = { name = 'Reporter', payment = 200 },
+				[2] = { name = 'Anchor', payment = 360 },
+				[3] = { name = 'Editor-in-chief', payment = 560, isBoss = true, bankAuth = true },
+			},
+		},
+
+		-- The garages, the tow and the impound lot: see config/mechanic.lua.
+		mechanic = {
+			label = 'Mechanic',
+			type = 'service',
+			defaultDuty = false,
+			offDutyPay = false,
+			grades = {
+				[0] = { name = 'Grease Monkey', payment = 90 },
+				[1] = { name = 'Mechanic', payment = 200 },
+				[2] = { name = 'Shop Owner', payment = 380, isBoss = true, bankAuth = true },
+			},
+		},
 	},
 
 	GANGS = {

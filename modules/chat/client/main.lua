@@ -377,6 +377,10 @@ local function sendChunks(list, mine, paced)
 			chunk[#chunk + 1] = list[index]
 		end
 		if not publish('interactive', 'suggestions', { suggestions = chunk, reset = first }) then
+			-- Said, because a list cut here leaves the box with what came before:
+			-- the reset already went out, so this is the "0 commands" case.
+			Open77.log.warn(('[chat] the completion list stopped at %d of %d: the input line ' ..
+				'refused a part'):format(at - 1, total))
 			return false
 		end
 		first = false
@@ -405,9 +409,25 @@ end
 -- player never sees, and the next one cannot be asked for until the cooldown
 -- lets go. That is not a race worth winning once: it is a race worth removing,
 -- so the last list is held here and replayed whenever the view can take it.
+-- The parts of a list still arriving: the server sends it in pieces (see its
+-- `onReady`), numbered `part` of `parts`.
+local incoming = nil
+
 local function onSuggestions(payload)
-	local list = type(payload) == 'table' and payload.suggestions or nil
-	suggestions = type(list) == 'table' and list or {}
+	if type(payload) ~= 'table' then return end
+	local list = type(payload.suggestions) == 'table' and payload.suggestions or {}
+	local part, parts = math.tointeger(payload.part), math.tointeger(payload.parts)
+	if part == nil or parts == nil or parts < 1 or parts > 64 then
+		-- One whole list, the way it used to come.
+		suggestions = list
+	else
+		if part == 1 or incoming == nil then incoming = { parts = parts, rows = {} } end
+		if incoming.parts ~= parts then return end
+		for index = 1, #list do incoming.rows[#incoming.rows + 1] = list[index] end
+		if part < parts then return end
+		suggestions, incoming = incoming.rows, nil
+	end
+	Open77.log.info(('[chat] %d completion(s) received'):format(#suggestions))
 	sendSuggestions(suggestions)
 end
 

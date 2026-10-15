@@ -151,9 +151,28 @@ written into three separate gradients.
 - **The wire carries numbers, never CSS.** A colour is three integers; `theme.ts` is the
   only thing that produces `rgb()`, `px` or `deg`. Adding a themeable value means an
   entry in `KNOBS` and a bound in `palette.lua`, and the entry is the allowlist.
-- **What is not themed:** border weights (thirty-nine component-local declarations at six
-  values, with no token behind them), type scale (fixed pixel layouts are configured
-  elsewhere), and the neutral ramp, which is neutral on purpose.
+- **What the operator's knobs do not reach:** border weights (thirty-nine
+  component-local declarations at six values, with no token behind them), type scale
+  (fixed pixel layouts are configured elsewhere), and the neutral ramp, which is
+  neutral on purpose. A STYLE may move all three -- it is a stylesheet, not a knob --
+  but no number on the wire does.
+
+### Styles
+
+`STYLE` in `config/theme.lua` picks the look, and the block of the same name holds that
+look's knobs, so switching is one word and each look keeps its own colours. The style is
+the one word on the wire: `palette.lua` and `theme.ts` each hold the same allowlist, and
+the page writes it as `data-op-style` on `<html>`. A word not on the list is refused on
+both sides.
+
+One look ships today, `'cyberpunk'`, which is what the other sheets draw with no
+attribute at all. Adding a second is:
+
+- the word in `STYLES` in `modules/theme/shared/palette.lua` and in `theme.ts`;
+- a block of the same name in `config/theme.lua` for its colour knobs;
+- a stylesheet whose every rule is scoped to `:root[data-op-style="<word>"]`, imported
+  by `boot/createSurface.ts` after `surface.css`, plus, where one surface needs it, a
+  block at the end of that surface's `<style scoped>` under the same selector.
 
 ### The join screen is outside all of this
 

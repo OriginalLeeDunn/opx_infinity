@@ -97,18 +97,26 @@ M.QUOTA = 128
 -- table is that refusal moved one level earlier, to boot, where it can name the
 -- file the operator has open.
 --
--- `COLOR` IS NOT AMONG THEM AND THAT IS NEW. This table used to refuse it with
--- "a mappin has no such field", which was true when it was written (build
--- 2.31.13+op77.76) and is not true since the native Ink adapter grew per-widget
--- colours: `color` is now a real `create`/`update`/`setColor` field, exactly
--- `#RRGGBB`/`#RRGGBBAA`, and `unsupported_option` belongs to the British
--- spelling alone. What the engine still refuses is the platform catalogue's
--- own list: `colour` (use `color`), `alpha`/`opacity` (the alpha bytes live in
--- `color`), `scale` (per sprite, never per pin), `category`, `shortRange` (use
--- `range`) and `kind`.
+-- COLOR LEFT THIS LIST with the native SVG adapter: a blip now takes its own
+-- `#RRGGBB` / `#RRGGBBAA` (see `ICON` and `COLOR` in `config/blips.lua`). The
+-- British spelling, an alpha or a scale on its own are still not fields, and
+-- each is pointed at the one that does the job.
 M.REFUSED_KEYS = {
 	COLOUR = 'COLOR',
-	ALPHA = 'COLOR', OPACITY = 'COLOR', SCALE = 'SPRITE',
+	ALPHA = 'COLOR', OPACITY = 'COLOR', SCALE = 'SIZE',
 	CATEGORY = 'SPRITE',
 	SHORTRANGE = 'RANGE', SHORT_RANGE = 'RANGE',
 }
+
+--- Where the blip icons live, as the manifest declares them (`files`). A
+--- category's ICON is a file name in here, `garage` or `garage.svg`.
+M.ICON_DIR = 'web/blips/'
+
+--- The SVG adapter's bounds on an icon's size, in native Ink units.
+M.MIN_ICON, M.MAX_ICON, M.DEFAULT_ICON = 16, 128, 48
+
+--- The refusals that mean "this client cannot draw that icon", after which the
+--- pin is created again with its native sprite alone rather than not at all.
+M.ICON_REFUSALS = { 'svg_', 'blip_icon', 'asset_not_declared', 'native_unavailable',
+	'blip_visual_budget', 'invalid_icon', 'invalid_color', 'unsupported_option:color',
+	'unsupported_option:icon' }

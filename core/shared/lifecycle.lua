@@ -41,11 +41,16 @@ local function visit(module, seen, out, trail)
 	seen[module.Id] = 'open'
 	trail[#trail + 1] = module.Id
 
-	for _, list in ipairs({ module.Requires, module.Optional }) do
-		for _, id in ipairs(list) do
-			local other = OPX.Modules.Record(id)
-			if other then visit(other, seen, out, trail) end
-		end
+	-- Two plain loops rather than one over `{ Requires, Optional }`: that pair was
+	-- a fresh table per module visited, which is most of what this walk cost.
+	local requires, optional = module.Requires, module.Optional
+	for index = 1, #requires do
+		local other = OPX.Modules.Record(requires[index])
+		if other then visit(other, seen, out, trail) end
+	end
+	for index = 1, #optional do
+		local other = OPX.Modules.Record(optional[index])
+		if other then visit(other, seen, out, trail) end
 	end
 
 	trail[#trail] = nil
@@ -100,6 +105,11 @@ end
 function OPX.Modules.Resolve()
 	if resolved then return resolved end
 
+	-- THE WALK IS SLICED. It grows with every module the resource ships, and in
+	-- one piece it was the dearest resume of the whole client boot once the job
+	-- modules landed (4,615 instructions against the 4,500 the boot is held to).
+	-- A root's walk always finishes before a yield, so `seen` and `trail` never
+	-- straddle one; between two roots the order so far is complete.
 	local out, seen, trail = {}, {}, {}
 	local all = OPX.Modules.All()
 	for index, module in ipairs(all) do

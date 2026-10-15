@@ -128,6 +128,9 @@ shared_script "config/loading.lua"
 shared_script "config/target.lua"
 shared_script "config/shops.lua"
 shared_script "config/animations.lua"
+-- Shared like the rest, though only the client half reads it: the camera
+-- styles offered on the eye. See modules/camera/module.lua.
+shared_script "config/camera.lua"
 shared_script "config/elevators.lua"
 -- Shared: the client reads the reach, the key and the lockpick timings here,
 -- and the server re-derives every one of them. See modules/doorlock/module.lua.
@@ -150,6 +153,55 @@ shared_script "config/hauling.lua"
 -- draws here, and the server re-derives every one of them. Before the blips
 -- config, which pins its stations. See modules/fuel/module.lua.
 shared_script "config/fuel.lua"
+-- Shared: the client reads the desks it pins on the eye, the treatment labels and
+-- the dispatch key here; the server re-derives every bound. See
+-- modules/medical/module.lua.
+shared_script "config/medical.lua"
+-- Shared: both halves declare the module with its settings; the server
+-- re-derives every choice it offers. See modules/contracts/module.lua.
+shared_script "config/contracts.lua"
+shared_script "config/underworld.lua"
+-- Shared: the client draws the access points and brokers it reads here, and the
+-- server re-derives every one. See modules/netrunner/module.lua.
+shared_script "config/netrunner.lua"
+-- Shared: the client draws the station desks and lockers and reads the crime
+-- labels and the dispatch key here; the server re-derives every one. See
+-- modules/police/module.lua.
+shared_script "config/police.lua"
+-- Shared: the client places the counter, stash and supplier spheres and the map
+-- pins it reads here; the server re-derives every price, recipe and gate. See
+-- modules/bar/module.lua.
+shared_script "config/bar.lua"
+-- Shared: the client reads the company labels and pin colours it draws; the
+-- server re-derives every fare, distance and seat. See modules/taxi/module.lua.
+shared_script "config/taxi.lua"
+-- Shared: the client draws the City Hall desk spheres and the role rows from
+-- it; the server re-derives every price, gate and bound. See
+-- modules/justice/module.lua.
+shared_script "config/justice.lua"
+-- Shared: the client draws each station's duty, wardrobe and garage spheres
+-- from it; the server re-derives every one. See modules/workplace/module.lua.
+shared_script "config/workplace.lua"
+-- Shared: the client draws the editor desks it reads here and the break's
+-- stingers; the server re-derives every desk and price. See modules/media/module.lua.
+shared_script "config/media.lua"
+-- Shared: the client reads JOBS to draw the "Send a bill" row and the form's
+-- ceiling; the server re-derives every one. See modules/invoices/module.lua.
+shared_script "config/invoices.lua"
+-- Shared: the client draws each corp's offices, drops, terminals and pickups
+-- from it; the server re-derives every one. See modules/corpo/module.lua.
+shared_script "config/corpo.lua"
+-- Shared: the client reads the talk key and the route here; the server re-derives
+-- every channel and gate. See modules/radio/module.lua.
+shared_script "config/radio.lua"
+-- Shared: the client draws the office terminals and filters its eye rows with
+-- the same reads the server re-runs. After `config/character.lua`, whose grade
+-- tables (`isBoss`, `bankAuth`) it reads. See modules/business/module.lua.
+shared_script "config/business.lua"
+-- Shared: the client draws each shop's stash and lot spheres and reads the
+-- command names here; the server re-derives every bound. See
+-- modules/mechanic/module.lua.
+shared_script "config/mechanic.lua"
 -- AFTER every config it names, which is the only ordering rule it has: the map
 -- pins are sourced from garages, dealership, shops, teleports, gunsmith and
 -- hauling, and a reader who finds a category here should already have passed
@@ -343,6 +395,7 @@ shared_script "modules/weather/module.lua"
 shared_script "modules/weather/shared/clock.lua"
 server_script "modules/weather/server/state.lua"
 server_script "modules/weather/server/commands.lua"
+server_script "modules/weather/server/population.lua"
 server_script "modules/weather/server/main.lua"
 client_script "modules/weather/client/main.lua"
 
@@ -566,6 +619,13 @@ client_script "modules/animations/client/duo.lua"
 client_script "modules/animations/client/prompt.lua"
 client_script "modules/animations/client/exports.lua"
 
+-- The player's own camera styles, on the eye. Client only; after `target`,
+-- which carries the rows and is optional. `camera.style` below is its only
+-- permission.
+shared_script "modules/camera/module.lua"
+shared_script "modules/camera/locales.lua"
+client_script "modules/camera/client/main.lua"
+
 -- The timed-action bar. AFTER `animations`, whose gesture it starts and stops
 -- together with the bar, and after `downed`, which takes it away. Both are
 -- declared optional, so the dependency walk would order it correctly wherever
@@ -652,6 +712,180 @@ shared_script "modules/fuel/shared/model.lua"
 server_script "modules/fuel/server/tanks.lua"
 server_script "modules/fuel/server/main.lua"
 client_script "modules/fuel/client/main.lua"
+
+-- Taxi: Delamain and indie cab companies, the dispatch board, the server-side
+-- meter and street fares. After `character` (required) and `menu` (optional).
+-- The seat ledger (`Open77.vehicles.getPlayerSeat`, `vehicles.get`) is
+-- `world.vehicles` and the call pins / waypoint `ui.vanilla.map`, both declared
+-- below already. `invoices`, `accounts` and `weather` are asked at run time.
+shared_script "modules/taxi/module.lua"
+shared_script "modules/taxi/locales.lua"
+shared_script "modules/taxi/shared/model.lua"
+server_script "modules/taxi/server/dispatch.lua"
+server_script "modules/taxi/server/main.lua"
+client_script "modules/taxi/client/main.lua"
+
+-- Business: the company / gang treasuries (`accounts` v1, which takes over the
+-- dealership's `opx77_company_accounts` table as it is) and the boss's HR
+-- terminal (`business` v1). After `character` (required: the grades, the
+-- roster, SetJob / SetGang and the cash), `menu`, `form` and `target`, all
+-- optional and all ordered above. No new permission: the distances are
+-- `Open77.players.position`, already declared.
+shared_script "modules/business/module.lua"
+shared_script "modules/business/locales.lua"
+shared_script "modules/business/shared/access.lua"
+server_script "modules/business/server/storage.lua"
+server_script "modules/business/server/accounts.lua"
+server_script "modules/business/server/main.lua"
+client_script "modules/business/client/main.lua"
+
+-- Medical services: Trauma Team, the street doc, whoever else a config names.
+-- After `downed`, whose bus opens the calls and whose `Revive` stands a patient
+-- up, and after `character`, `inventory`, `progress`, `target` and `menu`. The
+-- heal goes through `Open77.playerInteractions` (`players.interactions.control`)
+-- and the host's health (`players.stats.read` / `players.stats.apply`), all
+-- declared below already; the call pins use `ui.vanilla.map`, declared too.
+shared_script "modules/medical/module.lua"
+shared_script "modules/medical/locales.lua"
+shared_script "modules/medical/shared/model.lua"
+server_script "modules/medical/server/dispatch.lua"
+server_script "modules/medical/server/main.lua"
+client_script "modules/medical/client/main.lua"
+
+-- Contracts, the fixer / merc gig board. After `character` (required: the
+-- escrow, the payouts and the street cred), `inventory` (the package item,
+-- registered at runtime), `target`, `menu` and `form`, all optional and all
+-- ordered above. `world.npcs` (the district fixers and the drop-off NPCs) and
+-- `ui.vanilla.map` (the merc's waypoint) are declared below already.
+shared_script "modules/contracts/module.lua"
+shared_script "modules/contracts/locales.lua"
+shared_script "modules/contracts/shared/access.lua"
+server_script "modules/contracts/server/storage.lua"
+server_script "modules/contracts/server/main.lua"
+client_script "modules/contracts/client/main.lua"
+
+-- The underworld: dirty money, the black market, drug labs, drugs, robberies,
+-- laundering and street deals. After `character` and `inventory` (required),
+-- and after every optional module it asks at run time; the labs are `crafting`
+-- benches registered from its `Start`, which the dependency walk orders after
+-- `crafting` wherever this block sits. `world.npcs` (dealers, clerks) and
+-- `players.interactions.control` (street deals) are declared below already;
+-- `players.screenfx` is this module's, for a drug's screen effect.
+shared_script "modules/underworld/module.lua"
+shared_script "modules/underworld/locales.lua"
+shared_script "modules/underworld/shared/model.lua"
+server_script "modules/underworld/server/storage.lua"
+server_script "modules/underworld/server/op.lua"
+server_script "modules/underworld/server/main.lua"
+server_script "modules/underworld/server/drugs.lua"
+client_script "modules/underworld/client/main.lua"
+
+-- Netrunner: networks, breach, daemons, shards and brokers. After `character`,
+-- `inventory` (required), `progress`, `target`, `menu`, `downed` and
+-- `doorlock` (optional), every one ordered above. No new permission: the
+-- alert waypoint is `ui.vanilla.map`, declared below for the map pins.
+shared_script "modules/netrunner/module.lua"
+shared_script "modules/netrunner/locales.lua"
+shared_script "modules/netrunner/shared/access.lua"
+server_script "modules/netrunner/server/main.lua"
+client_script "modules/netrunner/client/main.lua"
+
+-- Police: NCPD, MaxTac, corpo security. After `character` (required) and every
+-- optional module it asks at run time (`downed`, `inventory`, `progress`,
+-- `vehicles`, `target`, `menu`, `form`), all ordered above. No new
+-- permission: `players.interactions.control` (escort), `players.teleport`
+-- (cells), `combat.config` (a cuffed player deals no damage),
+-- `players.controls` (the cuffs on the suspect's client), `players.life.read`,
+-- `world.vehicles` (impound) and `ui.vanilla.map` (call pins) are declared below.
+shared_script "modules/police/module.lua"
+shared_script "modules/police/locales.lua"
+shared_script "modules/police/shared/access.lua"
+server_script "modules/police/server/dispatch.lua"
+server_script "modules/police/server/main.lua"
+client_script "modules/police/client/main.lua"
+
+-- Bar: bartenders, bars and food stalls. After `character`, `inventory`
+-- (required), `progress`, `target` and `menu` (optional), all ordered above;
+-- `invoices`, `accounts` and `needs` are asked at run time. No new permission:
+-- the serve is `players.interactions.control`, the drunk screen
+-- `players.screenfx`, the pins `ui.vanilla.map`, all declared below already.
+shared_script "modules/bar/module.lua"
+shared_script "modules/bar/locales.lua"
+shared_script "modules/bar/shared/model.lua"
+server_script "modules/bar/server/main.lua"
+client_script "modules/bar/client/main.lua"
+
+-- Justice: licences at City Hall, the criminal record, counsel and the court.
+-- After `character` (required), `inventory`, `target`, `menu` and `form`
+-- (optional), every one ordered above. No new permission: it reads
+-- `players.position` and `time.unix`, neither gated.
+shared_script "modules/justice/module.lua"
+shared_script "modules/justice/locales.lua"
+shared_script "modules/justice/shared/access.lua"
+server_script "modules/justice/server/storage.lua"
+server_script "modules/justice/server/main.lua"
+client_script "modules/justice/client/main.lua"
+shared_script "modules/workplace/module.lua"
+shared_script "modules/workplace/locales.lua"
+shared_script "modules/workplace/shared/access.lua"
+server_script "modules/workplace/server/main.lua"
+client_script "modules/workplace/client/main.lua"
+
+-- Media: N54 News / WNS / the screamsheet -- breaking news, field photos,
+-- stories, the editor desks, the tips line. After `character`, `inventory`
+-- (required), `progress`, `target`, `form` and `downed` (optional), every one
+-- ordered above. `players.screenshot` below is its own, used only when
+-- PHOTO.UPLOAD_URL names somewhere for a real picture to go.
+shared_script "modules/media/module.lua"
+shared_script "modules/media/locales.lua"
+shared_script "modules/media/shared/model.lua"
+server_script "modules/media/server/main.lua"
+client_script "modules/media/client/main.lua"
+
+-- Invoices: bills between players and companies, with consent. After
+-- `character` (required: the purse), `target`, `menu` and `form` (optional),
+-- all ordered above. `accounts` (module `business`) is read at run time when it
+-- runs. No new permission: `players.position` and `time.unix` need none.
+shared_script "modules/invoices/module.lua"
+shared_script "modules/invoices/locales.lua"
+shared_script "modules/invoices/shared/model.lua"
+server_script "modules/invoices/server/storage.lua"
+server_script "modules/invoices/server/main.lua"
+client_script "modules/invoices/client/main.lua"
+
+-- Corpo: Arasaka / Militech assignments, standing, enclave security and
+-- espionage. After `character` (required), `inventory`, `progress`, `target`
+-- and `menu` (optional), all ordered above. No new permission: the VIP is a
+-- server NPC (`world.npcs`), a detained trespasser is walked out with
+-- `players.teleport`, the waypoint is `ui.vanilla.map` -- all declared below.
+shared_script "modules/corpo/module.lua"
+shared_script "modules/corpo/locales.lua"
+shared_script "modules/corpo/shared/access.lua"
+server_script "modules/corpo/server/main.lua"
+server_script "modules/corpo/server/security.lua"
+client_script "modules/corpo/client/main.lua"
+
+-- Radio: service channels on the platform's voice. After `character`
+-- (required), `inventory`, `menu` and `downed` (optional), all ordered above.
+-- No new permission: `voice.manage` (server memberships), `voice.client` (the
+-- talk route) and `input.actions` (the talk key) are declared below already.
+shared_script "modules/radio/module.lua"
+shared_script "modules/radio/locales.lua"
+shared_script "modules/radio/shared/model.lua"
+server_script "modules/radio/server/main.lua"
+client_script "modules/radio/client/main.lua"
+
+-- Mechanic: workshop repairs, the roadside kit, the call board, the tow and the
+-- impound lot. After `character` (required), `vehicles`, `inventory`,
+-- `progress`, `target` and `menu` (optional), all ordered above. No new
+-- permission: the repair natives (`Open77.vehicles.repair`, `setHealth`) are
+-- `world.vehicles` and the call pins `ui.vanilla.map`, both declared below.
+shared_script "modules/mechanic/module.lua"
+shared_script "modules/mechanic/locales.lua"
+shared_script "modules/mechanic/shared/model.lua"
+server_script "modules/mechanic/server/dispatch.lua"
+server_script "modules/mechanic/server/main.lua"
+client_script "modules/mechanic/client/main.lua"
 
 -- Clothing shops. After `appearance`, whose fitting room it opens, and after
 -- `target`, whose eye carries its row -- both are ordered above. Before
@@ -873,6 +1107,10 @@ loadscreen "web/loading.html"
 web_ui_page "web/index.html"
 web_ui_auto_create false
 web_files { "web/**" }
+-- The blip icons, as plain client files: `Open77.blips` takes an SVG only from a
+-- path the manifest names in `files`, never a web file or a URL. See
+-- `config/blips.lua` (ICON) and `web/blips/LICENSE-LUCIDE.txt`.
+files { "web/blips/*.svg" }
 
 -- THE AV LANDING CALL'S VOICE (config/avdoor.lua `CALLOUTS`): "Warning. Clear
 -- the area. MaxTac landing." and its Trauma Team twin -- the English lines as
@@ -1072,6 +1310,18 @@ permissions {
 
   "players.stats.apply",
 
+  -- `Open77.effects.screen`, a drug's screen effect, in
+  -- `modules/underworld/server/drugs.lua` alone. `open77_permissions
+  -- players.screenfx` prints this exact manifest line; server-enforced.
+  "players.screenfx",
+
+  -- `Open77.players.requestScreenshot`, at the one call site in `screenshot`
+  -- in `modules/media/server/main.lua`, and only when `config/media.lua`
+  -- PHOTO.UPLOAD_URL is set: the reporter's client captures its own game view
+  -- and POSTs it to that URL. `open77_api server:Open77.players.requestScreenshot`
+  -- prints this exact manifest line; server-enforced.
+  "players.screenshot",
+
   -- `Open77.players.teleport`, the ONLY thing in this resource that moves a
   -- living body without killing it. `modules/teleports` is its only caller.
   --
@@ -1146,6 +1396,10 @@ permissions {
   -- player would HEAR the call while nobody heard them -- half a conversation,
   -- refused silently on their own machine, which is the shape of failure this
   -- manifest's comments keep coming back to.
+  --
+  -- `modules/radio` uses both too: on the server `createChannel`, `addPlayer`,
+  -- `removePlayer`, `setChannelPlayerPermissions` and `removeChannel` for the
+  -- service channels; on the client `setTransmitting` while its talk key is held.
   "voice.manage",
   "voice.client",
 
@@ -1180,6 +1434,15 @@ permissions {
   -- `permission_denied` and a clean boot, which is what they were checked
   -- against. A client permission is verified in the game or not at all.
   "camera.preview",
+
+  -- THE PLAYABLE THIRD-PERSON STYLE (client op77.78): framing, FOV, shoulder,
+  -- blend. `modules/camera/client/main.lua` calls
+  -- `Open77.camera.configureThirdPerson` and `resetThirdPerson`, both gated by
+  -- it. The unforced `Open77.perspective.setThirdPerson(true)` it pairs with
+  -- needs no permission; only a FORCED lock would need `perspective.policy`,
+  -- and nothing here forces one. A CLIENT permission: a missing line shows up
+  -- as `permission_denied:camera.style` in the player's log, not the server's.
+  "camera.style",
   "world.query",
 
   "player.travel",
@@ -1189,6 +1452,12 @@ permissions {
   "players.controls",
 
   "players.animations.control",
+  -- `Open77.players.fade` (FadePlayerScreen): the fade to black around a give up
+  -- in `modules/downed/server/main.lua`. The client consumes the relay itself.
+  "players.screen",
+  -- `Open77.world.setPopulation`: the ambient crowd, traffic and NPC police of
+  -- the world bucket, from `config/weather.lua` POPULATION.
+  "world.population",
   "animations.presentation",
 
   -- `Open77.playerInteractions.request` and `cancel`, the platform's two-player

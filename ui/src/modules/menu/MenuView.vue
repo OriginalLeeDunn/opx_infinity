@@ -695,16 +695,11 @@ function choose(row: Slot): void {
   opacity: 0.9;
 }
 
-.row.on .check.ticked {
-  background: var(--op-red);
-}
-
-/* The one place the tick is not `currentcolor`: on the filled box it would be
-   red on red, and the tick simply did not appear. `TargetView` had the answer
-   for its own checkbox and this file never took it. */
-.row.on .check.ticked svg {
-  stroke: var(--op-ink-on);
-}
+/* NO FILL ON THE CHOSEN ROW. The box used to flood red when its row was the
+   chosen one, so the same option read as a red square on one row and a tick
+   on the next. It is the eye's checkbox now, in every state: a square, and a
+   tick in it when it is ticked -- the two surfaces ask the same question and
+   draw the same answer. */
 
 /* --- a captioned separator: a mono eyebrow and a rule, no frame ----------- */
 .sep {

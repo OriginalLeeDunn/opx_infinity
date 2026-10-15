@@ -467,7 +467,7 @@ svg {
 
 .input:disabled {
   color: var(--op-text-faint);
-  border-color: rgba(174, 211, 224, 0.14);
+  border-color: var(--op-off-line);
 }
 
 .input.narrow {
