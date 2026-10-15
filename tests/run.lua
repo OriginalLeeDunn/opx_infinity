@@ -61617,7 +61617,12 @@ do
 			and slurp('ui/src/design-system/shapes.css'):find('@import', 1, true) == nil)
 	check('the build refuses a shape token shapes.css does not draw',
 		slurp('vite.config.ts'):find("new Set(['tr-clip', 'bl-clip', 'border'])", 1, true) ~= nil)
-	check('the page stays well under its 591 kB with the library', #built > 0 and #built < 520000,
+	-- MAIN'S PAGE IS UNDER 520 kB (591 with the library). This branch's page also
+	-- carries the ripperdoc, the skill tree, the NCPD radio and the alarm, with
+	-- their art and two more weights of Rajdhani: 885 kB with the library, about
+	-- 715 kB without it. The ceiling is that page's, with room for a feature and
+	-- none for the library coming back.
+	check('the page stays well under the 885 kB it weighed with the library', #built > 0 and #built < 760000,
 		tostring(#built))
 
 	local types = slurp('ui/src/bridge/types.ts')

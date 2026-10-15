@@ -2356,10 +2356,21 @@ onUnmounted(() => {
   opacity: 0.1;
 }
 
+/* ONE COPY OF THE ICONIC ART. The page carries its images inline (nothing is
+   fetched by the surface), and a `url()` is inlined wherever it is written: the
+   three rules that named this .webp each carried their own 23 kB copy of it. */
+.rd-tile-iconic,
+.rd-card-iconic,
+.rd-buy-iconic {
+  -webkit-mask-image: url('./art/iconic.webp');
+  -webkit-mask-repeat: no-repeat;
+}
+
 .rd-tile-iconic {
   background: var(--rd-iconic);
   opacity: 0.3;
-  -webkit-mask: url('./art/iconic.webp') center / 100% 100% no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: 100% 100%;
 }
 
 .rd-tile-frame {
@@ -2715,7 +2726,8 @@ onUnmounted(() => {
   inset: 0;
   background: var(--rd-iconic);
   opacity: 0.12;
-  -webkit-mask: url('./art/iconic.webp') right bottom / 60% auto no-repeat;
+  -webkit-mask-position: right bottom;
+  -webkit-mask-size: 60% auto;
   pointer-events: none;
 }
 
@@ -3181,7 +3193,8 @@ onUnmounted(() => {
   width: calc(194 * var(--u));
   background: var(--rd-iconic);
   opacity: 0.35;
-  -webkit-mask: url('./art/iconic.webp') center / 100% 100% no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: 100% 100%;
 }
 
 .rd-buy-icon {
