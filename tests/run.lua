@@ -2196,10 +2196,16 @@ do
 		return count
 	end
 
-	--- Loads a character over the character module's own bus.
-	local function arrive(env, control, citizenId)
-		control.Fire(env.OPX.Event(env.OPX.Channel.LOCAL, 'character', 'loaded'),
-			{ citizenId = citizenId, charInfo = { gender = 'female' } })
+	--- Loads a character over the character module's own bus, mirrored the way
+	--- the character module mirrors it. NAMED unless asked: a name owed holds the
+	--- join AHEAD of the fitting room (the name's own claim, at the end of this
+	--- section), and these cases are the room's.
+	local function arrive(env, control, citizenId, unnamed)
+		local charInfo = { gender = 'female' }
+		if not unnamed then charInfo.firstName, charInfo.lastName = 'Dee', 'Fitter' end
+		local character = env.OPX.Modules.Get('character')
+		character.PlayerData = { citizenId = citizenId, charInfo = charInfo }
+		control.Fire(env.OPX.Event(env.OPX.Channel.LOCAL, 'character', 'loaded'), character.PlayerData)
 	end
 
 	-- 'first': a brand new character, which is the case this whole seam exists for.
@@ -2352,6 +2358,45 @@ do
 		control.Pump(20)
 		check('and the claim is withdrawn rather than waiting out the window',
 			appearance.Wardrobe.Owed() == false)
+	end
+
+	-- THE NAME'S OWN CLAIM. The bot lab, 2026-10-07: the character loaded unnamed
+	-- at 11:18:09, the spawn offer came at 11:18:17 with nothing of the entry
+	-- module on screen, the menu opened, and at 11:18:29 the look settled and the
+	-- name form opened over it and took its keyboard. A character that owes a
+	-- name now holds the join from the moment it loads -- ahead of the fitting
+	-- room -- and for NAME_CLAIM_SECONDS at most before its form has been up, so
+	-- a look that never settles cannot hold the spawn choice for ever. This host
+	-- has no puppet to settle, so the form never comes up here.
+	do
+		local env, control = joinClient('first', 400)
+		local OPX = env.OPX
+		local appearance = OPX.Modules.Get('appearance')
+		local spawn = OPX.Modules.Get('spawn')
+		local page = control.pages[1]
+		local states = watchEntry(env)
+		arrive(env, control, 'citizen-unnamed', true)
+		check('a character that loads unnamed holds the join on its name at once',
+			states[#states] == 'true/name', table.concat(states, ', '))
+		env.TriggerEvent(appearance.Event.ON_DECISION,
+			{ ok = true, event = 'created', citizenId = 'citizen-unnamed' })
+		check('and a fitting room owed behind it does not take the name\'s place',
+			appearance.Wardrobe.Owed() == true and states[#states] == 'true/name',
+			table.concat(states, ', '))
+		control.netEvents[spawn.Event.OFFER]({ timeoutMs = 600000 })
+		check('so the spawn menu stands aside before the form is even up',
+			drew(page, 'opx:spawn:open') == nil)
+		control.Pump(12)
+		check('the room that could not open lets go, and the name still holds the join',
+			appearance.Wardrobe.Owed() == false and states[#states] == 'true/name'
+				and drew(page, 'opx:spawn:open') == nil,
+			table.concat(states, ', '))
+		control.Advance(OPX.Config.MODULES.entry.NAME_CLAIM_SECONDS * 1000)
+		control.Pump(12)
+		check('a form that never came up lets the join go after NAME_CLAIM_SECONDS',
+			states[#states] == 'false/idle', table.concat(states, ', '))
+		check('and the spawn menu opens, late rather than never',
+			drew(page, 'opx:spawn:open') ~= nil)
 	end
 
 	-- ── the view ─────────────────────────────────────────────────────────────
@@ -10717,8 +10762,9 @@ do
 		-- The pilot, a stranger and the hull, exactly as the host reads them.
 		local pilot, stranger = 51, 52
 		local hullId = '0x000000000000av01'
+		-- Standing facing +Y (heading 0), so the first flight has a turn to make.
 		control.vehicles.byId[hullId] = {
-			id = hullId, record = 'Vehicle.max_tac_av', x = 0.0, y = 0.0, z = 0.0,
+			id = hullId, record = 'Vehicle.max_tac_av', x = 0.0, y = 0.0, z = 0.0, yaw = 0.0,
 		}
 		local seat = { vehicleId = hullId, seat = 'seat_front_left' }
 		env.Open77.vehicles.getPlayerSeat = function(playerId)
@@ -10831,11 +10877,28 @@ do
 		check('and it ends holding at the hover above the pin',
 			has(100.0, 0.0, 7.0),
 			#poses > 0 and ('%.2f,%.2f,%.2f'):format(poses[#poses].x, poses[#poses].y, poses[#poses].z))
-		local turned = true
-		for _, at in ipairs(poses) do
-			if math.abs(at.yaw - 0.0) > 0.001 then turned = false end
+		-- IN THE GAME'S DEGREES: 0 faces +Y and a heading grows counter-clockwise,
+		-- so the pin due +X is 270 (`docs/camera.md`) -- the math angle, 0 for +X,
+		-- flew the aircraft to its pin side-on. The hull stood at 0: the turn is
+		-- made on the climb, the short way round (through 315, never through 90),
+		-- and from the top of the climb the one heading is held.
+		local top = nil
+		for index, at in ipairs(poses) do
+			if top == nil and at.z >= 15.0 - 0.001 then top = index end
 		end
-		check('one heading for the whole flight, aimed at the destination', turned)
+		local shortWay, held = top ~= nil and top > 1, top ~= nil
+		for index, at in ipairs(poses) do
+			local yaw = at.yaw % 360.0
+			if top ~= nil and index < top then
+				if not (yaw > 270.0 - 0.001 and yaw < 360.0) then shortWay = false end
+			elseif math.abs(yaw - 270.0) > 0.001 then
+				held = false
+			end
+		end
+		check('the turn toward the pin is made on the climb, the short way, without a snap',
+			shortWay and #poses > 0 and math.abs(poses[1].yaw % 360.0 - 270.0) > 1.0,
+			#poses > 0 and ('first at %.2f, top of the climb at pose %s'):format(poses[1].yaw, tostring(top)))
+		check('one heading for the whole flight, aimed at the destination', held)
 		check('the freeze comes off at the hand-over',
 			control.vehiclePins[#control.vehiclePins].frozen == false)
 		check('and the pilot is told the controls are theirs',
@@ -52585,11 +52648,44 @@ do
 				or Ledger.Status('citizen-killer').stage >= 1)
 
 		-- ── use of force ─────────────────────────────────────────────────
+		-- AGAINST A SUSPECT, and only there. The bot lab, 2026-10-07: an officer
+		-- on duty killed four bystanders and every one was booked "use of force,
+		-- not charged". The killer above is wanted by now -- an officer down
+		-- raised the book -- so an officer on duty who kills them is doing the job.
+		check('the killer is wanted by now', Ledger.Stage('citizen-killer') > 0,
+			tostring(Ledger.Stage('citizen-killer')))
+		control.Pump(85)
 		mark = #control.clientEvents
-		env.TriggerEvent('open77:playerKilled', '5', '2', '{"position":{"x":1,"y":1,"z":0}}')
-		check('an officer on duty who kills is not charged',
+		env.TriggerEvent('open77:playerKilled', '1', '2', '{"position":{"x":1,"y":1,"z":0}}')
+		check('an officer on duty who kills a wanted suspect is not charged',
 			Ledger.Status('citizen-cop').score == 0 and Ledger.Status('citizen-cop').stage == 0)
 		check('and nothing is called in about it', next(boards(mark)) == nil)
+
+		-- Nor one who kills a player who had just hurt them (ATTRIBUTION_MS).
+		load(8, 'citizen-brawler', 'Mox', 'unemployed', false)
+		control.Stand(8, 60.0, 0.0, 0.0)
+		env.TriggerEvent('open77:playerDamaged', '2', '8', '25', 'bullet', 'pistol', 'torso',
+			'75', '100', '0', '0')
+		mark = #control.clientEvents
+		env.TriggerEvent('open77:playerKilled', '8', '2', '{"position":{"x":60,"y":0,"z":0}}')
+		check('or a player who had just hurt them',
+			Ledger.Status('citizen-cop').score == 0 and next(boards(mark)) == nil,
+			tostring(Ledger.Status('citizen-cop').score))
+
+		-- A BYSTANDER IS A MURDER LIKE ANYBODY'S, badge or no badge -- and it is
+		-- called in to the rest of the shift.
+		load(9, 'citizen-rookie', 'Officer Vance', 'ncpd', true)
+		control.Stand(9, 70.0, 0.0, 0.0)
+		load(10, 'citizen-passerby', 'Rue', 'unemployed', false)
+		control.Stand(10, 80.0, 0.0, 0.0)
+		mark = #control.clientEvents
+		env.TriggerEvent('open77:playerKilled', '10', '9', '{"position":{"x":80,"y":0,"z":0}}')
+		check('but an officer on duty who kills a bystander is charged like anybody',
+			Ledger.Status('citizen-rookie').score == 40, tostring(Ledger.Status('citizen-rookie').score))
+		sent = boards(mark)
+		check('and the kill is called in to the rest of the shift',
+			sent[2] ~= nil and sent[2].key == 'ncpd.dispatch.homicideNamed' and sent[9] == nil,
+			sent[2] and tostring(sent[2].key) or 'nothing')
 
 		-- A death the host could not attribute names no killer, and a death by
 		-- one's own hand is not a crime this book knows.
@@ -53432,10 +53528,14 @@ do
 			Ledger.Status(firstCid).score == 40 and Ledger.Status(secondCid).score == 0)
 
 		-- ── use of force, and officer down, by the door under playerKilled ────────
+		-- Use of force is against a suspect, or a player who had just hurt the
+		-- officer (the bot lab, 2026-10-07): this body has just shot officer 2.
 		victim = fresh()
+		env.TriggerEvent('open77:playerDamaged', '2', tostring(victim), '25', 'bullet', 'pistol', 'torso',
+			'75', '100', '0', '0')
 		mark, logMark = #control.clientEvents, #control.log.info
 		died(victim, 2, 'firearm')
-		check('an officer on duty who kills is not charged, and nothing is called in',
+		check('an officer on duty who kills a player who had just hurt them is not charged, and nothing is called in',
 			Ledger.Status('citizen-cop').score == 0 and next(boards(mark)) == nil
 				and said(logMark, 'killed player ' .. victim .. ' on duty: use of force') == 1)
 
