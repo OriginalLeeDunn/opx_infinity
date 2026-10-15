@@ -8221,10 +8221,11 @@ do
 		end
 		cctl.netEvents[garages.Event.SYNC]({ spots = crowd })
 		cenv.CreateThread = realCreate
-		cctl.Pump(4)
+		-- Twenty points are five slices of four, and the apply after them.
+		cctl.Pump(8)
 		cenv.Wait = realWait
 		check('the list that arrives creates a bounded number of markers in the resume that applies it',
-			mostInOneResume > 0 and mostInOneResume <= 8, mostInOneResume)
+			mostInOneResume > 0 and mostInOneResume <= cenv.OPX.Spots.MARKER_CREATES_PER_PASS, mostInOneResume)
 		cctl.Pump(30)
 		check('and the rest follow on the next passes', #cenv.Open77.markers.list() == 20,
 			#cenv.Open77.markers.list())
@@ -8271,6 +8272,8 @@ do
 		sctl.netEvents[garages.Event.ASK]()
 		sctl.Pump(2)
 		local first = lastSync()
+		-- Past the door's one-second floor: faster than that is not a client polling.
+		sctl.Advance(1000)
 		sctl.netEvents[garages.Event.ASK]()
 		sctl.Pump(2)
 		local again = lastSync()
@@ -8279,6 +8282,7 @@ do
 				and type(again) == 'table' and again ~= first and again.rev == first.rev,
 			('%s / %s'):format(tostring(first and first.rev), tostring(again and again.rev)))
 		bucket = 7
+		sctl.Advance(1000)
 		sctl.netEvents[garages.Event.ASK]()
 		sctl.Pump(2)
 		local elsewhere = lastSync()
@@ -8451,7 +8455,8 @@ do
 			return realCreateMarker(...)
 		end
 		cctl.netEvents[garages.Event.SYNC]({ spots = crowd, rev = 'r9' })
-		for _ = 1, 30 do
+		-- Five slices to read, then a scan every SCAN_MS: the fourth draws the last two.
+		for _ = 1, 60 do
 			perResume = {}
 			cctl.Pump(1)
 			for _, count in pairs(perResume) do
@@ -61936,9 +61941,10 @@ do
 				x = index * 0.5, y = 1.0, z = 0.0, heading = 0.0, bucket = 0 }
 		end
 
+		-- Sixty points are fifteen slices of four (`SYNC_SLICE`) and the apply.
 		local reading, resumes = resumeCost(env, control, function()
 			control.netEvents[garages.Event.SYNC]({ spots = lot })
-		end, 12)
+		end, 24)
 		check('every point of the list is taken', garages.Runtime.Report().spots == TOTAL,
 			garages.Runtime.Report().spots)
 		check('and no resume of reading it cost more than 4,000 instructions',

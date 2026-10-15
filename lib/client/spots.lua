@@ -53,8 +53,10 @@ end
 --- create every marker in range at once -- the "dozens of engine calls in one
 --- resume" shape the platform's per-resume instruction budget ends without a
 --- word (`modules/blips` caps its pins for the same reason). The rest come on the
---- next passes; a removal is never deferred.
-OPX.Spots.MARKER_CREATES_PER_PASS = 8
+--- next passes; a removal is never deferred. SIX: on a live server the garages'
+--- first scan after a world load created some thirty in one resume and ran past
+--- the budget (2026-09-28), on a frame the world load was already crowding.
+OPX.Spots.MARKER_CREATES_PER_PASS = 6
 
 OPX.Spots.Markers = {}
 

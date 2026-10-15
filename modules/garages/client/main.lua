@@ -78,8 +78,13 @@ local scanJob, askJob = nil, nil
 
 -- Points one resume reads off a `SYNC`, and the list being read: a newer list,
 -- or a reset, stops an older reader before its next slice. See the `SYNC`
--- handler.
-local SYNC_SLICE = 10
+-- handler. FOUR, the answer to a live client's log
+-- (`garages/client/main.lua:582: Open77 script execution budget exceeded`,
+-- from the SYNC handler, every fifteen seconds while the world loaded,
+-- 2026-09-27 and -28): a resume's budget is TIME -- the frame's two
+-- milliseconds shared by every running resource -- and a busy frame leaves a
+-- resource far less of it than the instruction meter here suggests.
+local SYNC_SLICE = 4
 local syncGeneration = 0
 
 -- THE SAME LIST IS NOT READ TWICE. The server names every list it sends (`rev`,
