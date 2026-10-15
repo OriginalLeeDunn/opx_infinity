@@ -116,7 +116,7 @@ deployment to the node first.
 
 ## 4. In-game test checklist
 
-Run on **`open77-xbuniverse-staging`** (port 11840) with two clients (one admin,
+Run on a **staging server** with two clients (one admin,
 one civilian) where a test needs a counterpart. Tick as you go; every item names
 its expected result.
 

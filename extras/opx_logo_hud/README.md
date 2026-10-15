@@ -13,15 +13,15 @@ platform's pre-alpha watermark (`open77_watermark`) used to hold.
 
 ## Installing
 
-`deploy-hud.sh` (run by `deploy-hud.cmd`) installs it beside `opx_infinity` on both
-XBUNIVERSE servers -- staging first, production only if staging came back healthy --
-and in each server's `config/server.jsonc`:
+Copy this folder beside `opx_infinity` in the server's resources, and in the server's
+`config/server.jsonc`:
 
-- adds `"opx_logo_hud"` to `resources.load`;
-- adds `"!open77_watermark"`, which takes the old watermark out.
+- add `"opx_logo_hud"` to `resources.load`;
+- add `"!open77_watermark"`, which takes the old watermark out.
 
-The config is backed up before the edit, the service is restarted (a load-list change
-needs a restart), and the edit is undone if the restart logs a resource start failure.
+Back the config up before the edit, and restart the service (a load-list change needs a
+restart); undo the edit if the restart logs a resource start failure. A staging server
+first, production only once staging came back healthy.
 
 ## Files
 

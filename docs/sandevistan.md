@@ -4,7 +4,7 @@ This is the full record of the Sandevistan work on `feature/rp-framework`. It co
 player gets, how it is built, how the ghost trail finally came to work, every build on the way
 and what each one taught, how to deploy and test it, and what is still open.
 
-**Status (28 September 2026, XBUNIVERSE staging, opx_sandy_view 1.4.8):**
+**Status (28 September 2026, on a staging server, opx_sandy_view 1.4.8):**
 
 | Part | State |
 |---|---|
