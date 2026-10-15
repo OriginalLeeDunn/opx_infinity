@@ -1,4 +1,4 @@
---- Player-facing text for the radio: the menu, the air, the refusals.
+--- Player-facing text for the radio: the handset, the air, the refusals.
 -- @author dop42
 --
 -- A channel's LABEL and SHORT are the operator's words (config/radio.lua) and
@@ -8,17 +8,25 @@ local EN = {
 	['radio.title'] = 'RADIO',
 	['radio.key.talk'] = 'Radio: push to talk',
 
-	['radio.menu.power'] = 'Power',
-	['radio.menu.on'] = 'ON',
-	['radio.menu.off'] = 'OFF',
-	['radio.menu.channels'] = 'Channels',
-	['radio.menu.noHandset'] = 'No radio in your bag',
-	['radio.menu.join'] = 'Join',
-	['radio.menu.leave'] = 'Leave',
-	['radio.menu.select'] = 'Talk on this channel',
-	['radio.menu.mute'] = 'Mute',
-	['radio.menu.none'] = 'No channel for your job right now',
-	['radio.menu.close'] = 'Close',
+
+	['radio.holo.power'] = 'PWR',
+	['radio.holo.dial'] = 'CH',
+	['radio.holo.channel'] = 'CH {n}/{total}',
+	['radio.holo.prev'] = 'Previous channel',
+	['radio.holo.next'] = 'Next channel',
+	['radio.holo.join'] = 'Join',
+	['radio.holo.leave'] = 'Leave',
+	['radio.holo.select'] = 'Talk here',
+	['radio.holo.selected'] = 'On key',
+	['radio.holo.onKey'] = 'TX',
+	['radio.holo.auto'] = 'AUTO',
+	['radio.holo.mute'] = 'Mute',
+	['radio.holo.unmute'] = 'Unmute',
+	['radio.holo.ptt'] = 'HOLD TO TALK',
+	['radio.holo.close'] = 'ESC  Put away',
+	['radio.holo.none'] = 'No channel for your job right now',
+	['radio.holo.noHandset'] = 'No radio in your bag',
+	['radio.holo.noPower'] = 'NO POWER',
 
 	['radio.status.off'] = 'OFF',
 	['radio.status.listening'] = 'LISTENING',
@@ -44,9 +52,8 @@ local EN = {
 	['radio.error.full'] = 'Your radio cannot hold another channel.',
 	['radio.error.voice_refused'] = 'The channel did not answer. Try again.',
 	['radio.error.not_joined'] = 'Join that channel first.',
-	['radio.error.no_menu'] = 'The radio menu is not available right now.',
 
-	['radio.help.radio'] = 'Open your radio: channels, mute, power',
+	['radio.help.radio'] = 'Take out your radio: channels, mute, power',
 	['radio.help.channels'] = 'List the radio channels and who is on them',
 }
 
@@ -54,17 +61,25 @@ local FR = {
 	['radio.title'] = 'RADIO',
 	['radio.key.talk'] = 'Radio : appuyer pour parler',
 
-	['radio.menu.power'] = 'Alimentation',
-	['radio.menu.on'] = 'ON',
-	['radio.menu.off'] = 'OFF',
-	['radio.menu.channels'] = 'Canaux',
-	['radio.menu.noHandset'] = 'Pas de radio dans votre sac',
-	['radio.menu.join'] = 'Rejoindre',
-	['radio.menu.leave'] = 'Quitter',
-	['radio.menu.select'] = 'Parler sur ce canal',
-	['radio.menu.mute'] = 'Couper le son',
-	['radio.menu.none'] = 'Aucun canal pour votre métier pour l\'instant',
-	['radio.menu.close'] = 'Fermer',
+
+	['radio.holo.power'] = 'PWR',
+	['radio.holo.dial'] = 'CH',
+	['radio.holo.channel'] = 'CH {n}/{total}',
+	['radio.holo.prev'] = 'Canal précédent',
+	['radio.holo.next'] = 'Canal suivant',
+	['radio.holo.join'] = 'Rejoindre',
+	['radio.holo.leave'] = 'Quitter',
+	['radio.holo.select'] = 'Parler ici',
+	['radio.holo.selected'] = 'En main',
+	['radio.holo.onKey'] = 'TX',
+	['radio.holo.auto'] = 'AUTO',
+	['radio.holo.mute'] = 'Couper',
+	['radio.holo.unmute'] = 'Rétablir',
+	['radio.holo.ptt'] = 'MAINTENIR POUR PARLER',
+	['radio.holo.close'] = 'ÉCHAP  Ranger',
+	['radio.holo.none'] = 'Aucun canal pour votre métier pour l\'instant',
+	['radio.holo.noHandset'] = 'Pas de radio dans votre sac',
+	['radio.holo.noPower'] = 'HORS TENSION',
 
 	['radio.status.off'] = 'OFF',
 	['radio.status.listening'] = 'ÉCOUTE',
@@ -90,9 +105,8 @@ local FR = {
 	['radio.error.full'] = 'Votre radio ne peut pas tenir un canal de plus.',
 	['radio.error.voice_refused'] = 'Le canal n\'a pas répondu. Réessayez.',
 	['radio.error.not_joined'] = 'Rejoignez d\'abord ce canal.',
-	['radio.error.no_menu'] = 'Le menu radio n\'est pas disponible pour le moment.',
 
-	['radio.help.radio'] = 'Ouvrir votre radio : canaux, son, alimentation',
+	['radio.help.radio'] = 'Sortir votre radio : canaux, son, alimentation',
 	['radio.help.channels'] = 'Lister les canaux radio et qui les écoute',
 }
 

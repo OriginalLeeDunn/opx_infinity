@@ -11,6 +11,7 @@ import MenuView from '@/modules/menu/MenuView.vue'
 import NotifyRoot from '@/modules/notify/NotifyRoot.vue'
 import PanelView from '@/modules/panel/PanelView.vue'
 import ProgressRoot from '@/modules/progress/ProgressRoot.vue'
+import RadioHolo from '@/modules/radio/RadioHolo.vue'
 import SlotbarRoot from '@/modules/inventory/SlotbarRoot.vue'
 import PromptsRoot from '@/modules/prompts/PromptsRoot.vue'
 import SpawnView from '@/modules/spawn/SpawnView.vue'
@@ -70,6 +71,11 @@ registerModule({ id: 'tags', surface: 'overlay', component: TagsRoot, hideWhileL
 // you are talking to and which key answers or hangs up. It takes focus only when
 // the player opens it on its key.
 registerModule({ id: 'calls-holo', surface: 'modal', component: CallHolo, hideWhileLoading: true })
+
+// THE RADIO IS A HANDSET, not a menu -- "un vrais style de radio mais holograpique qui
+// pop a droite de l'ecran". Modal because it is pressed; it takes focus only while the
+// player has it out.
+registerModule({ id: 'radio-holo', surface: 'modal', component: RadioHolo, hideWhileLoading: true })
 
 // The chat is ONE Lua module drawn as TWO registrations, because it is two
 // concerns on two layers: the log is always drawn and never focused, the input

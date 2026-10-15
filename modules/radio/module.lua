@@ -24,15 +24,16 @@
 --
 -- Only `character` is required: without it nobody qualifies for anything.
 -- `inventory` is the handset (without it REQUIRE_ITEM cannot be honoured and
--- the module says so and opens the channels without it); `menu` is the picker;
--- `downed` keeps a downed character off the air.
+-- the module says so and opens the channels without it); `downed` keeps a
+-- downed character off the air. The handset is drawn by the page
+-- (`ui/src/modules/radio/RadioHolo.vue`), not by the menu module.
 
 local M = OPX.Modules.Declare{
 	id = 'radio',
 	side = 'both',
 	fatal = false,
 	requires = { 'character' },
-	optional = { 'inventory', 'menu', 'downed' },
+	optional = { 'inventory', 'downed' },
 }
 
 local NET = OPX.Channel.NET
@@ -42,7 +43,7 @@ local LOCAL = OPX.Channel.LOCAL
 M.Event = {
 	-- Client to server. `source` is the connection's; every field is re-read.
 	-- `{ verb, channel?, on? }`, verb one of `join`, `leave`, `select`, `mute`,
-	-- `power`, `ask` (send me the state, and open the menu).
+	-- `power`, `ask` (send me the state, and open the handset).
 	REQUEST = OPX.Event(NET, 'radio', 'request'),
 	-- `{ on }`: the talk key went down (true) or up (false).
 	TALK = OPX.Event(NET, 'radio', 'talk'),

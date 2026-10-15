@@ -1,9 +1,9 @@
---- Client half: the radio menu, the talk key, and the route this machine's
---- microphone takes while it is held.
+--- Client half: the handset on screen, the talk key, and the route this
+--- machine's microphone takes while it is held.
 -- @author dop42
 --
--- NONE OF IT DECIDES. The menu is drawn from the last STATE the server sent and
--- every row is a request the server re-checks; the talk key asks for the right
+-- NONE OF IT DECIDES. The handset is drawn from the last STATE the server sent and
+-- every press on it is a request the server re-checks; the talk key asks for the right
 -- to speak and only routes the microphone into the channels once the server
 -- says it granted it (`KEYED`). A crafted client that routes into a channel
 -- anyway reaches nobody: the platform drops a frame on a membership that may
@@ -18,15 +18,14 @@
 local M = OPX.Modules.Get('radio')
 local Model = M.Model
 
-local OWNER = 'radio'
-local MENU_ID = 'radio.menu'
 local AIR_TOAST = 'opx.radio.air'
 -- How often a granted transmission re-asserts its route, for another resource
 -- (the platform's voice key) that re-states the intent under it.
 local REASSERT_MS = 250
 
 local state = nil
-local menuHandle = nil
+-- Draws the handset again; defined with the view below, called by the key.
+local redrawView
 -- Whether the talk key is down, and whether the server granted it.
 local held, granted = false, false
 local intent = 'all'
@@ -64,6 +63,7 @@ local function onReleased()
 	TriggerServerEvent(M.Event.TALK, { on = false })
 	if wasGranted then transmit(false) end
 	pcall(OPX.Toast.Dismiss, AIR_TOAST)
+	if wasGranted then redrawView() end
 end
 
 local function onKeyed(payload)
@@ -77,6 +77,7 @@ local function onKeyed(payload)
 		granted = true
 		transmit(true)
 		holdRoute()
+		redrawView()
 		local channel = type(payload.channel) == 'string' and OPX.Text.Clean(payload.channel, 16) or ''
 		OPX.Toast.Show({ id = AIR_TOAST, kind = 'info', icon = 'talk', durationMs = 1500,
 			message = locale('radio.air.on', { channel = channel }) })
@@ -86,6 +87,7 @@ local function onKeyed(payload)
 	granted = false
 	if wasGranted then transmit(false) end
 	pcall(OPX.Toast.Dismiss, AIR_TOAST)
+	if wasGranted then redrawView() end
 	local code = type(payload.code) == 'string' and payload.code or nil
 	if code ~= nil then
 		local key = 'radio.air.' .. code
@@ -108,127 +110,130 @@ local function registerKey()
 	end
 end
 
--- ── the menu ────────────────────────────────────────────────────────────────
+-- ── the handset on screen ───────────────────────────────────────────────────
+--
+-- THE OWNER: "pour le script radio enfois de le faire en menu fait un vrais
+-- style de radio mais holograpique qui pop a droite de l'ecran". The menu rows
+-- are gone; the page draws a handset -- screen, channel knob, side key -- as a
+-- projection on the right edge (`ui/src/modules/radio/RadioHolo.vue`), and
+-- every press on it comes back here as the same request the menu sent.
+--
+-- FOCUS FOLLOWS THE SCREEN, as on the holocall (`modules/calls/client/view.lua`):
+-- taken when the handset opens, given back the moment it closes, so a radio
+-- left on screen never leaves a player who cannot move.
 
-local function closeMenu()
-	local menu = OPX.Api.Get('menu')
-	if menuHandle ~= nil and menu ~= nil and type(menu.Close) == 'function' then
-		pcall(menu.Close, menuHandle, 'caller')
-	end
-	menuHandle = nil
-end
+local SURFACE = 'interactive'
+local CHANNEL = 'radio:holo'
+local FOCUS = 'radio'
+-- Whether the handset is on screen.
+local shown = false
+-- Where the projection sits: one of `OPX.Anchors.ALL`, settled in Start.
+local anchor = 'right'
 
 local function request(verb, channel, on)
 	TriggerServerEvent(M.Event.REQUEST, { verb = verb, channel = channel, on = on })
 end
 
-local function statusOf(row)
-	if not row.joined then return locale('radio.status.off') end
-	if row.active then return locale('radio.status.active') end
-	if row.muted then return locale('radio.status.muted') end
-	return locale('radio.status.listening')
-end
-
---- The menu spec for the last state the server sent.
--- @author dop42
--- @return table
-function M.Spec()
-	local items = {
-		{ id = 'power', label = locale('radio.menu.power'), icon = 'bolt', toggle = state.power == true,
-			onLabel = locale('radio.menu.on'), offLabel = locale('radio.menu.off'), data = { verb = 'power' } },
-	}
-	if state.needsHandset and not state.handset then
-		items[#items + 1] = { id = 'handset', label = locale('radio.menu.noHandset'), icon = 'warning', disabled = true }
-	end
-	items[#items + 1] = { id = 'sep', separator = true, label = locale('radio.menu.channels') }
-	local rows = type(state.channels) == 'table' and state.channels or {}
+--- The rows as the page may draw them: the operator's words, trimmed.
+local function rowsOf()
+	local rows, out = type(state) == 'table' and state.channels or {}, {}
 	for index = 1, math.min(#rows, 32) do
 		local row = rows[index]
 		if type(row) == 'table' and Model.Key(row.key) then
-			local label = OPX.Text.Clean(tostring(row.label), 64) or row.key
-			local sub = {
-				row.joined
-					and { id = 'leave', label = locale('radio.menu.leave'), icon = 'minus',
-						data = { verb = 'leave', channel = row.key } }
-					or { id = 'join', label = locale('radio.menu.join'), icon = 'plus',
-						data = { verb = 'join', channel = row.key }, disabled = state.power ~= true },
-				{ id = 'select', label = locale('radio.menu.select'), icon = 'talk',
-					data = { verb = 'select', channel = row.key }, disabled = not row.joined or row.active == true },
-				{ id = 'mute', label = locale('radio.menu.mute'), icon = 'hidden', toggle = row.muted == true,
-					onLabel = locale('radio.menu.on'), offLabel = locale('radio.menu.off'),
-					data = { verb = 'mute', channel = row.key }, disabled = not row.joined },
+			out[#out + 1] = {
+				key = row.key,
+				label = OPX.Text.Clean(tostring(row.label), 64) or row.key,
+				short = OPX.Text.Clean(tostring(row.short or row.key), 16) or row.key,
+				joined = row.joined == true,
+				muted = row.muted == true,
+				active = row.active == true,
+				auto = row.auto == true,
 			}
-			items[#items + 1] = { id = ('c%d'):format(index), label = label, icon = row.active and 'talk' or 'list',
-				value = statusOf(row), title = label, items = sub }
 		end
 	end
-	if #rows == 0 then
-		items[#items + 1] = { id = 'none', label = locale('radio.menu.none'), icon = 'ban', disabled = true }
-	end
-	items[#items + 1] = { id = 'close', label = locale('radio.menu.close'), icon = 'back', close = true }
-	return {
-		owner = OWNER, id = MENU_ID, steal = true, focus = 'cursor',
-		title = locale('radio.title'), items = items,
-		on = function(payload)
-			if type(payload) ~= 'table' then return end
-			if payload.action == 'close' then
-				menuHandle = nil
-				return
-			end
-			local data = type(payload.data) == 'table' and payload.data or nil
-			if data == nil or type(data.verb) ~= 'string' then return end
-			if payload.action == 'change' and (data.verb == 'power' or data.verb == 'mute') then
-				request(data.verb, data.channel, payload.value == true)
-			elseif payload.action == 'select' and (data.verb == 'join' or data.verb == 'leave'
-				or data.verb == 'select') then
-				request(data.verb, data.channel)
-			end
-		end,
-	}
+	return out
 end
 
---- Opens (or redraws) the radio menu from the last state.
+--- Sends the handset to the page, and takes or gives back focus with it.
+local function push()
+	local radio = type(state) == 'table' and state or {}
+	OPX.UI.Send(SURFACE, CHANNEL, {
+		open = shown,
+		anchor = anchor,
+		power = radio.power == true,
+		handset = radio.handset ~= false,
+		needsHandset = radio.needsHandset == true,
+		talkKey = radio.talkKey ~= false,
+		tx = held and granted,
+		channels = rowsOf(),
+	})
+	if shown then
+		OPX.UI.AcquireFocus(FOCUS, { keyboard = true, cursor = true })
+	else
+		OPX.UI.ReleaseFocus(FOCUS)
+	end
+end
+
+redrawView = function()
+	if shown then push() end
+end
+
+local function closeView()
+	if not shown then return end
+	shown = false
+	push()
+end
+
+--- Opens the handset. ALWAYS ASKED, never drawn from memory: the sweep moves
+--- memberships without telling a client whose radio did not change, so the
+--- last state may be old. The answer comes back with `open` and lands in
+--- `onState`.
 -- @author dop42
 -- @return boolean
 function M.OpenMenu()
-	-- ALWAYS ASKED, never drawn from memory: the sweep moves memberships without
-	-- telling a client whose radio did not change, so the last state may be old.
-	-- The answer comes back with `open` and lands in `showMenu`.
 	request('ask')
 	return true
-end
-
---- Draws the radio menu from the last state the server sent.
-local function showMenu()
-	if state == nil then return false end
-	local menu = OPX.Api.Get('menu')
-	if menu == nil or type(menu.Open) ~= 'function' then
-		OPX.Toast.Locale('radio.error.no_menu', nil, 'error')
-		return false
-	end
-	local opened = menu.Open(M.Spec())
-	if type(opened) ~= 'table' or not opened.ok then
-		OPX.Note('radio', ('the radio menu was refused: %s')
-			:format(tostring(type(opened) == 'table' and opened.error or opened)))
-		return false
-	end
-	menuHandle = type(opened.value) == 'table' and opened.value.handle or nil
-	return true
-end
-
-local function redraw()
-	local menu = OPX.Api.Get('menu')
-	if menuHandle == nil or menu == nil or type(menu.Update) ~= 'function' then return end
-	local updated = menu.Update(menuHandle, M.Spec())
-	if type(updated) ~= 'table' or not updated.ok then menuHandle = nil end
 end
 
 local function onState(payload)
 	if type(payload) ~= 'table' then return end
 	payload.channels = type(payload.channels) == 'table' and payload.channels or {}
 	state = payload
-	if payload.open == true then return showMenu() end
-	redraw()
+	if payload.open == true then shown = true end
+	if shown then push() end
+end
+
+-- Every action the page may send, and what it becomes. A verb the server does
+-- not know is refused there; `ask` is not the page's to send.
+local PAGE_VERBS = { join = true, leave = true, select = true, mute = true, power = true }
+
+local function fromView(action, payload)
+	if action == 'ready' then
+		-- The page mounted (or remounted): draw what is known, open or not.
+		if state ~= nil then push() end
+	elseif action == 'close' then
+		closeView()
+	elseif action == 'request' then
+		if not shown or type(payload) ~= 'table' or not PAGE_VERBS[payload.verb] then return end
+		local channel = payload.channel
+		if channel ~= nil and not Model.Key(channel) then return end
+		local on = payload.on
+		if on ~= nil and type(on) ~= 'boolean' then return end
+		request(payload.verb, channel, on)
+	elseif action == 'talk' then
+		-- The side key on the handset: the same hold the keyboard key is, and
+		-- the server grants it on the same terms.
+		if type(payload) ~= 'table' then return end
+		if payload.on == true and shown then onPressed() else onReleased() end
+	end
+end
+
+local function wireView()
+	for _, action in ipairs({ 'ready', 'close', 'request', 'talk' }) do
+		OPX.UI.On(SURFACE, 'radio:' .. action, function(payload)
+			fromView(action, payload)
+		end)
+	end
 end
 
 -- ── the phases ──────────────────────────────────────────────────────────────
@@ -236,16 +241,18 @@ end
 --- Resets the state. Never yields.
 -- @author dop42
 function M.Init()
-	state, menuHandle, held, granted = nil, nil, false, false
+	state, held, granted, shown = nil, false, false, false
 end
 
---- Publishes the client half: the state as last sent, and the menu.
+--- Publishes the client half: the state as last sent, and the handset.
 -- @author dop42
 function M.Api()
 	OPX.Api.Provide('radio', 1, {
 		--- The radio as the server last described it, or nil.
 		State = function() return state end,
+		--- Opens the handset on screen (the name the menu had, kept for callers).
 		OpenMenu = M.OpenMenu,
+		CloseMenu = function() closeView() return true end,
 		--- Whether the talk key is down and granted.
 		Talking = function() return held and granted end,
 	})
@@ -256,11 +263,13 @@ end
 function M.Start()
 	RegisterNetEvent(M.Event.STATE, onState)
 	RegisterNetEvent(M.Event.KEYED, onKeyed)
+	wireView()
 	-- The two fields this half needs, read by hand: the whole `Model.Build`
 	-- walks every channel's gates, which is the server's work and not worth a
 	-- client resume.
 	local settings = type(M.Settings) == 'table' and M.Settings or {}
 	intent = settings.TALK_INTENT == 'channels' and 'channels' or 'all'
+	anchor = OPX.Anchors.Resolve(settings.ANCHOR, 'right', 'radio.ANCHOR')
 	local key = settings.TALK_KEY
 	if key == false then
 		talkKey = false
@@ -276,10 +285,10 @@ function M.Start()
 	end)
 end
 
---- Hands the menu, the key and the microphone back.
+--- Hands the screen, the key and the microphone back.
 -- @author dop42
 function M.Stop()
-	closeMenu()
+	closeView()
 	if held and granted then transmit(false) end
 	held, granted = false, false
 	pcall(OPX.Toast.Dismiss, AIR_TOAST)

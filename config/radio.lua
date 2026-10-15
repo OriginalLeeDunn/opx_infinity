@@ -10,8 +10,8 @@
 -- AUTO channels are joined by themselves the moment the character qualifies --
 -- clocking in, being hired -- and every channel is left the moment they stop
 -- qualifying: clocking out, a job change, a firing, the handset leaving the bag.
--- A channel that is not AUTO is offered in the radio menu (`/opx.radio`, or
--- using the handset) and joined only on request.
+-- A channel that is not AUTO is offered on the handset (`/opx.radio`, or
+-- using the item) and joined only on request.
 --
 -- PUSH-TO-TALK is a key of its own (TALK_KEY, CAPSLOCK by default, rebindable in
 -- Pause -> Settings -> KEY BINDINGS). The platform's own voice key (N) keeps
@@ -31,7 +31,7 @@ OPX.Config.MODULES.radio = {
 	-- qualifying character has a radio built in (cyberware comms, in the lore).
 	REQUIRE_ITEM = true,
 	-- Registered at boot through the inventory contract (not in items.lua).
-	-- Using it from the bag opens the radio menu.
+	-- Using it from the bag takes the handset out (the hologram on screen).
 	ITEM = {
 		NAME = 'radio',
 		LABEL = 'Service radio',
@@ -39,6 +39,10 @@ OPX.Config.MODULES.radio = {
 		WEIGHT = 350,
 		MODEL = 'electronics.monitor.device',
 	},
+
+	-- Where the handset hologram pops: one of the nine names in
+	-- `lib/shared/anchors.lua` ('right', 'left', 'bottom-right'...).
+	ANCHOR = 'right',
 
 	-- ── talking ────────────────────────────────────────────────────────────
 
@@ -61,7 +65,7 @@ OPX.Config.MODULES.radio = {
 	-- frame into at most four channels; only the selected one is ever speakable,
 	-- so this bounds what a player HEARS.
 	MAX_JOINED = 4,
-	-- Requests from one player's menu, milliseconds apart at least.
+	-- Requests from one player's handset, milliseconds apart at least.
 	REQUEST_MS = 300,
 	-- Key presses, milliseconds apart at least (a release is never refused).
 	TALK_MS = 200,
@@ -81,13 +85,13 @@ OPX.Config.MODULES.radio = {
 	-- ── the channels ───────────────────────────────────────────────────────
 	--
 	-- key = { LABEL, SHORT?, JOBS?, GANGS?, ON_DUTY?, AUTO?, ENABLED?, ORDER? }
-	--   LABEL    what the menu shows (the operator's words, never translated)
+	--   LABEL    what the handset shows (the operator's words, never translated)
 	--   SHORT    the tag on the toast when you key up, defaults to the key
 	--   JOBS     { job = minimum grade }      ON_DUTY applies to these
 	--   GANGS    { gang = minimum grade }
 	--   AUTO     joined by itself when the character qualifies
 	--   ENABLED  false keeps the entry and opens nothing
-	--   ORDER    menu order, lowest first (then the key)
+	--   ORDER    dial order, lowest first (then the key)
 	CHANNELS = {
 		ncpd = {
 			LABEL = 'NCPD Dispatch - Watson Precinct', SHORT = 'NCPD', ORDER = 10,
