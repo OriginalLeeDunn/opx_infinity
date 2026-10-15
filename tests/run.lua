@@ -49870,7 +49870,10 @@ do
 
 		-- AND NOW THE PINS. The positions arrive the way they always do -- the
 		-- server's SYNC, which is also where a capture shows up -- and the look
-		-- is joined to them from config on every read.
+		-- is joined to them from config on every read. On a client WITH the
+		-- native SVG adapter: icons and colours are drawn by it alone, a station's
+		-- as much as a category's (the sprite-only client is the blips section's).
+		env.Open77.blips.setColor = function() return true end
 		control.netEvents[hq.Event.SYNC]({ spots = {
 			{ key = 'hq_gold', label = 'GOLD HQ', x = 100.0, y = 200.0, z = 5.0 },
 			{ key = 'hq_plain', label = 'PLAIN HQ', x = 300.0, y = 400.0, z = 5.0 },
@@ -49904,8 +49907,10 @@ do
 				and svgPin.icon.asset == 'assets/blips/hq.svg' and svgPin.icon.size == 56
 				and svgPin.color == '#00CCFF80')
 		local brokenPin = pinOf('hq_broken')
-		check('and a dropped field still leaves the pin the station asked for',
-			brokenPin ~= nil and brokenPin.color == nil)
+		local categoryColor = OPX.Config.MODULES.blips.CATEGORIES.headquarters.COLOR
+		check('and a dropped field still leaves the pin the station asked for, in the category\'s colour',
+			brokenPin ~= nil and brokenPin.color == categoryColor,
+			brokenPin ~= nil and tostring(brokenPin.color) or 'no pin')
 
 		-- A LOOK THAT CHANGED IS A REMAKE. A pin wearing the colour it was
 		-- created with is a pin pointing at what the config used to say, and the

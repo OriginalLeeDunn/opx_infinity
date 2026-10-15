@@ -761,19 +761,21 @@ local function create(entry, block)
 	-- accepted by the engine, but sending the key says this module has an
 	-- opinion about range on every blip, and `get(id).range` reading 0 would
 	-- then be indistinguishable from a gate that was set and cleared.
-	if look.icon ~= nil then options.icon = look.icon end
-	local color = look.color or block.color
-	if color ~= nil then options.color = color end
 	if block.range > 0 then options.range = block.range end
 
 	-- THE SVG ADAPTER IS ASKED FOR, NOT ASSUMED. It is a native client piece a
 	-- Lua update cannot bring, and the platform's own test for it is whether
 	-- `setColor` exists. A client without it gets the sprite alone, which is
-	-- exactly what every pin was before this.
-	local styled = (block.icon ~= nil or block.color ~= nil) and type(native.setColor) == 'function'
+	-- exactly what every pin was before this. "Experimental SVG icons and
+	-- per-blip RGB/RGBA colors require the matching native client adapter", so
+	-- a station's own icon and colour wait for it exactly as the category's do
+	-- -- and where it is, they still win over the category's, field by field.
+	local icon = look.icon
+	if icon == nil and block.icon ~= nil then icon = { asset = block.icon, size = block.size } end
+	local color = look.color or block.color
+	local styled = (icon ~= nil or color ~= nil) and type(native.setColor) == 'function'
 	if styled then
-		if block.icon ~= nil then options.icon = { asset = block.icon, size = block.size } end
-		if block.color ~= nil then options.color = block.color end
+		options.icon, options.color = icon, color
 	end
 
 	local read, id, reason = pcall(native.create, options)

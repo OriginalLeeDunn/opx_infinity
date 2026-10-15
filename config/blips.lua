@@ -236,6 +236,9 @@ OPX.Config.MODULES.blips = {
 			LABEL = 'Headquarters',
 			RANGE = 0,
 			WALLS = false,
+			ICON = 'headquarters',
+			SIZE = 48,
+			COLOR = '#4DA3FF',
 		},
 
 		-- Where a player's own cars come out. The one the owner names first.
@@ -317,15 +320,19 @@ OPX.Config.MODULES.blips = {
 		},
 
 		-- Bank branches (`/opx.bank.add`), where a paycheck is drawn as cash.
-		-- `drop_point` is the `ServicePointDropPointVariant`: the base game's
-		-- service point for handing things over, and map-capable, which the
-		-- base game has no bank icon for.
+		-- The base game has no bank sprite: `drop_point` is the
+		-- `ServicePointDropPointVariant`, its service point for handing things
+		-- over and map-capable, and it is what a client without the SVG adapter
+		-- draws; the others draw the bank icon.
 		bank = {
 			SHOW = true,
 			SPRITE = 'drop_point',
 			LABEL = 'Bank',
 			RANGE = 0,
 			WALLS = false,
+			ICON = 'bank',
+			SIZE = 48,
+			COLOR = '#7CFFB2',
 		},
 
 		-- Gas stations (`modules/fuel`), one pin per surveyed station: ox's
