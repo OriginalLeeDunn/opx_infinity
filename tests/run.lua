@@ -54963,14 +54963,15 @@ do
 		landing = false
 		sit(4242, 'seat_front_left')
 		stepOut()
-		check('a body the engine will not move is tried a bounded number of times, then left',
-			pumpUntil(function() return not avdoor.Status().guarding and #fades >= 2 end, 80)
-				and #teles == 8, #teles .. ' move(s)')
-		-- The slack is the harness's, not the module's: a pump is 100 ms and the
+		-- The bound is the harness's, not the module's: a pump is 100 ms and the
 		-- client scheduler runs four jobs a pass in rotation, so every job another
-		-- module adds on the client (main's `loading`, then `doorlock`'s) can be
-		-- one more 100 ms round before the avdoor job sees its ceiling. In game a
-		-- pass is a frame.
+		-- module adds on the client (main's `loading`, `doorlock`'s, the medical
+		-- and police boards') is one more 100 ms round before the avdoor job sees
+		-- its ceiling. In game a pass is a frame. The moves are what is bounded.
+		check('a body the engine will not move is tried a bounded number of times, then left',
+			pumpUntil(function() return not avdoor.Status().guarding and #fades >= 2 end, 160)
+				and #teles == 8, #teles .. ' move(s)')
+		-- The slack is the harness's, not the module's, for the same reason.
 		check('and the screen still comes back, inside its ceiling',
 			fades[2] ~= nil and fades[2].at - fades[1].at <= avdoor.Settings.EXIT_FADE.MAX_HOLD_MS + 800,
 			fades[2] and ('%d ms'):format(fades[2].at - fades[1].at) or 'never')
@@ -58948,7 +58949,9 @@ end
 -- keystroke were measured a byte at a time in Lua inside a page callback.
 section('interaction surfaces: the smaller defects')
 do
-	local env, control, why = boot('server')
+	-- A host with no animation API at boot: the harness's server has one for
+	-- the modules that pose bodies, and the late arrival below is the point.
+	local env, control, why = boot('server', nil, function(env) env.Open77.animations = nil end)
 	check('server boots for the prompt address', why == nil, why)
 	if why == nil then
 		local prompts = env.OPX.Api.Get('prompts')
@@ -61969,18 +61972,22 @@ do
 	check('the built page carries the frame and its edges',
 		built:find('panel-frame', 1, true) ~= nil and built:find('panel-edges', 1, true) ~= nil)
 
-	-- #114: the voice meter and the voice block move by transform alone.
+	-- #114: the voice meter and the voice block move by transform alone. On this
+	-- branch the block is a ROW of the vitals column (the minimap took its corner),
+	-- its meter a horizontal track: the fill slides by translateX, and the row
+	-- comes in by a transform and positions nothing itself.
 	local voice = slurp('ui/src/modules/hud/HudVoice.vue')
-	check('the voice meter is a translateY under a static mask, not a clip-path',
-		voice:find('clipPath', 1, true) == nil and voice:find('translateY(${', 1, true) ~= nil
+	check('the voice meter is a translateX under a static mask, not a clip-path',
+		voice:find('clipPath', 1, true) == nil and voice:find('translateX(${', 1, true) ~= nil
 			and rule(voice, '.meter'):find('mask%-image') ~= nil
 			and rule(voice, '.fill'):find('mask%-image') == nil
 			and rule(voice, '.fill'):find('clip%-path') == nil)
-	check('and the block steps over the key strip by transform, not by bottom',
-		rule(voice, '.voice'):find('bottom var', 1, true) == nil
-			and (rule(voice, '.voice'):match('\n%s*bottom:%s*([^;]*)') or 'voice-lift'):find('voice-lift', 1, true) == nil
-			and rule(voice, '.voice'):find('translate(8px, calc(8px - var(--voice-lift', 1, true) ~= nil
-			and rule(voice, '.voice.live'):find('var(--voice-lift', 1, true) ~= nil)
+	check('and the row comes in by transform, never by an offset',
+		rule(voice, '.voice'):find('translate3d(-8px, 0, 0)', 1, true) ~= nil
+			and rule(voice, '.voice.live'):find('translate3d(0, 0, 0)', 1, true) ~= nil
+			and rule(voice, '.voice'):match('\n%s*bottom:') == nil
+			and rule(voice, '.voice'):match('\n%s*left:') == nil
+			and rule(voice, '.voice'):match('\n%s*position:') == nil)
 
 	-- #115: a slider input redraws the rows whose state changed, not every row.
 	local panel = slurp('ui/src/modules/panel/PanelView.vue')
@@ -62555,8 +62562,15 @@ do
 		live.Functions.SetMetaData = function(key, value) live.PlayerData.metadata[key] = value end
 		local writesBefore = #writes
 		local online = call('my_jobs', 'SetMetadata', HERE, 'rep', 7)
+		-- Under ITS row: the metadata column. An officer on duty is also a row the
+		-- seniority clock and the skill tree keep while the call is awaited, and
+		-- those writes are theirs, not this one's.
+		local underRow = 0
+		for index = writesBefore + 1, #writes do
+			if writes[index].sql:find('metadata', 1, true) then underRow = underRow + 1 end
+		end
 		check('a character online is written in memory, never under its row',
-			online.ok and live.PlayerData.metadata['ext.my_jobs.rep'] == 7 and #writes == writesBefore,
+			online.ok and live.PlayerData.metadata['ext.my_jobs.rep'] == 7 and underRow == 0,
 			online and tostring(online.error))
 		check('and read back by citizen id from memory too',
 			call('my_jobs', 'GetMetadata', HERE, 'rep').value == 7)
@@ -63138,6 +63152,16 @@ do
 		-- the character screen, which can send every event the others can.
 		control.Admit(IDLE, 'account-idle')
 		local victimCitizen = victim.PlayerData.citizenId
+		-- THE SENIORITY CLOCK STANDS STILL FOR THE BATTERY. Both characters are
+		-- officers on duty, and the battery moves the clock two minutes a door: the
+		-- seniority tick banks for them on that clock -- and pours the skill XP it
+		-- pays into the tree, a GAIN line and a skills row for the victim --
+		-- whichever door happens to be pumping. A clock's write, not a door's.
+		local jobsModule = OPX.Modules.Get('jobs')
+		OPX.Config.MODULES.jobs.SENIORITY.enabled = false
+		if type(jobsModule.Settings) == 'table' and type(jobsModule.Settings.SENIORITY) == 'table' then
+			jobsModule.Settings.SENIORITY.enabled = false
+		end
 
 		local names = {}
 		for name in pairs(control.netEvents) do names[#names + 1] = name end
@@ -63157,6 +63181,13 @@ do
 		local REACHES = {
 			-- A chat line goes to every client; a hostile one is cleaned first.
 			['opx:net:chat:say'] = { ['opx:net:chat:message'] = true },
+			-- A client's report of its OWN engine's stage (`ncpd.Event.REPORT`): the
+			-- connection it arrived on is the one charged, never a name off the
+			-- wire, and a stage it crosses is called out to the officers on duty --
+			-- the board, its toast and the radio -- which the victim here is. The
+			-- radio keeps talking about that manhunt on the clock the battery moves.
+			['opx:net:ncpd:engine'] = { ['opx:net:ncpd:dispatch'] = true, ['opx:net:runtime:toast'] = true,
+				['opx:net:ncpd:radioLine'] = true },
 		}
 		-- What reaches every client on a clock, whoever is pumping.
 		local PERIODIC = { ['opx:net:weather:sync'] = true, ['opx:net:admin:doors'] = true }
@@ -63245,7 +63276,14 @@ do
 							end
 						end
 						for _, notice in ipairs(control.notices) do
-							if notice.playerId == VICTIM then note(reached, label .. ' -> toast') end
+							-- A toast is the runtime's toast event by another door.
+							if notice.playerId == VICTIM then
+								if REACHES[name] and REACHES[name]['opx:net:runtime:toast'] then
+									sawReach = true
+								else
+									note(reached, label .. ' -> toast')
+								end
+							end
 						end
 						for _, call in ipairs(control.database.calls) do
 							-- The autosave of every loaded character runs on the clock the
@@ -66885,12 +66923,17 @@ do
 			local down = last(control, Event.ALERT, TAC)
 			check('an officer down pages MaxTac at the top of the board', down ~= nil and down.crime == 'officer_down'
 				and down.priority >= 10)
+			-- A PAGE is a dispatch alert. The officers on duty are also banking
+			-- seniority on the clock these pumps move, and its skill lines are no page.
 			check('a civilian going down pages nobody',
 				(function()
 					local count = #control.clientEvents
 					police.Server.OnDownedChanged(CIVVIE, { down = true })
 					control.Pump(4)
-					return #control.clientEvents == count
+					for index = count + 1, #control.clientEvents do
+						if control.clientEvents[index].name == Event.ALERT then return false end
+					end
+					return true
 				end)())
 			police.Server.OnDownedChanged(COP, { down = false })
 			check('the officer back up closes the 10-00', police.Dispatch.Of('maxtac', 'down:' .. COP) == nil)
