@@ -42,8 +42,10 @@ OPX.Config.MODULES.avdrive = {
 	-- THE ONE KEY. `ID` is what a rebind is stored under and must not change
 	-- between builds; `NAME` is a catalogue key the binding list translates;
 	-- `DEFAULT` is the key it comes up on, or `false` for no key at all (the
-	-- autopilot then exists only for whatever else raises the event).
-	KEY = { ID = 'opx.avdrive.toggle', NAME = 'avdrive.key.toggle', DEFAULT = 'F6' },
+	-- autopilot then exists only for whatever else raises the event). F10, not
+	-- F6: F6 is the Trauma Team's dispatch board (`config/medical.lua`), and a
+	-- Trauma medic flying the Trauma AV would open the board with every engage.
+	KEY = { ID = 'opx.avdrive.toggle', NAME = 'avdrive.key.toggle', DEFAULT = 'F10' },
 
 	-- How long one press may follow another, in milliseconds. The key is a
 	-- toggle, and a key mashed five times a second would be five engage and
