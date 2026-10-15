@@ -1051,6 +1051,16 @@ local function howTo(player, entry)
 end
 M.Ripper.HowTo = howTo
 
+-- Why a grant that never became usable was taken back, by the last status the
+-- platform answered for it: whole keys, so every one is a key the catalogue
+-- writes (a key spelt as a prefix plus a status is one no sweep can check).
+local GRANT_WHY = {
+	pending = 'ripperdoc.why.grant_pending',
+	failed = 'ripperdoc.why.grant_failed',
+	removed = 'ripperdoc.why.grant_removed',
+	absent = 'ripperdoc.why.grant_absent',
+}
+
 --- Watches a freshly granted power until the platform says it reached the
 --- body. Ready: the patient is told how to use it. Failed, removed, or never
 --- ready: it is taken back, the price comes back, and the patient and the
@@ -1086,7 +1096,7 @@ watchGrant = function(player, citizen, entry, gradeId, price)
 		M.Chrome.PullGrant(player, entry)
 		compensate(citizen, player, price, 'ripperdoc:refund')
 		local key = keyOf(player)
-		local flash = { key = Refusal.hostRefused, args = { why = 'ripperdoc.why.grant_' .. last } }
+		local flash = { key = Refusal.hostRefused, args = { why = GRANT_WHY[last] or GRANT_WHY.pending } }
 		if where[key] ~= nil then push(key, flash)
 		else pcall(OPX.NotifyLocale, player, 'ripperdoc.hostRefused', flash.args, 'error') end
 	end)
