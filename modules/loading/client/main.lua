@@ -68,6 +68,25 @@ local announced = { active = false, cover = false }
 local reasons, reasonCount = {}, 0
 local refusedForGood = false
 
+--- A name for the bay: plain text, trimmed, at most 32 characters, or ''.
+-- Anything else -- a table, a control character, a name longer than the mark
+-- can hold -- is the cover's own name, not an error on a player's screen.
+local function bayText(value)
+	if type(value) ~= 'string' then return '' end
+	local trimmed = value:match('^%s*(.-)%s*$')
+	if trimmed:find('%c') then return '' end
+	-- Characters where the sandbox has `utf8` (the form module reads it the same
+	-- way), bytes where it does not: the stricter of the two, never an error.
+	-- Text that is not UTF-8 at all is not a name the page could draw.
+	local length = #trimmed
+	if utf8 then
+		length = utf8.len(trimmed)
+		if length == nil then return '' end
+	end
+	if length > 32 then return '' end
+	return trimmed
+end
+
 --- Reads the settings once, with the shipped values for anything unusable.
 local function tuning()
 	local settings = type(M.Settings) == 'table' and M.Settings
@@ -79,6 +98,8 @@ local function tuning()
 		hide = settings.HIDE_HUD ~= false,
 		cover = cover.ENABLED ~= false,
 		video = cover.VIDEO ~= false,
+		name = bayText(cover.NAME),
+		subtitle = bayText(cover.SUBTITLE),
 		-- `x >= 0` is false for NaN, so a NaN falls through to the default.
 		delay = (delay ~= nil and delay >= 0 and delay <= 5000) and math.floor(delay) or 250,
 		poll = (poll ~= nil and poll >= 50 and poll <= 2000) and math.floor(poll) or 200,
@@ -142,15 +163,17 @@ local function draw(force)
 		hide = view.hide == true,
 		cover = view.cover == true,
 		video = view.video == true,
+		name = view.name or '',
+		subtitle = view.subtitle or '',
 		kind = view.kind or 'unknown',
 		progressKnown = view.cover == true and view.progressKnown == true,
 		-- Thousandths: finer than any bar can draw, and coarse enough that a
 		-- fraction jittering in its last digits is not a send per pass.
 		progress = view.progress ~= nil and math.floor(view.progress * 1000 + 0.5) / 1000 or 0,
 	}
-	local signature = ('%s|%s|%s|%s|%s|%s'):format(tostring(payload.hide),
+	local signature = ('%s|%s|%s|%s|%s|%s|%s|%s'):format(tostring(payload.hide),
 		tostring(payload.cover), tostring(payload.video), payload.kind,
-		tostring(payload.progressKnown), tostring(payload.progress))
+		tostring(payload.progressKnown), tostring(payload.progress), payload.name, payload.subtitle)
 	if not force and signature == sentSignature then return end
 
 	local sent, refused = OPX.UI.Send(SURFACE, CHANNEL_STATE, payload)
@@ -217,6 +240,8 @@ local function settle(snapshot)
 		-- Still counting towards the delay: the cheap exit must not skip it.
 		waiting = eligible and not cover,
 		video = settings.video,
+		name = settings.name,
+		subtitle = settings.subtitle,
 		kind = active and snapshot.kind or 'unknown',
 		progressKnown = cover and snapshot.progressKnown == true,
 		progress = cover and snapshot.progress or nil,

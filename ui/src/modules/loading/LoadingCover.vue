@@ -66,9 +66,12 @@ const percent = computed(() => Math.floor(fraction.value * 100))
       <div class="dock op-plane op-anchor-left op-ink">
         <div class="bay op-bay op-arete" data-augmented-ui="tr-clip bl-clip border">
           <div class="bay-inner op-interlace">
+            <!-- A server's own name when `config/loading.lua` gives one (text, never
+                 markup), the cover's own otherwise: the join screen's rule. -->
             <div class="brand">
-              <div class="mark">OPEN<b>//</b>77</div>
-              <div class="mode op-eyebrow">Infinity</div>
+              <div v-if="loading.name" class="mark">{{ loading.name }}</div>
+              <div v-else class="mark">OPEN<b>//</b>77</div>
+              <div class="mode op-eyebrow">{{ loading.subtitle || 'Infinity' }}</div>
             </div>
 
             <div class="progress">

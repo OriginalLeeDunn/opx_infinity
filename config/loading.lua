@@ -38,6 +38,15 @@ OPX.Config.MODULES.loading = {
 		-- milliseconds. A load shorter than this is a blink, and a cover that
 		-- flashes up and away for it is noise. Bounded 0..5000.
 		DELAY_MS = 250,
+
+		-- THE NAME IN THE BAY, for a server that wants its own on the cover: the
+		-- brand mark and the line under it. Plain text, at most 32 characters
+		-- each; empty keeps the cover's own OPEN//77 and Infinity. The join
+		-- screen has the same two lines in `web/loading.html`'s LOADSCREEN block,
+		-- which this file cannot reach -- that page runs before any Lua does --
+		-- so a server that names one names both.
+		NAME = '',
+		SUBTITLE = '',
 	},
 
 	-- How often the loading state is read, in milliseconds. One host call and a

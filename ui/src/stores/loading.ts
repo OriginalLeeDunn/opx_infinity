@@ -23,6 +23,9 @@ interface LoadingState {
   cover: boolean
   /** The film behind the cover, or the poster alone. */
   video: boolean
+  /** The server's own name for the bay, and the line under it; '' keeps the cover's. */
+  name: string
+  subtitle: string
   /** `unknown` or `fastTravel` -- the join kinds never reach a cover. */
   kind: string
   progressKnown: boolean
@@ -34,6 +37,8 @@ const state = reactive<LoadingState>({
   hide: false,
   cover: false,
   video: true,
+  name: '',
+  subtitle: '',
   kind: 'unknown',
   progressKnown: false,
   progress: 0
@@ -48,6 +53,8 @@ export function applyLoading(payload: Payload): void {
   state.hide = bool(payload.hide)
   state.cover = bool(payload.cover)
   state.video = bool(payload.video, true)
+  state.name = text(payload.name).slice(0, 32)
+  state.subtitle = text(payload.subtitle).slice(0, 32)
   state.kind = text(payload.kind, 'unknown')
   state.progressKnown = bool(payload.progressKnown)
   const fraction = num(payload.progress)

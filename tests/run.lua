@@ -30446,6 +30446,65 @@ do
 end
 end
 
+-- ── the cover can carry a server's own name ──────────────────────────────────
+-- The join screen takes a name for its bay (`web/loading.html`, LOADSCREEN), and
+-- the cover that dresses the loads in play is the same picture: a server that
+-- names one names both, through `config/loading.lua`. Text only, bounded, and
+-- anything unusable is the cover's own OPEN//77 rather than an error on screen.
+section('the native loading screen: a server can name the cover\'s bay')
+do
+	-- The last `loading:state` any page was sent (the helpers above are scoped
+	-- to their own block: the main chunk sits at Lua's 200-local ceiling).
+	local function lastState(control)
+		local last = {}
+		for _, page in ipairs(control.pages) do
+			for index = 1, #page.sent do
+				if page.sent[index].channel == 'opx:loading:state' then last = page.sent[index].payload end
+			end
+		end
+		return last
+	end
+	local function named(name, subtitle)
+		local env, control, why = boot('client', nil, nil, function(env, file)
+			if file ~= 'config/loading.lua' then return end
+			env.OPX.Config.MODULES.loading.COVER.NAME = name
+			env.OPX.Config.MODULES.loading.COVER.SUBTITLE = subtitle
+		end)
+		if why ~= nil then return nil, why end
+		local contract = env.OPX.Api.Get('loading')
+		control.Load({ active = true, kind = 'fastTravel' })
+		settle(control, function() return contract.State().value.cover end)
+		return lastState(control)
+	end
+
+	local sent, why = named('  NIGHT CITY RP ', 'Roleplay Server')
+	check('the client boots with a name for the bay', why == nil, why)
+	check('the cover is sent the name, trimmed, and the line under it',
+		sent ~= nil and sent.cover == true and sent.name == 'NIGHT CITY RP' and sent.subtitle == 'Roleplay Server',
+		sent and ('%s/%s/%s'):format(tostring(sent.cover), tostring(sent.name), tostring(sent.subtitle)) or 'nothing')
+
+	sent = named(('X'):rep(33), { 'not', 'text' })
+	check('a name longer than the mark holds, or one that is not text, is the cover\'s own',
+		sent ~= nil and sent.name == '' and sent.subtitle == '',
+		sent and ('%s/%s'):format(tostring(sent.name), tostring(sent.subtitle)) or 'nothing')
+
+	sent = named('LINE\nBREAK', '\255\254 not UTF-8')
+	check('and so is one carrying a control character, or bytes that are not UTF-8',
+		sent ~= nil and sent.name == '' and sent.subtitle == '',
+		sent and ('%s/%s'):format(tostring(sent.name), tostring(sent.subtitle)) or 'nothing')
+
+	sent = named('', '')
+	check('the shipped config names nothing: OPEN//77 and Infinity stay',
+		sent ~= nil and sent.name == '' and sent.subtitle == '')
+
+	local cover = io.open('ui/src/modules/loading/LoadingCover.vue', 'r')
+	local source = cover and cover:read('a') or ''
+	if cover then cover:close() end
+	check('the cover draws a name as text and falls back to its own mark',
+		source:find('v-if="loading.name" class="mark">{{ loading.name }}', 1, true) ~= nil
+			and source:find('v-else class="mark">OPEN<b>//</b>77', 1, true) ~= nil)
+end
+
 section('the native loading screen: the page half is in the bundle')
 do
 	local built = io.open('web/index.html', 'r')
