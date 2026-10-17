@@ -448,6 +448,19 @@ function M.Talk(player, on)
 	local state = states[player]
 	local key = state and state.active or nil
 	local member = key and state.joined[key] or nil
+	local loaded = playerOf(player)
+	if loaded == nil or (state ~= nil and state.citizenId ~= loaded.PlayerData.citizenId) then
+		dropPlayer(player)
+		sendKeyed(player, false, 'not_loaded')
+		return false, 'not_loaded'
+	end
+	-- Role changes are delivered on a queued event. A key press in that gap
+	-- must not grant speaking on the previous character's or job's channel.
+	if key ~= nil and not contains(Model.Allowed(built, snapshotOf(loaded), OPX.Now()), key) then
+		dropPlayer(player)
+		sendKeyed(player, false, 'not_allowed')
+		return false, 'not_allowed'
+	end
 	if member == nil then
 		sendKeyed(player, false, 'no_channel')
 		return false, 'no_channel'

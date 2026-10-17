@@ -121,8 +121,10 @@ end
 local function member(player, svc, minGrade)
 	local data = loaded(player)
 	if data == nil then return false end
+	local jobs = Access.Jobs(svc, minGrade)
+	if type(jobs) ~= 'table' or next(jobs) == nil then return false end
 	local now = OPX.Now()
-	return OPX.JobGate.Evaluate({ jobs = Access.Jobs(svc, minGrade), onDuty = svc.onDuty },
+	return OPX.JobGate.Evaluate({ jobs = jobs, onDuty = svc.onDuty },
 		{ job = data.job, jobs = data.jobs, atMs = now }, now,
 		{ maxAgeMs = 0, membership = config().membership }) == true
 end
@@ -511,7 +513,8 @@ local function endEscort(job, why)
 	end
 end
 
-local function commitCuff(officer, suspect, svc)
+local function commitCuff(officer, suspect, svc, officerData, suspectData)
+	officerData, suspectData = officerData or loaded(officer), suspectData or loaded(suspect)
 	local cfg = config().cuffs
 	if cfg.consume then
 		local api = inventory()
@@ -521,6 +524,7 @@ local function commitCuff(officer, suspect, svc)
 		end
 		if not read or type(removed) ~= 'table' or not removed.ok then return answer(officer, false, 'no_cuffs') end
 	end
+	if loaded(officer) ~= officerData or loaded(suspect) ~= suspectData then return end
 	local record = recordOf(suspect)
 	record.cuffed = { by = citizenOf(officer), service = svc.key, at = wallSeconds() }
 	if not writeRecord(suspect, record) then return answer(officer, false, 'unavailable') end
@@ -537,6 +541,7 @@ local function finishCuff(job, completed)
 	if job.done then return end
 	job.done = true
 	release(job)
+	if loaded(job.officer) ~= job.officerData or loaded(job.suspect) ~= job.suspectData then return end
 	if not completed then return answer(job.officer, false, 'interrupted') end
 	-- AGAIN, NOW: the suspect had DURATION_MS to walk away.
 	local svc = capable(job.officer, Capability.CUFF)
@@ -549,10 +554,11 @@ local function finishCuff(job, completed)
 	local down, stage = downState(job.suspect)
 	if down and stage ~= 'wounded' then return answer(job.officer, false, 'is_dead') end
 	if carried(job.officer, config().cuffs.item) < 1 then return answer(job.officer, false, 'no_cuffs') end
-	commitCuff(job.officer, job.suspect, svc)
+	commitCuff(job.officer, job.suspect, svc, job.officerData, job.suspectData)
 end
 
 local function cuff(officer, suspect, svc)
+	local officerData, suspectData = loaded(officer), loaded(suspect)
 	if busy[officer] ~= nil then return answer(officer, false, 'busy') end
 	if cuffed[suspect] then return answer(officer, false, 'already_cuffed') end
 	local down, stage = downState(suspect)
@@ -561,10 +567,12 @@ local function cuff(officer, suspect, svc)
 		return answer(officer, false, 'no_cuffs', { item = config().cuffs.item })
 	end
 	-- A wounded body on the ground does not fight the cuffs.
-	if down then return commitCuff(officer, suspect, svc) end
+	if loaded(officer) ~= officerData or loaded(suspect) ~= suspectData then return end
+	if down then return commitCuff(officer, suspect, svc, officerData, suspectData) end
 	local progress = OPX.Api.Get('progress')
 	if progress == nil or type(progress.Start) ~= 'function' then return answer(officer, false, 'no_bar') end
-	local job = { kind = 'cuff', officer = officer, suspect = suspect, svc = svc }
+	local job = { kind = 'cuff', officer = officer, suspect = suspect, svc = svc,
+		officerData = officerData, suspectData = suspectData }
 	busy[officer] = job
 	local started = progress.Start(officer, OWNER, {
 		label = locale('police.bar.cuff'), durationMs = config().cuffs.durationMs, cancelable = true,
@@ -681,10 +689,14 @@ local function labelOf(name)
 end
 
 local function frisk(officer, suspect, svc)
+	local officerData, suspectData = loaded(officer), loaded(suspect)
 	if not searchable(suspect) then return answer(officer, false, 'not_restrained') end
 	local api = inventory()
 	if api == nil or type(api.GetInventory) ~= 'function' then return answer(officer, false, 'unavailable') end
 	local read, bag = pcall(api.GetInventory, suspect)
+	if loaded(officer) ~= officerData or loaded(suspect) ~= suspectData then return end
+	if capable(officer, Capability.FRISK) == nil or not searchable(suspect) or
+		not within(positionOf(officer), positionOf(suspect), config().reach) then return end
 	if not read or type(bag) ~= 'table' or not bag.ok or type(bag.value) ~= 'table' then
 		return answer(officer, false, 'unavailable')
 	end
@@ -698,7 +710,7 @@ local function frisk(officer, suspect, svc)
 		end
 	end
 	table.sort(rows, function(a, b) return a.slot < b.slot end)
-	frisks[officer] = { target = suspect, atMs = OPX.Now() }
+	frisks[officer] = { target = suspect, atMs = OPX.Now(), officerData = officerData, suspectData = suspectData }
 	TriggerClientEvent(Event.FRISK_VIEW, officer, { target = suspect, items = rows })
 	OPX.NotifyLocale(suspect, 'police.suspect.frisked', { service = svc.short }, 'warning')
 	audit('police.frisk', officer, true, ('%s searched player %d'):format(svc.key, suspect))
@@ -727,6 +739,9 @@ local function onConfiscate(officer, payload)
 		or OPX.Now() - seen.atMs > FRISK_TTL_MS then
 		return answer(officer, false, 'search_first')
 	end
+	if loaded(officer) ~= seen.officerData or loaded(suspect) ~= seen.suspectData then
+		return answer(officer, false, 'search_first')
+	end
 	local svc, why = capable(officer, Capability.FRISK)
 	if svc == nil then return answer(officer, false, why) end
 	if not within(positionOf(officer), positionOf(suspect), config().reach) then
@@ -741,12 +756,13 @@ local function onConfiscate(officer, payload)
 		return answer(officer, false, 'unavailable')
 	end
 	local read, held = pcall(api.GetSlot, suspect, slot)
+	if loaded(officer) ~= seen.officerData or loaded(suspect) ~= seen.suspectData then return end
 	local entry = read and type(held) == 'table' and held.ok and held.value or nil
 	if type(entry) ~= 'table' or type(entry.name) ~= 'string' then return answer(officer, false, 'no_item') end
 	local count = math.tointeger(entry.count) or 1
 	-- OUT OF THE BAG FIRST, INTO THE LOCKER SECOND: a failure in between hands
 	-- it back, so nothing is ever in two places.
-	local took, removed = pcall(api.RemoveFromSlot, suspect, slot, count)
+	local took, removed = pcall(api.RemoveFromSlot, suspect, slot, count, entry)
 	if not took or type(removed) ~= 'table' or not removed.ok then return answer(officer, false, 'no_item') end
 	local put, stored = pcall(api.AddToStash, station.stash, entry.name, count, entry.metadata)
 	if not put or type(stored) ~= 'table' or not stored.ok then
@@ -1014,7 +1030,7 @@ local function vehiclePosition(id)
 		x, y, z = OPX.Math.Finite(car.position.x), OPX.Math.Finite(car.position.y), OPX.Math.Finite(car.position.z)
 	end
 	if x == nil or y == nil or z == nil then return nil end
-	return { x = x, y = y, z = z }
+	return { x = x, y = y, z = z, bucket = math.floor(OPX.Math.Finite(car.bucket) or 0) }
 end
 
 local function finishImpound(job, completed)
@@ -1422,7 +1438,11 @@ function M.Start()
 			if player == nil or player <= 0 then return end
 			if cooled(player, kind) then return answer(player, false, 'rate_limited') end
 			-- On a thread: the bag, the account and the vehicle rows may yield.
-			CreateThread(function() handler(player, payload) end)
+			local data = loaded(player)
+			CreateThread(function()
+				if data == nil or loaded(player) ~= data then return end
+				handler(player, payload)
+			end)
 		end)
 	end
 	wire(Event.BOARD, 'board', onBoard)

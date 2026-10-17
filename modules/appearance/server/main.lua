@@ -790,6 +790,11 @@ local wardrobeOffer = M.WARDROBE_POLICY_DEFAULT
 local function grantsOf(source)
 	local held = dressing[source]
 	if held == nil then return nil end
+	local player = character and character.GetPlayer(source) or nil
+	if player == nil or player ~= held.player then
+		dressing[source] = nil
+		return nil
+	end
 	local now = OPX.Now()
 	if held.open ~= nil and now >= held.open.untilMs then held.open = nil end
 	if held.priced ~= nil and now >= held.priced.untilMs then held.priced = nil end
@@ -1054,7 +1059,8 @@ local function registerEvents()
 		local held = grantsOf(src)
 		if held == nil then return end
 		local now = OPX.Now()
-		for _, grant in ipairs({ held.priced, held.open }) do
+		for _, kind in ipairs({ 'priced', 'open' }) do
+			local grant = held[kind]
 			if grant ~= nil then
 				local cap = (grant.sinceMs or now) + ROOM_CAP_MS
 				grant.untilMs = math.min(cap, math.max(grant.untilMs, now + DRESSING_MS))
@@ -1300,6 +1306,8 @@ function M.Api()
 	function M.AllowClothingSave(playerId, owner, options)
 		local id = tonumber(playerId)
 		if id == nil or id <= 0 then return false, 'invalid_player' end
+		local player = character and character.GetPlayer(id) or nil
+		if player == nil then return false, 'invalid_player' end
 		options = type(options) == 'table' and options or {}
 		local grant = { untilMs = OPX.Now() + DRESSING_MS, owner = tostring(owner or '?'),
 			sinceMs = OPX.Now() }
@@ -1315,7 +1323,7 @@ function M.Api()
 				wear[slot] = clean
 			end
 		end
-		local held = grantsOf(id) or { looks = {} }
+		local held = grantsOf(id) or { looks = {}, player = player }
 		local kind
 		if type(options.charge) == 'function' then
 			grant.charge, held.priced, kind = options.charge, grant, 'priced'

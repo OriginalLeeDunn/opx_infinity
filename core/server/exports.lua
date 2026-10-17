@@ -268,7 +268,9 @@ local function loaded(value)
 	local id = playerOf(value)
 	if id == nil then return nil, refuse('export.badArgument') end
 	local player = character.GetPlayer(id)
-	if player == nil then return nil, refuse('error.notLoggedIn') end
+	if player == nil or player.PlayerData.userId ~= OPX.UserIdOf(id) then
+		return nil, refuse('error.notLoggedIn')
+	end
 	return player, nil, character
 end
 
@@ -290,7 +292,9 @@ publish('GetPlayerByCitizenId', 'read', function(_, citizenId)
 	local id = citizenOf(citizenId)
 	if id == nil then return refuse('export.badArgument') end
 	local player = character.GetPlayerByCitizenId(id)
-	if player == nil then return refuse('error.notLoggedIn') end
+	if player == nil or player.PlayerData.userId ~= OPX.UserIdOf(player.PlayerData.source) then
+		return refuse('error.notLoggedIn')
+	end
 	return ok(character.PublicView(player))
 end)
 
@@ -1358,11 +1362,18 @@ local function invoicesApi()
 	return invoices
 end
 
-local function invoiceSource(caller) return ('ext:' .. caller):sub(1, 32) end
+-- The invoice source column is 32 bytes. Truncating a resource name would let
+-- another writer with the same prefix cancel its invoices as their own.
+local function invoiceSource(caller)
+	if #caller > 28 then return nil end
+	return 'ext:' .. caller
+end
 
 publish('IssueInvoice', 'write', function(caller, issuer, target, amount, reason, options)
 	local invoices = invoicesApi()
 	if invoices == nil then return refuse('error.unavailable') end
+	local issuedBy = invoiceSource(caller)
+	if issuedBy == nil then return refuse('export.badArgument') end
 	local from, to = playerOf(issuer), playerOf(target)
 	if from == nil or to == nil or type(amount) ~= 'number' or type(reason) ~= 'string'
 		or (options ~= nil and type(options) ~= 'table') then
@@ -1370,7 +1381,7 @@ publish('IssueInvoice', 'write', function(caller, issuer, target, amount, reason
 	end
 	options = options or {}
 	return answered(invoices.Issue({ issuer = from, target = to, amount = amount, reason = reason,
-		account = options.account, cutPct = options.cutPct, source = invoiceSource(caller) }))
+		account = options.account, cutPct = options.cutPct, source = issuedBy }))
 end, true)
 
 -- What a loaded player owes: `{ rows = { { id, state, amount, reason, ... } } }`.
@@ -1385,9 +1396,11 @@ end)
 publish('CancelInvoice', 'write', function(caller, invoiceId)
 	local invoices = invoicesApi()
 	if invoices == nil then return refuse('error.unavailable') end
+	local issuedBy = invoiceSource(caller)
+	if issuedBy == nil then return refuse('export.badArgument') end
 	if math.type(invoiceId) ~= 'integer' then return refuse('export.badArgument') end
 	local read = invoices.Get(invoiceId)
-	if not read.ok or read.value == nil or read.value.source ~= invoiceSource(caller) then
+	if not read.ok or read.value == nil or read.value.source ~= issuedBy then
 		return refuse('invoice.notYours')
 	end
 	return answered(invoices.Cancel(invoiceId))

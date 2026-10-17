@@ -240,6 +240,7 @@ end
 -- @return boolean
 -- @return string|nil 'warrant_active' | 'record_felony'
 function Access.Clean(rows, nowS, cleanDays)
+	if type(rows) ~= 'table' then return false, 'unavailable' end
 	local since = nowS - (cleanDays or 0) * DAY_S
 	local felony = false
 	for _, row in ipairs(type(rows) == 'table' and rows or {}) do

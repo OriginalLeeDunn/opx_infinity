@@ -447,7 +447,9 @@ function Access.Public(contract, describe)
 	return {
 		id = contract.id, type = contract.type, title = contract.title, brief = contract.brief,
 		reward = contract.reward, pay = merc, cutPct = contract.cutPct,
-		minCred = contract.minCred, state = contract.state, poster = contract.posterName,
+		minCred = contract.minCred, state = contract.state,
+		-- A player's RP name is not public merely because they posted a gig.
+		poster = contract.posterKind == M.Poster.PLAYER and contract.posterCid or contract.posterName,
 		target = label, district = district, validate = contract.validate,
 	}
 end

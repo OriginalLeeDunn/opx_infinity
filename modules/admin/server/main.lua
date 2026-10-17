@@ -664,6 +664,17 @@ function Server.Cooled(player, key, intervalMs)
 	return OPX.Cooling(player, 'admin:' .. key, intervalMs)
 end
 
+--- Captures the recipient of a yielding read and rechecks their grant on reply.
+-- Console responses have no recyclable player slot.
+function Server.Recipient(player, grant)
+	if player <= 0 then return function() return true end end
+	local userId, session = OPX.UserIdOf(player), OPX.Sessions[player]
+	return function()
+		return userId ~= nil and OPX.UserIdOf(player) == userId and
+			OPX.Sessions[player] == session and Server.Permitted(player, grant) == true
+	end
+end
+
 -- ── one heavy request in flight per operator ─────────────────────────────────
 --
 -- THE SERVER'S TASK QUOTA IS 1,024, and every bag, weapon and character command
@@ -694,6 +705,15 @@ function Server.Heavy(source, raw, fn, key)
 	if player <= 0 then
 		CreateThread(fn)
 		return true
+	end
+	-- A queued request belongs to the connection that submitted it. Clearing
+	-- the worker on disconnect cannot cancel a coroutine the host already queued.
+	local userId, session = OPX.UserIdOf(player), OPX.Sessions[player]
+	local requested = fn
+	fn = function()
+		if userId == nil or OPX.UserIdOf(player) ~= userId or
+			OPX.Sessions[player] ~= session then return end
+		return requested()
 	end
 	local worker = workers[player]
 	if worker ~= nil and Server.NowMs() - worker.since > HEAVY_STALE_MS then

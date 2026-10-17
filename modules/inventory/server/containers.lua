@@ -842,6 +842,15 @@ function Containers.Move(from, fromSlot, to, toSlot, count)
 	else
 		if count ~= source.count then return false, 'cannot_swap' end
 		if not same then
+			-- A swap moves the target back into the source container as well.
+			-- Apply the same loss and weapon-round guards in that direction.
+			local returning = Catalog.Get(target.name)
+			if from.transient and returning and returning.droppable == false then
+				return false, 'no_drop'
+			end
+			local refusal = M.Weapons.BeforeLeave(to, target)
+			if refusal then return false, refusal end
+
 			-- A swap moves weight both ways, and both containers have to hold the
 			-- result: checking only the destination lets an overweight stack be
 			-- parked in the lighter one.

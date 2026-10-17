@@ -55,7 +55,9 @@ local function encodeValue(value, out)
 				if index > 1 then out[#out + 1] = ',' end
 				encodeValue(keys[index], out)
 				out[#out + 1] = ':'
-				encodeValue(value[keys[index]] or value[tonumber(keys[index])], out)
+				local nested = value[keys[index]]
+				if nested == nil then nested = value[tonumber(keys[index])] end
+				encodeValue(nested, out)
 			end
 			out[#out + 1] = '}'
 		end
@@ -141,7 +143,8 @@ end
 function json.decode(text)
 	if type(text) ~= 'string' then return nil end
 	local ok, value = pcall(decodeValue, text, 1)
-	return ok and value or nil
+	if not ok then return nil end
+	return value
 end
 
 Host.json = json
@@ -2251,12 +2254,13 @@ function Host.Environment(side, database)
 		-- Two answer shapes are documented for the host call: the effective key,
 		-- or `true, key`. Both are produced here, because reading only one of them
 		-- is a bug this suite has already caught once.
-		RegisterKeyMapping = function(id, name, key, onPressed)
+		RegisterKeyMapping = function(id, name, key, onPressed, onReleased)
 			if keyMappings.refuse then return false, keyMappings.refuse end
 			if key == false then return false, 'no_key' end
 			local effective = type(key) == 'string' and key ~= '' and key or 'E'
 			input.keys[id] = effective
-			keyMappings.byId[id] = { name = name, key = effective, pressed = meterWrap('key ' .. id, onPressed) }
+			keyMappings.byId[id] = { name = name, key = effective, pressed = meterWrap('key ' .. id, onPressed),
+				released = type(onReleased) == 'function' and meterWrap('key release ' .. id, onReleased) or nil }
 			if keyMappings.secondShape then return true, effective end
 			return effective
 		end,

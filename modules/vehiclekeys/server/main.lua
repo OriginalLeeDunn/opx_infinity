@@ -363,9 +363,15 @@ end
 -- @param vehicleId any the host's id, already resolved
 -- @return Result { locked, label }
 function M.Toggle(source, vehicleId)
+	source = math.tointeger(tonumber(source))
+	if source == nil or source < 1 then return Result.Err('vehiclekeys.tooFar') end
+	local character = OPX.Api.Get('character')
+	local holder = character and character.GetPlayer(source)
+	local citizenId = holder and holder.PlayerData and holder.PlayerData.citizenId
 	local snapshot = snapshotOf(vehicleId)
 	if snapshot == nil then return Result.Err('vehiclekeys.noVehicle') end
 	if not reaches(source, vehicleId, snapshot) then return Result.Err('vehiclekeys.tooFar') end
+	if character ~= nil and citizenId == nil then return Result.Err('vehiclekeys.noKey') end
 
 	-- LOOKED UP, NOT MINTED. A vehicle nobody ever cut a key for has no plate,
 	-- and minting one here would only prove that nobody holds it.
@@ -374,6 +380,19 @@ function M.Toggle(source, vehicleId)
 		return Result.Err('vehiclekeys.noKey')
 	end
 
+	-- Counting keys may load a bag. The owner and the vehicle must still be here.
+	if character ~= nil then
+		local current = character.GetPlayer(source)
+		if current == nil or current.PlayerData == nil
+			or current.PlayerData.citizenId ~= citizenId then return Result.Err('vehiclekeys.noKey') end
+	end
+	local currentSnapshot = snapshotOf(vehicleId)
+	if currentSnapshot == nil then return Result.Err('vehiclekeys.noVehicle') end
+	local currentIdentity = lookup(vehicleId, currentSnapshot)
+	if currentIdentity == nil or currentIdentity.plate ~= identity.plate then
+		return Result.Err('vehiclekeys.noVehicle')
+	end
+	if not reaches(source, vehicleId, currentSnapshot) then return Result.Err('vehiclekeys.tooFar') end
 	local host = Open77.vehicles
 	if type(host) ~= 'table' or type(host.isLocked) ~= 'function'
 		or type(host.setLocked) ~= 'function' then

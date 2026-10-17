@@ -203,8 +203,13 @@ function tell(action: string, payload: Payload = {}): void {
   send('opx:inventory:request', { handle: handle.value, action, payload })
 }
 
+// A response belongs to the opening that requested it. Closing and reopening the
+// inventory must not let an old timeout overwrite the new opening's status or lock.
+let requestGeneration = 0
+
 async function ask(action: string, payload: Payload = {}): Promise<Payload | null> {
-  if (handle.value === null) return null
+  if (handle.value === null || busy.value) return null
+  const generation = requestGeneration
   busy.value = true
   status.value = ''
   try {
@@ -225,10 +230,12 @@ async function ask(action: string, payload: Payload = {}): Promise<Payload | nul
     const key = error instanceof BridgeError ? error.localeKey : ''
     const timedOut = key === 'error.rpc_timeout' || key === 'timeout'
     const unanswered = key === '' || key === 'error.rpc_failed'
-    if (timedOut || unanswered) status.value = label(timedOut ? 'timeout' : 'failed')
+    if (generation === requestGeneration && (timedOut || unanswered)) {
+      status.value = label(timedOut ? 'timeout' : 'failed')
+    }
     return null
   } finally {
-    busy.value = false
+    if (generation === requestGeneration) busy.value = false
   }
 }
 
@@ -675,6 +682,7 @@ function applyConfig(payload: unknown): void {
 }
 
 function blank(): void {
+  requestGeneration += 1
   open.value = false
   primary.value = null
   secondary.value = null
@@ -818,6 +826,7 @@ watch(
 )
 
 onUnmounted(() => {
+  requestGeneration += 1
   unbindPointer()
   frameObserver?.disconnect()
   frameObserver = null

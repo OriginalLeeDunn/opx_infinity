@@ -1,0 +1,129 @@
+Audit OPX Infinity — 17 octobre 2026
+
+État : corrections et vérifications automatisées terminées.
+Modifications locales uniquement : aucun commit, push ou déploiement.
+
+Périmètre
+Le cœur, les contrats entre modules, les opérations serveur, les clients Lua,
+l’interface Vue et les outils de compilation ont été répartis entre plusieurs
+agents. La matrice couverture.tsv accompagne ce rapport (517 fichiers applicatifs,
+184 044 lignes dans cet état du dépôt : 347 fichiers lus intégralement, 114 lus
+pour toutes leurs lignes de code hors commentaires, 56 fichiers de données dont
+le code hors littéraux est lu et les valeurs contrôlées par schéma). Elle distingue lecture
+intégrale, lecture de toutes les lignes de code hors commentaires et validation
+automatique des données générées. Les littéraux des traductions/catalogues ne sont pas présentés comme une
+relecture éditoriale manuelle. Les artefacts web générés sont reconstruits ;
+les images, polices et dépendances installées ne sont pas relus comme du code
+source du projet. Les tests historiques sont exécutés ; leurs
+sections modifiées et les nouveaux scénarios sont relus. Cela ne constitue pas
+une certification d’absence de vulnérabilités.
+
+Corrections principales
+
+1. Identité, sessions et confidentialité
+Des opérations différées conservaient un simple numéro de joueur alors que le
+slot pouvait changer de propriétaire. Les actions sensibles vérifient désormais
+la session, le compte et/ou le personnage capturés, aux frontières asynchrones.
+Cela couvre le chargement de personnage, les réponses administratives privées,
+les consentements, les soins, les factures, la progression, les vêtements et les
+opérations métier. Les données d’un ancien personnage ne sont plus publiées à
+la nouvelle connexion. Un ancien watchdog ou un nettoyage de roster ne doit
+pas détruire la session suivante, même pour une reconnexion du même compte.
+Fichiers centraux : core/server/{sessions,gate,exports}.lua,
+modules/character/server/{main,character,player}.lua.
+
+2. Inventaires, échanges et économie
+Les mutations et remboursements utilisent le citizenId durable. Une suppression
+précise peut vérifier atomiquement le nom et les métadonnées du slot après les
+lectures qui cèdent la main. Les contrôles de proximité, instance, rôle et
+identité sont refaits après ces lectures. Les ventes, plafonds, recrutements,
+commandes de fabrication et acceptations concurrentes sont réservés/sérialisés.
+Un inventaire en cours de sauvegarde n’est pas considéré sauvegardé trop tôt.
+Les paiements hors ligne respectent le plafond JSON sûr dans le UPDATE SQL.
+Les paramètres SQL facultatifs ne créent plus de trous dans les tableaux.
+
+3. Factures et reprise des paiements
+Une réponse inconnue après crédit de trésorerie garde le versement en attente
+avec la même clé d’idempotence, sans payer aussi cette part à l’employé.
+Les espaces de noms des factures externes ne sont plus tronqués : les ressources
+émettrices/annulatrices de plus de 28 octets reçoivent export.badArgument.
+Ce changement de compatibilité est décrit dans docs/MANUAL.md.
+
+4. Autorisations et monde
+Les exigences métier malformées ou absentes sur les opérations réservées sont
+refusées. Les consentements expirés et participants ayant changé sont refusés.
+Les véhicules ne sont pas retirés si un passager est monté pendant la sauvegarde ;
+un refus conserve leur état de sortie et leur garage précédent. Les clés et
+le carburant refont les contrôles d’identité, de distance et d’instance après
+les opérations suspendues. Le backend des portes propage les refus d’adoption.
+
+5. Clients et interface
+Les tâches différées ne doivent plus rouvrir un menu arrêté, reprendre le focus
+après fermeture ou appliquer une ancienne apparence au personnage suivant.
+Les instantanés et suppressions reçus pendant une reconstruction sont conservés.
+Les anciennes réponses RPC et minuteries ne contaminent plus une ouverture
+suivante. Le relâchement du push-to-talk arrête la transmission et son entretien.
+Le clavier respecte la surface qui possède le focus. Les éditions de formulaire
+arrivées dans le désordre ne remplacent plus une valeur déjà acquittée.
+Les notifications audio vérifient l’identité du toast et l’état du composant.
+
+6. Budgets d’exécution
+Les listes métier volumineuses sont préparées sur plusieurs reprises, en gardant
+les listes complètes. Cas mesurés avant/après sur les scénarios ciblés :
+- Taxi, 32 appels : environ 40 200 → 2 872 instructions par reprise au pire.
+- Médical, 32 appels : 33 317 → 2 690.
+- Mécanicien, tableau : 39 610 → 2 893 ; parking de 120 véhicules : 2 690 après.
+- Ripperdoc, 40 implants : 30 043 → 2 914.
+- Netrunner, 40 démons : 15 580 → 3 301.
+Ces chiffres viennent du harness Lua, pas d’un profilage d’une partie réelle.
+
+7. Compilation et tests
+source-map-js est passé de 1.2.1 à 1.2.2 pour corriger l’avis de déni de service
+GHSA-68fv-2mgg-jv7q. Le générateur de vêtements respecte les limites en octets
+UTF-8 et les frontières d’échappement Lua. Le harness conserve les booléens JSON
+false. La CI vérifie les régressions ajoutées, le typage et la compilation UI,
+et l’artefact web reconstruit est présent dans les modifications.
+
+Vérifications finales
+- Suite complète Lua 5.4 : 6 690 contrôles, zéro échec.
+- Même exécution avec OPX_BUDGET_METER=10000 : zéro site client mesuré au-delà
+  de 10 000 instructions par reprise.
+- 42 fichiers tests/audit-*.lua : tous exécutés avec succès ; sortie dans
+  regressions.txt. Les tests chargent les vraies fonctions de production.
+- Syntaxe Lua 5.4 : 504 fichiers valides, manifeste DSL exclu volontairement.
+- Sandbox : 459 scripts manifestés valides.
+- Manifeste : zéro fichier absent, zéro source Lua applicative non déclarée.
+- SQL : aucune utilisation MySQL en dehors des couches de stockage autorisées.
+- Typecheck TypeScript/Vue : réussi.
+- Cinq scripts de régression Node UI/générateur : réussis.
+- Build Vite : réussi, web/index.html reconstruit (483,34 kB).
+- Audit npm après mise à jour : zéro vulnérabilité signalée ; dernière
+  confirmation hors ligne sur le cache de l’audit réseau réalisé cette session.
+- git diff --check : réussi.
+
+Reproduction dans un environnement disposant de Lua 5.4 et opx_lib :
+  OPX_LIB_PATH=../opx_lib OPX_BUDGET_METER=10000 lua5.4 tests/run.lua
+  OPX_LIB_PATH=../opx_lib bash -e -c 'for t in tests/audit-*.lua; do lua5.4 "$t"; done'
+  npm run typecheck
+  node tests/ui-inventory-rpc.mjs
+  node tests/ui-radio-ptt.mjs
+  node tests/ui-notify-lifecycle.mjs
+  node tests/ui-spawn-focus.mjs
+  node tests/tool-garments.mjs
+  npm run build
+
+Références locales de validation : dépôt de départ 4a82989 ; opx_lib 31e281a.
+Lua absent du PATH local : exécution par la bibliothèque système Lua 5.4 via
+un petit lanceur ctypes temporaire. La CI utilise directement lua5.4.
+L’exécution globale finale inclut les contrôles de budget ; les répétitions
+antérieures ayant révélé des défauts de fixtures ne servent pas de résultat final.
+
+Limites pratiques
+Les tests utilisent Lua 5.4 et la vraie bibliothèque cliente opx_lib, avec un
+hôte Open77 simulé. Aucun serveur de production ni base MySQL réelle n’a été
+modifié. Les scénarios ciblés suspendent les opérations pour exercer les races ;
+le harness ne reproduit pas toute la file d’événements ni tous les refus natifs.
+Restent à valider en jeu : reconnexions/changements de personnage, flux à deux
+joueurs, persistance réelle après redémarrage, menus lourds et libération du
+micro/focus. Aucun tarif ni emplacement métier n’a été changé pour faire passer
+les tests.

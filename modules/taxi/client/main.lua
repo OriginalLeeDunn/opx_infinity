@@ -20,6 +20,9 @@ local settings
 -- callId -> blip id, for the calls this driver was alerted to.
 local blips = {}
 local menuHandle
+local boardPending, boardWorking = nil, false
+local boardGeneration = 0
+local stopped = false
 
 local function config()
 	if settings == nil then settings = Model.Settings(M.Settings) end
@@ -43,6 +46,7 @@ local function openMenu(id, title, items, on)
 	end
 	local opened = menu.Open({
 		owner = OWNER, id = id, steal = true, focus = 'cursor', title = title, items = items,
+		yield = true,
 		on = function(payload)
 			local data = type(payload) == 'table' and payload.data or nil
 			if type(data) == 'table' then on(data) end
@@ -54,6 +58,11 @@ local function openMenu(id, title, items, on)
 		return false
 	end
 	menuHandle = type(opened.value) == 'table' and opened.value.handle or nil
+	if stopped then
+		if menuHandle ~= nil then pcall(menu.Close, menuHandle, 'owner_stopped') end
+		menuHandle = nil
+		return false
+	end
 	return true
 end
 
@@ -78,8 +87,7 @@ end
 
 -- ── the board ────────────────────────────────────────────────────────────────
 
-local function onBoardView(payload)
-	if type(payload) ~= 'table' then return end
+local function buildBoard(payload, generation)
 	local calls = type(payload.calls) == 'table' and payload.calls or {}
 	local items = {}
 	local ride = type(payload.ride) == 'table' and payload.ride or nil
@@ -100,7 +108,7 @@ local function onBoardView(payload)
 			items[#items + 1] = { id = 'hail', icon = 'person', label = locale('taxi.board.hail'),
 				data = { verb = 'hail' }, close = true }
 		end
-		for _, call in ipairs(calls) do
+		for index, call in ipairs(calls) do
 			items[#items + 1] = {
 				id = 'call.' .. call.id, label = callLabel(call), icon = 'location',
 				value = locale('taxi.board.age', { minutes = math.floor((call.ageS or 0) / 60) }),
@@ -111,17 +119,29 @@ local function onBoardView(payload)
 						data = { verb = 'route', call = call }, close = true },
 				},
 			}
+			if index % 4 == 0 then
+				Wait(0)
+				if stopped or generation ~= boardGeneration then return end
+			end
 		end
 		if #calls == 0 then
 			items[#items + 1] = { id = 'empty', label = locale('taxi.board.empty'), icon = 'info', disabled = true }
 		end
-		for _, row in ipairs(type(payload.street) == 'table' and payload.street or {}) do
+		for index, row in ipairs(type(payload.street) == 'table' and payload.street or {}) do
 			items[#items + 1] = { id = 'street.' .. tostring(row.company), icon = 'flag',
 				label = locale('taxi.board.street', { company = row.short or row.company }),
 				description = not row.available and locale('taxi.board.streetBusy') or nil,
 				disabled = not row.available, data = { verb = 'street', company = row.company }, close = true }
+			if index % 4 == 0 then
+				Wait(0)
+				if stopped or generation ~= boardGeneration then return end
+			end
 		end
 	end
+	-- The menu validates every parent and child row. Give that paced validation
+	-- a fresh resume rather than sharing the last stretch of board construction.
+	Wait(0)
+	if stopped or generation ~= boardGeneration then return end
 	openMenu(MENU_BOARD, locale('taxi.board.title'), items, function(data)
 		if data.verb == 'take' then
 			TriggerServerEvent(Event.TAKE, { callId = data.id })
@@ -136,6 +156,29 @@ local function onBoardView(payload)
 		elseif data.verb == 'stop' then
 			TriggerServerEvent(Event.STOP, {})
 		end
+	end)
+end
+
+-- Full snapshots coalesce while one is being built. One worker preserves menu
+-- ownership across the yields inside Open; overlapping replies never race two
+-- builders against the same dispatch menu.
+local function onBoardView(payload)
+	if stopped or type(payload) ~= 'table' then return end
+	boardGeneration = boardGeneration + 1
+	boardPending = payload
+	if boardWorking then return end
+	boardWorking = true
+	CreateThread(function()
+		while boardPending ~= nil and not stopped do
+			local pending, generation = boardPending, boardGeneration
+			boardPending = nil
+			Wait(0)
+			if not stopped and generation == boardGeneration then
+				local ok, why = pcall(buildBoard, pending, generation)
+				if not ok then OPX.Note('taxi', 'the board could not be drawn: ' .. tostring(why)) end
+			end
+		end
+		boardWorking = false
 	end)
 end
 
@@ -213,6 +256,8 @@ end
 -- @author dop42
 function M.Init()
 	settings, blips, menuHandle = nil, {}, nil
+	boardPending, boardWorking, stopped = nil, false, false
+	boardGeneration = boardGeneration + 1
 end
 
 --- Wires the answers.
@@ -229,6 +274,9 @@ end
 --- Hands the menu and the pins back.
 -- @author dop42
 function M.Stop()
+	stopped = true
+	boardGeneration = boardGeneration + 1
+	boardPending = nil
 	for id in pairs(blips) do dropBlip(id) end
 	local menu = OPX.Api.Get('menu')
 	if menuHandle ~= nil and menu ~= nil and type(menu.Close) == 'function' then

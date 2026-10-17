@@ -85,9 +85,11 @@ function OPX.Scheduler.Every(name, intervalMs, step)
 	-- function is refused here rather than silently becoming frame-rate.
 	--
 	-- Zero itself stays legal: a caller that means "every pass" may say so.
+	-- Non-finite values never become due and can poison the nearest deadline.
 	local interval = tonumber(intervalMs)
-	if type(intervalMs) == 'function' or interval == nil or interval < 0 then
-		error(('Every(%q, intervalMs, step): intervalMs must be a number of '
+	if type(intervalMs) == 'function' or interval == nil or interval ~= interval
+		or interval == math.huge or interval < 0 then
+		error(('Every(%q, intervalMs, step): intervalMs must be a finite non-negative number of '
 			.. 'milliseconds, got %s'):format(name, type(intervalMs)), 2)
 	end
 	interval = math.floor(interval)

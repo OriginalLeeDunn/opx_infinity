@@ -76,6 +76,7 @@ local registered
 
 -- Whether a registration is running, and whether another is wanted after it.
 local syncing, dirty = false, false
+local generation = 0
 
 -- Whether the server last said this player's body is hidden, and which players
 -- it said are held still. Nil until it has said.
@@ -618,7 +619,7 @@ local function grantedSignature()
 end
 
 -- The definitions the access map grants, by kind, and their signature.
-local function wanted()
+local function wanted(token)
 	local byKind, ids = {}, {}
 	-- Once, not once per row: the same word heads every folder.
 	local heading = locale('admin.target.group')
@@ -626,6 +627,7 @@ local function wanted()
 		-- Built on the registration thread, a few rows a resume: the first
 		-- registration builds every granted row, about 8,000 instructions in one go.
 		if index % 8 == 0 and coroutine.isyieldable() then Wait(0) end
+		if token ~= generation then return {}, '' end
 		if granted(row.grant) then
 			byKind[row.kind] = byKind[row.kind] or {}
 			local group = heading
@@ -678,7 +680,8 @@ local function report(line)
 end
 
 -- Replaces this module's rows on the eye with the granted ones.
-local function register(contract, byKind, signature)
+local function register(contract, byKind, signature, token)
+	if token ~= generation then return false end
 	if signature == registered then return true end
 	local cleared = contract.Clear(M.OWNER)
 	if not cleared.ok then
@@ -719,6 +722,7 @@ local function register(contract, byKind, signature)
 			-- staff rows. One resume per REGISTRATION CALL costs a frame only
 			-- when a kind is big enough to need two.
 			Wait(0)
+			if token ~= generation then return false end
 			local batch = {}
 			for index = first, math.min(first + BATCH - 1, #rows) do batch[#batch + 1] = rows[index] end
 			local answer = contract[REGISTERS[kind]](M.OWNER, batch)
@@ -766,6 +770,7 @@ local function sync()
 		return
 	end
 	syncing = true
+	local token = generation
 	-- Registration runs on a thread of its own, and the `Wait(0)` in `register` is
 	-- the only reason it needs one. `Target.Access` is a net event handler, and
 	-- whether a handler may yield is the host's business rather than this module's
@@ -775,6 +780,7 @@ local function sync()
 	-- already here for re-entrancy is exactly the guard an asynchronous sync wants.
 	CreateThread(function()
 	repeat
+		if token ~= generation then return end
 		dirty = false
 		-- UNCHANGED GRANTS COST A SIGNATURE, NOT A REBUILD. Building every
 		-- definition -- three dozen rows, three closures and a few catalogue
@@ -783,13 +789,13 @@ local function sync()
 		-- the ids are compared first, and a real change builds, yields, and then
 		-- registers on a fresh resume.
 		if registered == nil or grantedSignature() ~= registered then
-			local built, byKind, signature = pcall(wanted)
+			local built, byKind, signature = pcall(wanted, token)
 			if built then
 				Wait(0)
 				-- Protected for the reason the loop above yields: `register` raising is how
 				-- this module lost two fifths of its rows in silence. A raise is now a line
 				-- in the server log instead of an absence in it.
-				local done, failure = pcall(register, contract, byKind, signature)
+				local done, failure = pcall(register, contract, byKind, signature, token)
 				if not done then
 					registered = nil
 					Open77.log.warn('[admin] staff rows: ' .. tostring(failure))
@@ -801,8 +807,8 @@ local function sync()
 				report('staff rows not built: ' .. tostring(byKind))
 			end
 		end
-	until not dirty
-	syncing = false
+	until not dirty or token ~= generation
+	if token == generation then syncing = false end
 	end)
 end
 
@@ -861,6 +867,8 @@ end
 --- Takes every staff row off the eye.
 -- @author dop42
 function Target.Stop()
+	generation = generation + 1
+	syncing, dirty = false, false
 	if job ~= nil then OPX.Scheduler.Cancel(job) end
 	job = nil
 	local contract = Client.Contract('target')

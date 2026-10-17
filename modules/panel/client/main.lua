@@ -781,6 +781,14 @@ local function Update(handle, patch)
 	local parsed, reason = parsePatch(patch)
 	if parsed == nil then return Result.Err(reason) end
 
+	if parsed.selected ~= nil then
+		local count = OPX.Table.Count(panel.view.selected)
+		for tab in pairs(parsed.selected) do
+			if panel.view.selected[tab] == nil then count = count + 1 end
+		end
+		if count > 64 then return Result.Err('invalid_selected') end
+	end
+
 	if parsed.clearItems then
 		panel.items, panel.count = {}, 0
 	end

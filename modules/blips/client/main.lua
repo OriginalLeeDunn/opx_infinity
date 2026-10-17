@@ -45,6 +45,7 @@ local scanJob
 -- `modules/admin/client/target.lua`: `syncing` says a pass is on a thread,
 -- `dirty` says another was asked for while it ran.
 local syncing, dirty = false, false
+local generation = 0
 
 -- One-shot latches for the things worth saying to the OPERATOR. Every one of
 -- these is bounded because `OPX.Note` costs a net event and has a 60-per-
@@ -91,13 +92,15 @@ local PACE = 24
 --- cost to the work done since the last yield and gives the frame back once it
 --- reaches `PACE`.
 -- @return function
-local function pacer()
+local function pacer(token)
 	local spent = 0
 	return function(cost)
+		if token ~= generation then error('superseded', 0) end
 		spent = spent + (cost or 1)
 		if spent >= PACE then
 			spent = 0
 			Wait(0)
+			if token ~= generation then error('superseded', 0) end
 		end
 	end
 end
@@ -810,13 +813,14 @@ local function minimapState()
 end
 
 --- One reconcile: derive, diff, apply, and say so once.
-local function pass()
-	local pace = pacer()
+local function pass(token)
+	local pace = pacer(token)
 	local wanted, skipped, capped = derive(pace)
 	local count = 0
 	for _ in pairs(wanted) do count = count + 1 end
 
 	local live, refused = apply(wanted, pace)
+	if token ~= generation then return end
 	tally = { wanted = count, live = live, refused = refused, skipped = skipped, capped = capped }
 
 	-- THE BOOT NOTE, and it is the one thing in this module the OWNER will
@@ -861,10 +865,13 @@ local function sync()
 		return
 	end
 	syncing = true
+	local token = generation
 	CreateThread(function()
 		repeat
+			if token ~= generation then return end
 			dirty = false
-			local ok, failure = pcall(pass)
+			local ok, failure = pcall(pass, token)
+			if token ~= generation then return end
 			if not ok then
 				-- A raise here is how a module of this shape loses half its pins in
 				-- silence, so it becomes a line rather than an absence.
@@ -914,6 +921,7 @@ end
 --- Clears everything this half holds. Never yields.
 -- @author dop42
 function Runtime.Init()
+	generation = generation + 1
 	created, drawn = {}, {}
 	scanJob = nil
 	syncing, dirty = false, false

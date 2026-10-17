@@ -54,6 +54,17 @@ local MAX_RECORD = 256
 --- both is an `if finite(x) then` that is true for nil.
 local finiteNumber = OPX.Math.Finite
 
+-- Re-read occupants at the final removal boundary, after storage yielded.
+local function emptyBeforeRemoval(plateId)
+	return function()
+		local record = live[plateId]
+		local snapshot = record ~= nil and Open77.vehicles.get(record.id) or nil
+		local occupants = type(snapshot) == 'table' and snapshot.occupants or nil
+		if type(occupants) == 'table' and #occupants > 0 then return false, 'vehicle.occupied' end
+		return true
+	end
+end
+
 --- Draws a plate in the configured shape.
 -- `OPX.String.Random` draws ASCII capitals and digits, which is what the column
 -- needs: `plate` is `ascii_bin`, so a lower-case or accented character would
@@ -362,7 +373,7 @@ function M.Spawn(source, plateId, at)
 		if type(occupants) == 'table' and #occupants > 0 then
 			return done(Result.Err('vehicle.occupied', plateId))
 		end
-		local put = M.Store(plateId)
+		local put = M.Store(plateId, nil, emptyBeforeRemoval(plateId))
 		if not put.ok then return done(put) end
 		-- Read again, because putting it away is what wrote the condition back:
 		-- the vehicle created below has to be the row as it now stands.
@@ -525,7 +536,8 @@ end
 -- @param plateId string
 -- @param garage string|nil Omitted keeps the current garage.
 -- @return Result
-function M.Store(plateId, garage)
+-- canRemove: optional synchronous predicate, checked after SQL and before removal.
+function M.Store(plateId, garage, canRemove)
 	local record = live[plateId]
 	if record == nil then return Result.Err('vehicle.notSpawned', tostring(plateId)) end
 	-- One store per plate at a time; see `storing`. Tested and set with nothing
@@ -538,22 +550,30 @@ function M.Store(plateId, garage)
 	end
 
 	-- The snapshot is read BEFORE the removal: it disappears with the vehicle.
+	local priorGarage
 	local snapshot = Open77.vehicles.get(record.id)
 	if snapshot ~= nil then
 		local fetched = Store.FetchOne(plateId)
 		if not fetched.ok then
+			if type(canRemove) == 'function' then return done(fetched) end
 			-- The removal happens anyway, and the line says the condition is
 			-- lost rather than deferred: nothing retries it.
 			Open77.log.error(('[vehicles] %s is being removed but its row could not be read (%s); ' ..
 				'its condition is not written'):format(plateId, tostring(fetched.detail)))
 		else
 			local vehicle = fetched.value
+			priorGarage = vehicle.garage
 			applyCondition(vehicle, record, snapshot)
 			vehicle.state = STATE.STORED
 			if garage ~= nil then vehicle.garage = garage end
 			Store.Save(vehicle)
 		end
 	else
+		if type(canRemove) == 'function' then
+			local fetched = Store.FetchOne(plateId)
+			if not fetched.ok then return done(fetched) end
+			priorGarage = fetched.value and fetched.value.garage
+		end
 		Store.SetState(plateId, STATE.STORED, garage)
 	end
 
@@ -564,6 +584,13 @@ function M.Store(plateId, garage)
 	-- again spawns a second one on the same plate -- one row, two cars. That is
 	-- a duplication vector, not a cosmetic leak, so the state does not move
 	-- until the world has actually given the vehicle up.
+	if type(canRemove) == 'function' then
+		local called, allowed, code = pcall(canRemove)
+		if not called or allowed ~= true then
+			Store.SetState(plateId, STATE.OUT, priorGarage)
+			return done(Result.Err(called and code or 'vehicle.storeRefused', plateId))
+		end
+	end
 	if Open77.vehicles.remove(record.id) ~= true then
 		Open77.log.error(('[vehicles] %s could not be removed from the world; leaving it ' ..
 			'spawned rather than recording it as stored'):format(plateId))
@@ -657,7 +684,7 @@ function M.SetState(plateId, state, garage)
 		if type(occupants) == 'table' and #occupants > 0 then
 			return done(Result.Err('vehicle.occupied', plateId))
 		end
-		local put = M.Store(plateId, garage)
+		local put = M.Store(plateId, garage, emptyBeforeRemoval(plateId))
 		if not put.ok then return done(put) end
 	end
 

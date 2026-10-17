@@ -2,7 +2,7 @@
 import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { emit } from '@/bridge/channel'
 import { guard } from '@/bridge/diag'
-import { acquireFocus } from '@/bridge/focus'
+import { acquireFocus, focusOwner } from '@/bridge/focus'
 import { bool, num, table, text, records } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
@@ -795,7 +795,7 @@ const VERTICAL = ['ArrowDown', 'ArrowUp', 'Home', 'End']
 /** Descending is always toward the child column, which for a cascade growing left is
     the LEFT arrow. The keys follow what the player sees, not the array index. */
 function onKeyDown(event: KeyboardEvent): void {
-  if (!open.value || !showList.value) return
+  if (!open.value || !showList.value || focusOwner() !== 'target') return
   const key = event.key
   const deeper = flipped.value ? 'ArrowLeft' : 'ArrowRight'
   const shallower = flipped.value ? 'ArrowRight' : 'ArrowLeft'

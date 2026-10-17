@@ -1,0 +1,25 @@
+Base: 4a82989
+opx_lib: 31e281a
+
+== chat: the completion list goes in parts of 32 and comes back whole
+  ok   the server boots
+  ok   a long list is sent in several numbered parts
+  ok   none over 32 rows
+  ok   and nothing is lost
+  ok   the client puts three parts back together as one list of 70
+
+budget meter: 0 client call sites past 10000 instructions in one resume
+
+6690 checks, 0 failed
+
+42 autonomous Lua audit files: exit 0
+504 Lua files: syntax valid
+459 manifest scripts: sandbox valid
+Manifest paths and storage SQL boundaries: valid
+Typecheck: exit 0
+5 Node regression scripts: exit 0
+Vite build: exit 0; web/index.html rebuilt
+Dependency audit: 0 vulnerabilities
+git diff --check: exit 0
+
+No commit, push or deployment. Native Open77 and real MySQL playtests remain.

@@ -30,6 +30,7 @@ local redrawView
 local held, granted = false, false
 local intent = 'all'
 local talkKey = nil
+local routeJob = nil
 
 -- ── the microphone ──────────────────────────────────────────────────────────
 
@@ -40,13 +41,17 @@ local function transmit(on)
 	return read and ok ~= false
 end
 
---- Re-asserts the route while the key is held and granted.
+local function stopRoute()
+	if routeJob ~= nil then OPX.Scheduler.Cancel(routeJob) end
+	routeJob = nil
+end
+
+--- Re-asserts the route once per interval, even after duplicate grants or a
+--- release and re-press while the previous transmission was asleep.
 local function holdRoute()
-	CreateThread(function()
-		while held and granted do
-			Wait(REASSERT_MS)
-			if held and granted then transmit(true) end
-		end
+	if routeJob ~= nil then return end
+	routeJob = OPX.Scheduler.Every('radio.route', REASSERT_MS, function()
+		if held and granted then transmit(true) else stopRoute() end
 	end)
 end
 
@@ -60,6 +65,7 @@ local function onReleased()
 	if not held then return end
 	local wasGranted = granted
 	held, granted = false, false
+	stopRoute()
 	TriggerServerEvent(M.Event.TALK, { on = false })
 	if wasGranted then transmit(false) end
 	pcall(OPX.Toast.Dismiss, AIR_TOAST)
@@ -85,6 +91,7 @@ local function onKeyed(payload)
 	end
 	local wasGranted = granted
 	granted = false
+	stopRoute()
 	if wasGranted then transmit(false) end
 	pcall(OPX.Toast.Dismiss, AIR_TOAST)
 	if wasGranted then redrawView() end
@@ -288,6 +295,7 @@ end
 --- Hands the screen, the key and the microphone back.
 -- @author dop42
 function M.Stop()
+	stopRoute()
 	closeView()
 	if held and granted then transmit(false) end
 	held, granted = false, false

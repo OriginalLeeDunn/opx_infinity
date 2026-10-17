@@ -204,7 +204,10 @@ function Model.Jobs(co, minGrade)
 	if type(co) ~= 'table' or type(co.jobs) ~= 'table' then return nil end
 	local floor = math.tointeger(minGrade) or 0
 	local out = {}
-	for name, grade in pairs(co.jobs) do out[name] = math.max(finiteNumber(grade) or 0, floor) end
+	for name, grade in pairs(co.jobs) do
+		local own = finiteNumber(grade)
+		out[name] = own ~= nil and math.max(own, floor) or false
+	end
 	return out
 end
 

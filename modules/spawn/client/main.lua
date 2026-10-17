@@ -270,7 +270,7 @@ end
 -- correction, written for the one owner this module has.
 local function onFocus(payload)
 	if type(payload) ~= 'table' then return end
-	if payload.focus ~= true or payload.owner ~= OWNER then
+	if not open or payload.focus ~= true or payload.owner ~= OWNER then
 		OPX.UI.ReleaseFocus(OWNER)
 		return
 	end

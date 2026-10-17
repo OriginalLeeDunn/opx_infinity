@@ -245,7 +245,10 @@ function M.Accounts.Transfer(fromKind, fromKey, toKind, toKey, amount, reason, o
 		end
 		local function answer(found, replay)
 			local debit = integerOf(found.out.delta) or 0
-			if found.out.kind ~= fromKind or found.out.group_key ~= fromKey or debit ~= -op.amount then
+			local credit = found.into and integerOf(found.into.delta) or nil
+			if found.out.kind ~= fromKind or found.out.group_key ~= fromKey or debit ~= -op.amount
+				or found.into == nil or found.into.kind ~= toKind or found.into.group_key ~= toKey
+				or credit ~= op.amount then
 				return Result.Err('accounts.opIdConflict', op.id)
 			end
 			return Result.Ok({ balance = integerOf(found.out.balance_after) or 0,

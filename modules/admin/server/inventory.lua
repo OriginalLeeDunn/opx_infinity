@@ -225,6 +225,17 @@ function Inventory.Resolve(source, raw, token, harm)
 		refuse(source, raw, 'inventory_unavailable')
 		return nil
 	end
+	-- A heavy request starts on a later tick and may perform several yielding
+	-- reads. Keep the chosen character, rather than resolving a recycled slot
+	-- or a newly selected character again for each inventory operation.
+	if type(target) == 'number' then
+		local citizenId = Server.CitizenOf(target)
+		if citizenId == nil then
+			refuse(source, raw, 'no_character')
+			return nil
+		end
+		target = citizenId
+	end
 	return target, who, playerId
 end
 
@@ -418,12 +429,15 @@ function Inventory.Register()
 		handler = function(source, args, raw)
 			local target, who, playerId = Inventory.Resolve(source, raw, args[1])
 			if target == nil then return end
+			local allowed = Server.Recipient(source, Command.INVENTORY_VIEW)
 			Server.Heavy(source, raw, function()
 				local bag, code, reason = Inventory.Bag(target)
+				if not allowed() then return end
 				if not bag then
 					return Inventory.Fail(source, raw, 'admin.inventory.view', playerId, who, code, reason)
 				end
 				local index = Inventory.Catalog()
+				if not allowed() then return end
 				local lines = { locale('admin.inventory.header', {
 					who = who, title = bag.title, used = #bag.items, slots = bag.slots,
 					weight = kilograms(bag.weight), maxWeight = kilograms(bag.maxWeight),

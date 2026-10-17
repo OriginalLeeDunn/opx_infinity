@@ -99,8 +99,11 @@ end
 local function rollback(reason)
 	Runtime.FinishMutation()
 	if type(State.canonical) ~= 'table' then return end
+	local snapshot, citizen, token = State.canonical, State.citizenId, State.restoreToken
 	CreateThread(function()
-		local ok, failure = Runtime.ApplySnapshot(State.canonical, 8, nil)
+		if State.citizenId ~= citizen or not State.Current(token) then return end
+		local ok, failure = Runtime.ApplySnapshot(snapshot, 8, token)
+		if State.citizenId ~= citizen or not State.Current(token) then return end
 		if not ok then
 			Runtime.Notify('error', 'appearance.rollbackFailed',
 				{ reason = tostring(reason), failure = tostring(failure) })
@@ -114,14 +117,15 @@ end
 -- @param kind string `edit` or `create`
 -- @param family string|nil the body a creation was built on, never sent for an edit
 local function send(payload, kind, onNotSent, family)
-	State.commit = { kind = kind, family = family, deadlineMs = 0 }
+	local commit = { kind = kind, family = family, deadlineMs = 0 }
+	State.commit = commit
 	local citizen = State.citizenId
 	local cooldown = M.ConfigMs(M.Settings.SAVE_COOLDOWN_MS) or 2000
 	local commitMs = M.ConfigMs(M.Settings.COMMIT_MS) or 20000
 	CreateThread(function()
 		local idle = cooldown - (Runtime.NowMs() - lastSaveAtMs)
 		if idle > 0 then Wait(idle) end
-		if State.commit == nil then return end
+		if State.commit ~= commit or State.citizenId ~= citizen then return end
 		lastSaveAtMs = Runtime.NowMs()
 		State.commit.deadlineMs = Runtime.NowMs() + commitMs
 		local sent, reason = TriggerServerEvent(M.Event.SAVE_FACE,

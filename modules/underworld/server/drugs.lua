@@ -238,7 +238,8 @@ function Drugs.DealMenu(player, payload)
 	if not street().enabled then return M.Answer(player, false, 'unavailable') end
 	local target = playerOf(type(payload) == 'table' and payload.target or nil)
 	if target == nil or target == player then return M.Answer(player, false, 'no_buyer') end
-	if Op.Character(player) == nil then return M.Answer(player, false, 'no_character') end
+	local loaded = Op.Character(player)
+	if loaded == nil then return M.Answer(player, false, 'no_character') end
 	local bag, offers = inventory(), {}
 	local names = {}
 	for name in pairs(street().items) do names[#names + 1] = name end
@@ -261,6 +262,8 @@ function Drugs.DealMenu(player, payload)
 			end
 		end
 	end
+	local live = Op.Character(player)
+	if live == nil or live.data ~= loaded.data then return false end
 	if #offers == 0 then return M.Answer(player, false, 'nothing_to_sell') end
 	TriggerClientEvent(M.Event.VIEW, player, { kind = 'deal', target = target, offers = offers,
 		currency = street().currency })
@@ -298,6 +301,8 @@ function Drugs.Offer(player, payload)
 	if type(counted) ~= 'table' or not counted.ok or (tonumber(counted.value) or 0) < count then
 		return M.Answer(player, false, 'not_enough_items')
 	end
+	local liveSeller, liveBuyer = Op.Character(player), Op.Character(target)
+	if liveSeller == nil or liveBuyer == nil or liveSeller.data ~= seller.data or liveBuyer.data ~= buyer.data then return false end
 	local native = coordinator()
 	if native == nil then return M.Answer(player, false, 'unavailable') end
 	local called, state, why = pcall(native.request, player, target, 'give', {
@@ -352,26 +357,31 @@ function Drugs.Complete(id)
 		or buyer.citizenId ~= deal.buyerCitizen then
 		return false
 	end
+	local function answer(target, success, code, params)
+		local live = Op.Character(target)
+		local expected = target == deal.seller and seller or buyer
+		if live ~= nil and live.data == expected.data then M.Answer(target, success, code, params) end
+	end
 	-- Both sides give first; value is created on each side only after.
-	if not take(deal.seller, deal.item, deal.count) then
-		M.Answer(deal.seller, false, 'not_enough_items')
-		M.Answer(deal.buyer, false, 'deal_failed')
+	if not take(deal.sellerCitizen, deal.item, deal.count) then
+		answer(deal.seller, false, 'not_enough_items')
+		answer(deal.buyer, false, 'deal_failed')
 		return false
 	end
-	if not moveMoney(deal.buyer, deal.price, true) then
-		give(deal.seller, deal.item, deal.count)
-		M.Answer(deal.buyer, false, street().currency == 'clean' and 'not_enough_money' or 'not_enough_dirty')
-		M.Answer(deal.seller, false, 'buyer_short')
+	if not moveMoney(deal.buyerCitizen, deal.price, true) then
+		give(deal.sellerCitizen, deal.item, deal.count)
+		answer(deal.buyer, false, street().currency == 'clean' and 'not_enough_money' or 'not_enough_dirty')
+		answer(deal.seller, false, 'buyer_short')
 		return false
 	end
-	if not give(deal.buyer, deal.item, deal.count) then
-		moveMoney(deal.buyer, deal.price, false)
-		give(deal.seller, deal.item, deal.count)
-		M.Answer(deal.buyer, false, 'cannot_carry')
-		M.Answer(deal.seller, false, 'deal_failed')
+	if not give(deal.buyerCitizen, deal.item, deal.count) then
+		moveMoney(deal.buyerCitizen, deal.price, false)
+		give(deal.sellerCitizen, deal.item, deal.count)
+		answer(deal.buyer, false, 'cannot_carry')
+		answer(deal.seller, false, 'deal_failed')
 		return false
 	end
-	if not moveMoney(deal.seller, deal.price, false) then
+	if not moveMoney(deal.sellerCitizen, deal.price, false) then
 		-- The seller's bag refused the cash: it goes to their row instead.
 		local refunded = Op.Refund(nil, deal.sellerCitizen, street().currency == 'clean'
 			and { money = { { type = built().dirty.cleanType, amount = deal.price } } }
@@ -390,8 +400,8 @@ function Drugs.Complete(id)
 		data = { item = deal.item, count = deal.count, price = deal.price, buyer = deal.buyerCitizen } })
 	OPX.Publish(M.Event.ON_COMMITTED, deal.seller, { kind = 'deal', citizenId = deal.sellerCitizen,
 		buyer = deal.buyerCitizen, item = deal.item, count = deal.count, price = deal.price })
-	M.Answer(deal.seller, true, 'deal_done', { count = deal.count, price = deal.price })
-	M.Answer(deal.buyer, true, 'deal_bought', { count = deal.count, price = deal.price })
+	answer(deal.seller, true, 'deal_done', { count = deal.count, price = deal.price })
+	answer(deal.buyer, true, 'deal_bought', { count = deal.count, price = deal.price })
 	local at = Op.Point(deal.seller)
 	if at ~= nil then M.Alert.Raise('deal', locale('underworld.alert.deal'), at, street().alert, 'deal:' .. id) end
 	return true

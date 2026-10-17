@@ -1253,6 +1253,9 @@ Money moves like contracts: the bill is written `settling` first, each movement 
 `invoices:<id>:charge|cut|rest` in `opx77_invoice_ledger` (reserved, moved, committed),
 then `paid`. A restart finishes a `settling` bill from its receipts; a charge a crash left
 `reserved` is `orphaned` and the bill `disputed` for staff, never guessed at.
+If a treasury credit raises or returns `accounts.unknown`, its outcome is ambiguous:
+the payout stays pending and retries the same operation id. It does not also pay
+that share to the employee.
 
 Contract `invoices` v1 (server): `Issue{ issuer, target, amount, reason, account?, cutPct?,
 source? }` -> `Result{ id }` (yields; no reach or job check -- the caller decided),
@@ -1409,6 +1412,9 @@ what a bag gained and lost by item name); `opx:on:vehicles:registered` / `state`
 (an impound); `opx:on:crafting:ordered` / `collected`; `opx:on:progress:finished`;
 `opx:on:invoices:issued` / `paid` / `refused` / `expired` / `cancelled` (a bill an
 `IssueInvoice` raised carries `source = 'ext:<caller>'`).
+`IssueInvoice` and `CancelInvoice` require a resource name of at most 28 bytes;
+longer names return `export.badArgument`. The full name must fit the 32-byte
+invoice source so two resources cannot share a truncated ownership prefix.
 Payloads are closed copies built
 for the bus, never live records — PlayerData's free-form `metadata` is not on it.
 

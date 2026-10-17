@@ -19,6 +19,8 @@ local MENU_ASK, MENU_LIST, FORM_BILL = 'invoices.ask', 'invoices.list', 'invoice
 local settings
 local token = nil
 local askHandle, askId = nil, nil
+local listHandle, formHandle = nil, nil
+local generation = 0
 local target, menu, form = nil, nil, nil
 
 local function config()
@@ -78,6 +80,8 @@ local function openForm(player)
 		OPX.Note('invoices', ('the bill form was refused: %s'):format(
 			tostring(type(opened) == 'table' and opened.error or opened)))
 	end
+	formHandle = type(opened) == 'table' and opened.ok and type(opened.value) == 'table'
+		and opened.value.handle or nil
 end
 
 -- ── the prompt ──────────────────────────────────────────────────────────────
@@ -136,7 +140,7 @@ end
 
 -- Built on a thread, a yield after each half and the menu checked paced: a full
 -- tab is two money formats a row, which is where one resume would overrun.
-local function buildList(payload)
+local function buildList(payload, mine)
 	local owed = type(payload.owed) == 'table' and payload.owed or {}
 	local issued = type(payload.issued) == 'table' and payload.issued or {}
 	local items = {}
@@ -153,6 +157,7 @@ local function buildList(payload)
 		end
 	end
 	Wait(0)
+	if mine ~= generation then return end
 	if #issued > 0 then
 		items[#items + 1] = { id = 'issued', icon = 'folder', disabled = true,
 			label = locale('invoices.list.issued', { count = #issued }) }
@@ -167,7 +172,8 @@ local function buildList(payload)
 			end
 		end
 	end
-	openMenu(MENU_LIST, locale('invoices.list.title'), items, function(data)
+	if mine ~= generation then return end
+	listHandle = openMenu(MENU_LIST, locale('invoices.list.title'), items, function(data)
 		if data.verb == 'pay' then
 			TriggerServerEvent(Event.ACT, { verb = 'pay', id = data.id })
 		elseif data.verb == 'cancel' then
@@ -178,7 +184,9 @@ end
 
 local function onList(payload)
 	if type(payload) ~= 'table' then return end
-	CreateThread(function() buildList(payload) end)
+	generation = generation + 1
+	local mine = generation
+	CreateThread(function() buildList(payload, mine) end)
 end
 
 -- ── the eye ─────────────────────────────────────────────────────────────────
@@ -225,6 +233,15 @@ end
 --- Takes the row back.
 -- @author dop42
 function M.Stop()
+	generation = generation + 1
+	if menu ~= nil and type(menu.Close) == 'function' then
+		if askHandle ~= nil then pcall(menu.Close, askHandle, 'caller') end
+		if listHandle ~= nil then pcall(menu.Close, listHandle, 'caller') end
+	end
+	if form ~= nil and type(form.Close) == 'function' and formHandle ~= nil then
+		pcall(form.Close, formHandle)
+	end
+	listHandle, formHandle = nil, nil
 	if target ~= nil and token ~= nil then pcall(target.Unregister, OWNER, token) end
 	token, askHandle, askId = nil, nil, nil
 end

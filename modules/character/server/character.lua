@@ -8,6 +8,12 @@ local M = OPX.Modules.Get('character')
 
 local Result = OPX.Result
 
+-- Every database read may outlive the connection that requested it.
+local function ownsSession(source, session)
+	return session ~= nil and OPX.Sessions[source] == session and not session.departing
+		and OPX.UserIdOf(source) == session.userId
+end
+
 --- The health pool this server places a body with, in points.
 --- Read at call time and never captured: `config/shared.lua` is a shared script
 --- and the value is an operator's to change between restarts, not a constant to
@@ -229,7 +235,8 @@ local enterCharacter
 -- character bootstrap's answer, and that transaction is spent before the world
 -- exists -- so the only honest way to play another character is to arrive as one.
 -- The departure path saves the character that was loaded, exactly as a quit does.
-local function endSession(source, reason)
+local function endSession(source, reason, expected)
+	if not ownsSession(source, expected) then return false end
 	local dropped, why = Open77.players.disconnect(source, reason)
 	if dropped then return true end
 	Open77.log.error(('[character] %d could not be disconnected for a character change: %s')
@@ -274,6 +281,7 @@ function M.SwitchTo(source, citizenId)
 
 	local locked = M.Storage.SetActive(session.userId, parsed.value)
 	if not locked.ok then return locked end
+	if not ownsSession(source, session) then return Result.Err('entry.noIdentity', tostring(source)) end
 
 	OPX.Audit.Log({
 		event = 'character.switch',
@@ -305,7 +313,7 @@ function M.SwitchTo(source, citizenId)
 			'ending the session instead'):format(parsed.value, tostring(entered.error)))
 	end
 
-	endSession(source, locale('session.switching'))
+	endSession(source, locale('session.switching'), session)
 	return Result.Ok(toSummary(wanted.value))
 end
 
@@ -339,7 +347,7 @@ function M.NewCharacter(source)
 		userId = session.userId,
 		source = source,
 	})
-	endSession(source, locale('session.newCharacter'))
+	endSession(source, locale('session.newCharacter'), session)
 	return Result.Ok({ used = #characters.value, slots = slots })
 end
 
@@ -366,6 +374,7 @@ local function removeCharacter(citizenId, owner, source)
 
 	-- Out of the world first, or the autosave rewrites the row a minute later.
 	local online = M.GetPlayerByCitizenId(citizenId)
+	local connection = online and OPX.Sessions[online.PlayerData.source] or nil
 	if online then M.Logout(online.PlayerData.source) end
 
 	local deleted = M.Storage.SoftDelete(citizenId)
@@ -432,7 +441,7 @@ local function removeCharacter(citizenId, owner, source)
 	-- connection that has to end is the one holding the character, which is very
 	-- often not the one that asked.
 	if online ~= nil then
-		endSession(online.PlayerData.source, locale('session.characterDeleted'))
+		endSession(online.PlayerData.source, locale('session.characterDeleted'), connection)
 	end
 	return Result.Ok(citizenId)
 end
@@ -822,6 +831,11 @@ function M.PlaceCharacter(player, target)
 	if not isSettled(life) then
 		return false, 'life-state-' .. tostring(life and life.phase or 'unknown')
 	end
+	-- The life-state poll yielded. This Player may have logged out in the
+	-- meantime, and a kill must never land on its replacement.
+	if M.GetPlayer(source) ~= player or OPX.UserIdOf(source) ~= data.userId then
+		return false, 'entry.noIdentity'
+	end
 
 	-- Out of the selection bucket BEFORE the kill, as the platform's own modes
 	-- move a player before placing them: the respawn names the same bucket, and
@@ -963,6 +977,8 @@ end
 enterCharacter = function(source, citizenId)
 	local parsed = OPX.CitizenId.Parse(citizenId)
 	if not parsed.ok then return Result.Err('character.notFound', tostring(citizenId)) end
+	local entrant = OPX.Sessions[source]
+	if not ownsSession(source, entrant) then return Result.Err('entry.noIdentity', tostring(source)) end
 
 	local current = M.GetPlayer(source)
 
@@ -977,7 +993,6 @@ enterCharacter = function(source, citizenId)
 	-- handed to the next connection. The bucket release and the gate release at
 	-- the foot of this function are what admit somebody into the world; run on a
 	-- recycled slot they admitted the wrong player, with nothing loaded.
-	local entrant = OPX.Sessions[source]
 	local entrantUserId = entrant and entrant.userId
 	if entrantUserId == nil then return Result.Err('character.notFound', tostring(citizenId)) end
 
@@ -1005,7 +1020,11 @@ enterCharacter = function(source, citizenId)
 	-- switch is refused; the character is already unloaded, so the player chooses
 	-- again and goes back to their selection bucket.
 	if current then
+		if not ownsSession(source, entrant) or M.GetPlayer(source) ~= current then
+			return Result.Err('entry.noIdentity', tostring(source))
+		end
 		local saved = M.LogoutAndWait(source)
+		if not ownsSession(source, entrant) then return Result.Err('entry.noIdentity', tostring(source)) end
 		if saved and saved.ok == false then
 			Open77.log.error(('[character] refusing the switch: %s could not be saved (%s)')
 				:format(current.PlayerData.citizenId, tostring(saved.error)))
@@ -1104,6 +1123,7 @@ function M.EnterSession(source)
 
 	local locked = M.Storage.FetchActive(session.userId)
 	if not locked.ok then return locked end
+	if not ownsSession(source, session) then return Result.Err('entry.noIdentity', tostring(source)) end
 
 	if locked.value ~= nil then
 		local entered = enterCharacter(source, locked.value)
@@ -1118,7 +1138,9 @@ function M.EnterSession(source)
 		if not cleared.ok then return cleared end
 	end
 
+	if not ownsSession(source, session) then return Result.Err('entry.noIdentity', tostring(source)) end
 	local created = M.CreateCharacter(source)
 	if not created.ok then return created end
+	if not ownsSession(source, session) then return Result.Err('entry.noIdentity', tostring(source)) end
 	return enterCharacter(source, created.value.citizenId)
 end

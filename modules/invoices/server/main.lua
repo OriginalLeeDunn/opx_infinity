@@ -290,6 +290,14 @@ local function payRest(inv, amount, opId)
 			inv.restTo = 'account'
 			return true
 		end
+		-- A lost answer can conceal a committed treasury credit. Keep the payout
+		-- pending and retry the same idempotency key; paying the issuer now can
+		-- create the company's share twice.
+		if not called or (type(answer) == 'table' and answer.error == 'accounts.unknown') then
+			Open77.log.error(('[invoices] invoice %d: treasury credit outcome unknown; payout pending')
+				:format(inv.id))
+			return false, 'accounts.unknown'
+		end
 		OPX.Audit.Log({ event = 'invoices.depositFallback', severity = 'warn',
 			message = ('invoice %d: %s/%s refused the deposit, the issuer is paid instead')
 				:format(inv.id, inv.account.kind, inv.account.key),

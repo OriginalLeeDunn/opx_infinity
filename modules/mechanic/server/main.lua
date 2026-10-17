@@ -110,8 +110,10 @@ end
 local function gate(player, jobs, onDuty, minGrade)
 	local data = loaded(player)
 	if data == nil then return false, 'no_character' end
+	jobs = Model.Jobs(jobs, minGrade)
+	if type(jobs) ~= 'table' or next(jobs) == nil then return false, 'job_required' end
 	local now = OPX.Now()
-	return OPX.JobGate.Evaluate({ jobs = Model.Jobs(jobs, minGrade), onDuty = onDuty },
+	return OPX.JobGate.Evaluate({ jobs = jobs, onDuty = onDuty },
 		{ job = data.job, jobs = data.jobs, atMs = now }, now,
 		{ maxAgeMs = 0, membership = config().membership })
 end
@@ -364,13 +366,14 @@ local commit
 local function finish(job, completed, ending)
 	if job.done then return end
 	job.done = true
-	release(job)
-	if ending == 'left' then return end
-	if not completed then return answer(job.player, false, 'interrupted') end
+	if ending == 'left' or loaded(job.player) ~= job.playerData then release(job); return end
+	if not completed then release(job); return answer(job.player, false, 'interrupted') end
 	-- On a thread: the commit reads and writes the bag, the stash, the account
 	-- and the vehicle row, and every one of those may yield.
 	CreateThread(function()
+		if loaded(job.player) ~= job.playerData then release(job); return end
 		local ok, failure = pcall(commit, job)
+		release(job)
 		if not ok then
 			Open77.log.error(('[mechanic] the %s of player %d raised: %s'):format(job.kind, job.player,
 				tostring(failure)))
@@ -388,6 +391,8 @@ end
 local function startBar(job, label, durationMs, animationName)
 	local progress = OPX.Api.Get('progress')
 	if progress == nil or type(progress.Start) ~= 'function' then return 'no_bar' end
+	job.playerData = job.playerData or loaded(job.player)
+	if job.playerData == nil or loaded(job.player) ~= job.playerData then return 'no_character' end
 	busy[job.player], working[job.vehicleKey] = job, job
 	local started = progress.Start(job.player, OWNER, {
 		label = locale(label),
@@ -420,6 +425,7 @@ end
 
 -- Whether the car of a job is still where the job left it, and the worker by it.
 local function stillThere(job)
+	if loaded(job.player) ~= job.playerData then return nil, 'no_character' end
 	local snapshot = snapshotOf(job.vehicleId)
 	if snapshot == nil then return nil, 'vehicle_gone' end
 	local place = placeOf(snapshot)
@@ -499,7 +505,10 @@ local function commitShop(job)
 	end
 	local fee, billed = job.quote.fee, 'none'
 	local customer = job.customer
-	if customer ~= nil and loaded(customer) == nil then customer = nil end
+	if customer ~= nil and loaded(customer) ~= job.customerData then customer = nil end
+	-- The payer agreed to the work on this character. A slot reused during the
+	-- bar must never become its invoice target or direct debit.
+	job.customer = customer
 	local invoices = OPX.Api.Get('invoices')
 	-- WITHOUT INVOICES THE MONEY MOVES BEFORE THE CAR IS FIXED: the customer had
 	-- the whole bar to empty their account, and a fix already done cannot be taken
@@ -573,7 +582,7 @@ local function onRepair(player, payload)
 	if missing <= 0 then return answer(player, false, 'not_damaged') end
 
 	local job = { player = player, vehicleId = snapshot.id, vehicleKey = vehicleKey, origin = place,
-		missing = missing, kind = mode }
+		missing = missing, kind = mode, playerData = loaded(player) }
 	if mode == Mode.KIT then
 		if carried(player, config().kitItem.name) < 1 then return answer(player, false, 'no_kit') end
 		job.mechanic = isMechanic(player, 0) == true
@@ -601,6 +610,7 @@ local function onRepair(player, payload)
 			moneyType = config().billing.moneyType })
 	end
 	job.shop, job.quote, job.customer = shop, quote, customer
+	job.customerData = customer and loaded(customer) or nil
 	local code = startBar(job, 'mechanic.bar.repair', quote.durationMs, config().repair.animation)
 	if code ~= nil then return answer(player, false, code) end
 	answer(player, true, 'started', { fee = quote.fee, count = quote.parts })
@@ -746,7 +756,9 @@ local function onLot(player, payload)
 	if not atPoint(player, shop.lot) then return answer(player, false, 'too_far') end
 	local citizenId = citizenOf(player)
 	if citizenId == nil then return answer(player, false, 'no_character') end
+	local data = loaded(player)
 	local rows = impoundedOf(citizenId)
+	if loaded(player) ~= data then return end
 	if rows == nil then return answer(player, false, 'no_vehicles') end
 	if #rows == 0 then return answer(player, false, 'nothing_impounded') end
 	TriggerClientEvent(Event.LOT_VIEW, player, { shop = shop.key, label = shop.label, fee = shop.releaseFee,
@@ -763,11 +775,13 @@ local function onRelease(player, payload)
 	if not atPoint(player, shop.lot) then return answer(player, false, 'too_far') end
 	local citizenId = citizenOf(player)
 	if citizenId == nil then return answer(player, false, 'no_character') end
+	local data = loaded(player)
 	local api = vehicles()
 	if api == nil or type(api.Get) ~= 'function' or type(api.SetState) ~= 'function' then
 		return answer(player, false, 'no_vehicles')
 	end
 	local read, row = pcall(api.Get, plate)
+	if loaded(player) ~= data then return end
 	row = read and type(row) == 'table' and row.ok and row.value or nil
 	if type(row) ~= 'table' or row.citizenId ~= citizenId or row.state ~= M.IMPOUNDED then
 		return answer(player, false, 'not_yours')
@@ -1049,7 +1063,11 @@ function M.Start()
 			if player == nil or player <= 0 then return end
 			if cooled(player, kind) then return answer(player, false, 'rate_limited') end
 			-- On a thread: the bag, the stash and the rows are read, and all may yield.
-			CreateThread(function() handler(player, payload) end)
+			local data = loaded(player)
+			CreateThread(function()
+				if data == nil or loaded(player) ~= data then return end
+				handler(player, payload)
+			end)
 		end)
 	end
 	wire(Event.REPAIR, 'repair', onRepair)

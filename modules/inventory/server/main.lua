@@ -130,14 +130,29 @@ end
 -- @param target Source|CitizenId
 -- @param slot integer
 -- @param count integer|nil
+-- @param expected table|nil name and metadata captured before a yielding read
 -- @return Result
-function M.RemoveFromSlot(target, slot, count)
+function M.RemoveFromSlot(target, slot, count, expected)
 	slot = Common.Integer(slot, 1, 65535)
 	if not slot then return Result.Err('bad_argument', 'slot') end
+
+	local expectedName, expectedMetadata
+	if expected ~= nil then
+		if type(expected) ~= 'table' then return Result.Err('bad_argument', 'expected') end
+		expectedName = itemName(expected.name)
+		local valid
+		expectedMetadata, valid = Common.Metadata(expected.metadata, Options.MAX_METADATA_BYTES)
+		if expectedName == nil or not valid then return Result.Err('bad_argument', 'expected') end
+	end
 
 	return withBag(target, function(bag)
 		local entry = Containers.GetSlot(bag, slot)
 		if not entry then return Result.Err('empty_slot', tostring(slot)) end
+		-- Compare after the yielding lookup, in the same step as the removal.
+		if expectedName ~= nil and (entry.name ~= expectedName
+			or not Common.SameMetadata(entry.metadata, expectedMetadata)) then
+			return Result.Err('slot_changed', tostring(slot))
+		end
 		local ok, code = Containers.TakeFromSlot(bag, slot, count == nil and entry.count or count)
 		OPX.Audit.Log({ event = 'inventory.removeSlot', severity = ok and 'info' or 'warn',
 			message = ('slot %d'):format(slot), citizenId = bag.owner,
@@ -269,6 +284,7 @@ local function withTrunk(vehicleId, source, body)
 	-- this is the same rule for a module putting things in or taking them out.
 	if World.TrunkLocked(vehicleId) then return Result.Err('locked', tostring(vehicleId)) end
 	local trunk, reason = World.VehicleContainer(vehicleId, M.KIND.TRUNK)
+	if World.TrunkLocked(vehicleId) then return Result.Err('locked', tostring(vehicleId)) end
 	if not trunk then return Result.Err(reason or 'not_found', tostring(vehicleId)) end
 	if source ~= nil and Options.TRUNK_OWNER_ONLY and trunk.ownerCitizenId
 		and trunk.ownerCitizenId ~= Players.Citizen(source) then
@@ -709,7 +725,9 @@ function M.OpenStash(playerId, name, options)
 	-- stayed open here, through the armoury chests and every creator stash.
 	local may, refusal = Players.MayAct(playerId)
 	if not may then return Result.Err(refusal) end
-	if not Players.Bag(playerId) then return Result.Err('not_loaded') end
+	local bag = Players.Bag(playerId)
+	if not bag then return Result.Err('not_loaded') end
+	local citizenId = bag.owner
 
 	-- ANOTHER RESOURCE OPENS ONLY WHAT IT MAY NAME: a stash the operator listed,
 	-- or one in its own `<resource>.` namespace -- and a new one of those only
@@ -748,6 +766,13 @@ function M.OpenStash(playerId, name, options)
 
 	local container, reason = World.Stash(name, size, anchor, Common.Clean(options.label, 64))
 	if not container then return Result.Err(reason or 'unavailable', name) end
+	local current = Players.Bag(playerId)
+	if current == nil or current.owner ~= citizenId then return Result.Err('not_loaded') end
+	local may, refusal = Players.MayAct(playerId)
+	if not may then return Result.Err(refusal) end
+	if anchor ~= nil and not World.InReach(World.Position(playerId), anchor) then
+		return Result.Err('too_far')
+	end
 	Containers.View(playerId, container)
 	TriggerClientEvent(M.Event.OPEN, playerId)
 	OPX.Audit.Log({ event = 'inventory.openStash', message = name, source = playerId,

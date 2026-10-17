@@ -87,6 +87,7 @@ local zone = nil
 -- CHANGE and not once a scan: `target.RegisterPlayers` is a whole-registry
 -- write, and doing it twice a second would be a write per scan for ever.
 local zoneRows = false
+local targetGeneration = 0
 
 -- Said once when the eye refuses the row, for the same reason the marker and the
 -- strip each have their own flag.
@@ -858,9 +859,12 @@ local function syncTarget()
 	local wanted = zone ~= nil
 	if wanted == zoneRows then return end
 	zoneRows = wanted
+	targetGeneration = targetGeneration + 1
+	local mine = targetGeneration
 
 	CreateThread(function()
 		Wait(0)
+		if mine ~= targetGeneration or (zone ~= nil) ~= wanted then return end
 		local answer
 		if wanted then
 			answer = api.RegisterPlayers(OWNER, { sellRow() })
@@ -922,6 +926,7 @@ end
 --- Clears everything this half holds. Never yields.
 -- @author XEROX710
 function Runtime.Init()
+	targetGeneration = targetGeneration + 1
 	spots = {}
 	markers.Reset()
 	stock = { [M.KIND.GARAGE] = {}, [M.KIND.AVPAD] = {} }
@@ -1096,6 +1101,8 @@ end
 --- strip back.
 -- @author XEROX710
 function Runtime.Shutdown()
+	targetGeneration = targetGeneration + 1
+	offer, offerWaiting = nil, false
 	if scanJob ~= nil then
 		OPX.Scheduler.Cancel(scanJob)
 		scanJob = nil

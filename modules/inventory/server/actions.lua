@@ -451,9 +451,16 @@ function Actions.AnswerGive(source, token, accepted)
 	end
 	if not Players.MayAct(giver) or not Players.MayAct(source) then return fail('not_ready') end
 	if not World.InReach(World.Position(giver), World.Position(source)) then return fail('too_far') end
+	local giverCitizen, receiverCitizen = Players.Citizen(giver), Players.Citizen(source)
 	local from = Players.Bag(giver)
 	local to = Players.Bag(source)
 	if not from or not to then return fail('target_unavailable') end
+	-- Loading either bag can yield; a consent does not preserve the old reach.
+	if not Players.MayAct(giver) or not Players.MayAct(source) then return fail('not_ready') end
+	if not World.InReach(World.Position(giver), World.Position(source)) then return fail('too_far') end
+	if giverCitizen ~= Players.Citizen(giver) or receiverCitizen ~= Players.Citizen(source) then
+		return fail('target_unavailable')
+	end
 	local entry = from.items[offer.slot]
 	if entry ~= offer.entry or entry.count < offer.count then return fail('give_changed') end
 	if not Containers.CanCarry(to, entry.name, offer.count, entry.metadata) then return fail('no_room') end
@@ -488,7 +495,7 @@ end
 
 --- Withdraws whatever a departing player was giving or being given.
 local function forgetOffers(source)
-	for _, token in ipairs({ offerFrom[source], offerTo[source] }) do
+	for _, token in pairs({ offerFrom[source], offerTo[source] }) do
 		local offer = offers[token]
 		if offer ~= nil then
 			dropOffer(offer)
@@ -575,6 +582,10 @@ function Actions.TakeDrop(source, id)
 	if not World.WithinReach(source, pile) then return false, 'too_far' end
 	local bag, reason = Players.Bag(source)
 	if not bag then return false, reason end
+	if not Players.MayAct(source) then return false, 'not_ready' end
+	if World.Seat(source) then return false, 'in_vehicle' end
+	if not World.WithinReach(source, pile) then return false, 'too_far' end
+	if Containers.Get(id) ~= pile then return false, 'not_found' end
 
 	local slots = {}
 	for slot in pairs(pile.items) do slots[#slots + 1] = slot end

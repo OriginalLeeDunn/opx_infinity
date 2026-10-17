@@ -83,12 +83,12 @@ function Walk.Hold(speed)
 	-- Bounded here as well as by the platform: a config that wandered outside
 	-- the range would otherwise refuse once a second and log nothing anybody
 	-- reads, which is the shape of a fault that lasts for months.
-	if wanted == nil or wanted < 0.5 or wanted > 2.5 then return false end
+	if wanted == nil or wanted ~= wanted or wanted < 0.5 or wanted > 2.5 then return false end
 	if heldAt == wanted then return true end
 
-	local ok, reason = pcall(Open77.movement.setWalkMode, true, wanted)
-	if not ok then
-		Open77.log.warn('[animations] the walk lease raised: ' .. tostring(reason))
+	local called, ok, reason = pcall(Open77.movement.setWalkMode, true, wanted)
+	if not called or ok ~= true then
+		Open77.log.warn('[animations] the walk lease refused: ' .. tostring(called and reason or ok))
 		return false
 	end
 	heldAt = wanted
@@ -103,12 +103,13 @@ end
 -- @author dop42
 function Walk.Release()
 	if heldAt == nil then return end
-	heldAt = nil
 	if not Walk.Available() then return end
-	local ok, reason = pcall(Open77.movement.setWalkMode, false)
-	if not ok then
-		Open77.log.warn('[animations] the walk lease would not release: ' .. tostring(reason))
+	local called, ok, reason = pcall(Open77.movement.setWalkMode, false)
+	if not called or ok ~= true then
+		Open77.log.warn('[animations] the walk lease would not release: ' .. tostring(called and reason or ok))
+		return
 	end
+	heldAt = nil
 end
 
 --- Whether the lease is held, and at what speed. Nil when it is not.
@@ -143,7 +144,7 @@ end
 function Walk.Request(name, speed)
 	if type(name) ~= 'string' or name == '' then return end
 	local wanted = tonumber(speed)
-	if wanted ~= nil and (wanted < 0.5 or wanted > 2.5) then wanted = nil end
+	if wanted ~= nil and (wanted ~= wanted or wanted < 0.5 or wanted > 2.5) then wanted = nil end
 	requests[name] = wanted
 	settle()
 end
@@ -325,7 +326,10 @@ function Walk.Check()
 	-- sweep, with a warning line each time saying somebody had forgotten a path.
 	-- Nobody had. The watchdog's question is "is there still an emote under the
 	-- emote's request", and that is the only request it may answer for.
-	if requests.emote == nil then return end
+	if requests.emote == nil then
+		settle()
+		return
+	end
 
 	local state = M.Presenter.State()
 	if type(state) == 'table' and state.active == true then

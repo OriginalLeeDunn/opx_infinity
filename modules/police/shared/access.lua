@@ -126,9 +126,8 @@ local function service(key, raw, globals)
 	for _, code in ipairs(type(dispatch.RECEIVES) == 'table' and dispatch.RECEIVES or {}) do
 		if code == '*' then all = true elseif word(code) then receives[code] = true end
 	end
-	local enclaves, enclaveRows = {}, 0
+	local enclaves = {}
 	for _, row in ipairs(type(raw.ENCLAVES) == 'table' and raw.ENCLAVES or {}) do
-		enclaveRows = enclaveRows + 1
 		local spot = point(row, 1, 5000, 100)
 		if spot ~= nil then enclaves[#enclaves + 1] = spot end
 	end
@@ -142,7 +141,7 @@ local function service(key, raw, globals)
 		capabilities = capabilities,
 		-- A service with ENCLAVES rows acts only inside a surveyed one; with none
 		-- surveyed it acts nowhere. A service with no ENCLAVES key acts anywhere.
-		zoned = enclaveRows > 0,
+		zoned = raw.ENCLAVES ~= nil,
 		enclaves = enclaves,
 		blipSprite = text(blip.SPRITE, globals.blipSprite),
 		blipIcon = Access.Icon(blip.ICON) or globals.blipIcon,
@@ -307,7 +306,8 @@ function Access.Jobs(svc, minGrade)
 	local floor = math.tointeger(minGrade) or 0
 	local out = {}
 	for name, grade in pairs(svc.jobs) do
-		out[name] = math.max(finiteNumber(grade) or 0, floor)
+		local own = finiteNumber(grade)
+		out[name] = own ~= nil and math.max(own, floor) or false
 	end
 	return out
 end

@@ -253,10 +253,11 @@ local function wearStored()
 
 	-- Both captured: the wait ends if either the character or its stored face
 	-- changed while the mirror was working.
-	local snapshot, citizen = State.canonical, State.citizenId
+	local snapshot, citizen, token = State.canonical, State.citizenId, State.restoreToken
 	status(locale('appearance.panel.wearing'), true)
 	CreateThread(function()
-		local ok, failure = Runtime.ApplySnapshot(snapshot, 8, nil)
+		if State.citizenId ~= citizen or not State.Current(token) then return end
+		local ok, failure = Runtime.ApplySnapshot(snapshot, 8, token)
 		if State.citizenId ~= citizen or State.canonical ~= snapshot then return end
 		if ok then State.Wore() end
 		Runtime.Publish({ ok = ok, event = 'applied', citizenId = citizen,

@@ -3,7 +3,7 @@ import { computed, nextTick, onUnmounted, ref } from 'vue'
 import type { ObjectDirective } from 'vue'
 import { emit } from '@/bridge/channel'
 import { guard } from '@/bridge/diag'
-import { acquireFocus } from '@/bridge/focus'
+import { acquireFocus, focusOwner } from '@/bridge/focus'
 import { num, text, records, own } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
@@ -272,6 +272,7 @@ function readFrame(payload: Payload): void {
 }
 
 function syncCaret(): void {
+  if (!open.value || focusOwner() !== 'form') return
   guard('form:caret', () => {
     const root = listEl.value
     if (!root) return
@@ -312,7 +313,7 @@ function blank(): void {
   // carry the same ids, and a candidate held over would draw one form's text on another.
   pending.clear()
   const active = document.activeElement
-  if (active instanceof HTMLElement) active.blur()
+  if (active instanceof HTMLElement && listEl.value?.contains(active)) active.blur()
   cancelWipe()
   wipe = setTimeout(() => {
     wipe = undefined
@@ -329,6 +330,7 @@ function blank(): void {
 let release: (() => void) | undefined
 
 function keyDown(event: KeyboardEvent): void {
+  if (!open.value || focusOwner() !== 'form') return
   // Escape is bridge/focus.ts's, in the capture phase.
   if (event.key === 'Escape') return
   const key = KEYS[event.key]

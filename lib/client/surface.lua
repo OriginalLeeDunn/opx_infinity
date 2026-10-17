@@ -84,6 +84,10 @@ local function wire(surface, channel)
 	local page = surface.page
 
 	local listening, failure = pcall(page.on, page, full, function(payload)
+		-- The host can already have queued a callback when Destroy retires the
+		-- page. It belongs to that old surface, not to the modules now stopping
+		-- or starting against its replacement.
+		if surface.failed then return end
 		-- Set here, not in a caller's own ready handler: the flag must be true
 		-- before that handler runs, or its first Send is dropped.
 		if channel == 'ready' then surface.ready = true end
@@ -375,6 +379,7 @@ function OPX.Surface.Destroy(surface)
 	surface.ready = false
 	surface.failed = true
 	surface.latched = {}
+	surface.handlers = {}
 	local page = surface.page
 	surface.page = nil
 	if page ~= nil then pcall(page.destroy, page) end

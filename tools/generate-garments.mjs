@@ -92,7 +92,19 @@ async function loadSharp() {
 /** A Lua string literal. UTF-8 passes through; only what would end or bend it is escaped. */
 function lua(text) {
   return `"${String(text).replace(/[\\"]/g, (c) => `\\${c}`).replace(/[\x00-\x1f\x7f]/g,
-    (c) => `\\${c.charCodeAt(0)}`)}"`
+    (c) => `\\${String(c.charCodeAt(0)).padStart(3, '0')}`)}"`
+}
+
+/** Lua checks UTF-8 bytes, so cut whole characters within that same limit. */
+function garmentName(value) {
+  let name = ''
+  let bytes = 0
+  for (const character of String(value).trim()) {
+    bytes += Buffer.byteLength(character, 'utf8')
+    if (bytes > NAME_MAX) break
+    name += character
+  }
+  return name
 }
 
 /** The shipped file name of a picture: a short, deterministic hash of its slug. */
@@ -179,7 +191,7 @@ async function main() {
   const records = [...chosen.keys()].sort()
   const rows = records.map((record) => {
     const held = chosen.get(record)
-    const named = (held.f || held.m).name.trim().slice(0, NAME_MAX)
+    const named = garmentName((held.f || held.m).name)
     const fields = [`NAME = ${lua(named)}`]
     if (held.f) fields.push(`FEMALE = ${lua(fileOfSlug.get(held.f.slug))}`)
     if (held.m) fields.push(`MALE = ${lua(fileOfSlug.get(held.m.slug))}`)

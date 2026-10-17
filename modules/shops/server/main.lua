@@ -266,6 +266,14 @@ local function storedClothing(source)
 	return read.value
 end
 
+--- The citizen a source is playing, or nil.
+local function citizenOf(source)
+	if character == nil then return nil end
+	local player = character.GetPlayer(source)
+	local citizen = player and player.PlayerData and player.PlayerData.citizenId
+	return type(citizen) == 'string' and citizen ~= '' and citizen or nil
+end
+
 --- The charge a shop's fitting room puts on the save that leaves it.
 --
 -- Called by `appearance` with the slots IT computed, before the record is
@@ -276,6 +284,8 @@ local function chargeFor(shop)
 		if not tuning.charge then return true end
 		local total = M.Bill(shop.prices, slots)
 		if total <= 0 then return true end
+		local citizen = citizenOf(source)
+		if citizen == nil then return false, 'clothing.unpaid' end
 		local reason = ('clothing at %s'):format(shop.label)
 		local paid, refused = character.RemoveMoney(source, tuning.currency, total, reason)
 		if not paid then
@@ -286,7 +296,10 @@ local function chargeFor(shop)
 		OPX.NotifyLocale(source, 'shops.paid',
 			{ total = OPX.Locale.Money(total, tuning.currency), shop = shop.label }, 'success')
 		return true, nil, function()
-			character.AddMoney(source, tuning.currency, total, 'refund: ' .. reason)
+			local refunded = character.AddMoneyOffline(citizen, tuning.currency, total, 'refund: ' .. reason)
+			if type(refunded) ~= 'table' or not refunded.ok then
+				Open77.log.error(('[shops] %d %s could not be refunded to %s'):format(total, tuning.currency, citizen))
+			end
 		end
 	end
 end
@@ -388,6 +401,8 @@ local function onWear(source, payload)
 	local bill = nil
 	if tuning.charge and look.cost > 0 then
 		bill = function(payer)
+			local citizen = citizenOf(payer)
+			if citizen == nil then return false, 'clothing.unpaid' end
 			local reason = ('%s at %s'):format(look.label, shop.label)
 			local paid, refused = character.RemoveMoney(payer, tuning.currency, look.cost, reason)
 			if not paid then
@@ -397,7 +412,10 @@ local function onWear(source, payload)
 			OPX.NotifyLocale(payer, 'shops.paid',
 				{ total = OPX.Locale.Money(look.cost, tuning.currency), shop = shop.label }, 'success')
 			return true, nil, function()
-				character.AddMoney(payer, tuning.currency, look.cost, 'refund: ' .. reason)
+				local refunded = character.AddMoneyOffline(citizen, tuning.currency, look.cost, 'refund: ' .. reason)
+				if type(refunded) ~= 'table' or not refunded.ok then
+					Open77.log.error(('[shops] %d %s could not be refunded to %s'):format(look.cost, tuning.currency, citizen))
+				end
 			end
 		end
 	end
@@ -433,14 +451,6 @@ local function equipmentOf(record)
 	return any and out or nil
 end
 
---- The citizen a source is playing, or nil.
-local function citizenOf(source)
-	if character == nil then return nil end
-	local player = character.GetPlayer(source)
-	local citizen = player and player.PlayerData and player.PlayerData.citizenId
-	return type(citizen) == 'string' and citizen ~= '' and citizen or nil
-end
-
 --- Sends one player their whole saved list.
 --- The saved look a request names, as the row id it can only be, or nil.
 ---
@@ -459,6 +469,7 @@ end
 
 local function pushList(source, citizen)
 	local listed = M.Storage.List(citizen)
+	if citizenOf(source) ~= citizen then return end
 	if not listed.ok then return refuse(source, 'shops.listFailed') end
 
 	local rows = {}
@@ -484,6 +495,7 @@ local function onSave(source, payload)
 	if name == nil or name == '' then return refuse(source, 'shops.nameNeeded') end
 
 	local counted = M.Storage.Count(citizen)
+	if citizenOf(source) ~= citizen then return end
 	if not counted.ok then return refuse(source, 'shops.listFailed') end
 	if tonumber(counted.value or 0) >= tuning.maxOutfits then
 		return refuse(source, 'shops.tooMany', { max = tuning.maxOutfits })
@@ -493,9 +505,11 @@ local function onSave(source, payload)
 	-- authoritative on the server; taking the client's word for it would let
 	-- anybody save a look they never wore.
 	local worn = equipmentOf(storedClothing(source))
+	if citizenOf(source) ~= citizen then return end
 	if worn == nil then return refuse(source, 'shops.nothingWorn') end
 
 	local saved = M.Storage.Save(citizen, name, json.encode({ equipment = worn }))
+	if citizenOf(source) ~= citizen then return end
 	if not saved.ok then return refuse(source, 'shops.saveFailed') end
 
 	OPX.NotifyLocale(source, 'shops.saved', { name = name }, 'success')
@@ -511,6 +525,7 @@ local function onLoad(source, payload)
 	if outfitId == nil then return refuse(source, 'shops.noSuchOutfit') end
 
 	local found = M.Storage.Own(citizen, outfitId)
+	if citizenOf(source) ~= citizen then return end
 	if not found.ok or type(found.value) ~= 'table' then
 		return refuse(source, 'shops.noSuchOutfit')
 	end
@@ -529,6 +544,7 @@ local function onDelete(source, payload)
 	if outfitId == nil then return refuse(source, 'shops.noSuchOutfit') end
 
 	local removed = M.Storage.Delete(citizen, outfitId)
+	if citizenOf(source) ~= citizen then return end
 	if not removed.ok then return refuse(source, 'shops.deleteFailed') end
 	pushList(source, citizen)
 end
@@ -548,6 +564,7 @@ local function onShare(source, payload)
 	if outfitId == nil then return refuse(source, 'shops.noSuchOutfit') end
 
 	local found = M.Storage.Own(citizen, outfitId)
+	if citizenOf(source) ~= citizen then return end
 	if not found.ok or type(found.value) ~= 'table' then
 		return refuse(source, 'shops.noSuchOutfit')
 	end
@@ -562,6 +579,7 @@ local function onShare(source, payload)
 	for _ = 1, 5 do
 		local code = M.MintCode(tuning.codeLength, math.random)
 		local set = M.Storage.SetCode(citizen, outfitId, code)
+		if citizenOf(source) ~= citizen then return end
 		if set.ok and tonumber(set.value or 0) > 0 then
 			return TriggerClientEvent(M.Event.CODE, source, { id = outfitId, code = code })
 		end
@@ -572,6 +590,8 @@ end
 
 --- "Somebody read me this code."
 local function onRedeem(source, payload)
+	local citizen = citizenOf(source)
+	if citizen == nil then return refuse(source, 'shops.noCharacter') end
 	if not tuning.sharing then return refuse(source, 'shops.sharingOff') end
 
 	local typed = type(payload) == 'table' and payload.code or nil
@@ -596,6 +616,11 @@ local function onRedeem(source, payload)
 	end
 
 	local found = M.Storage.ByCode(code)
+	if citizenOf(source) ~= citizen then return end
+	local current = shopAt(source, shop.key)
+	if current ~= shop or appearance.PricedRoom(source) ~= roomOwner(shop) then
+		return refuse(source, 'shops.redeemInRoom')
+	end
 	if not found.ok or type(found.value) ~= 'table' then
 		return refuse(source, 'shops.noSuchCode')
 	end

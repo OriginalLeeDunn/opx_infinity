@@ -314,11 +314,12 @@ local function blockHands(on)
 end
 
 --- Puts one crate into the local list, or takes it out.
-local function keep(row)
+local function keep(row, into)
+	into = into or crates
 	if type(row) ~= 'table' then return end
 	local id = propId(row.id)
 	if id == nil then return end
-	crates[id] = { id = id, site = tostring(row.site or ''),
+	into[id] = { id = id, site = tostring(row.site or ''),
 		x = tonumber(row.x) or 0.0, y = tonumber(row.y) or 0.0, z = tonumber(row.z) or 0.0,
 		bucket = tonumber(row.bucket) or 0, where = tostring(row.where or Where.GROUND) }
 end
@@ -431,19 +432,18 @@ function M.Start()
 		if part.first then incoming = {} end
 		if incoming == nil then return end
 		if type(part.crates) == 'table' then
-			for _, row in ipairs(part.crates) do incoming[#incoming + 1] = row end
+			for _, row in ipairs(part.crates) do keep(row, incoming) end
 		end
 		if not part.done then return end
 		-- SWAPPED WHOLE, and only once the last part has landed. A list rebuilt
 		-- part by part is a list that is briefly missing most of its crates, and a
 		-- pick during that window would offer nothing on a crate that is right there.
-		crates = {}
-		for _, row in ipairs(incoming) do keep(row) end
-		incoming = nil
+		crates, incoming = incoming, nil
 	end)
 
 	RegisterNetEvent(M.Event.CRATE, function(row)
 		keep(row)
+		if incoming ~= nil then keep(row, incoming) end
 	end)
 
 	RegisterNetEvent(M.Event.SELLERS, function(list)
@@ -459,7 +459,10 @@ function M.Start()
 
 	RegisterNetEvent(M.Event.GONE, function(id)
 		local key = propId(id)
-		if key ~= nil then crates[key] = nil end
+		if key ~= nil then
+			crates[key] = nil
+			if incoming ~= nil then incoming[key] = nil end
+		end
 	end)
 
 	RegisterNetEvent(M.Event.ANSWER, function(ok, reason, held)

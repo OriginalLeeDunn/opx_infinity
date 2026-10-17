@@ -43,6 +43,21 @@ local Service = M.Service
 M.Duo = {}
 local Duo = M.Duo
 
+-- Consent belongs to the people who exchanged the invitation, including a
+-- character switch that keeps the same account and connection alive.
+local function identity(player)
+	local character = OPX.Api and OPX.Api.Get('character')
+	local loaded = character and character.GetPlayer(player)
+	return { userId = OPX.UserIdOf(player), session = OPX.Sessions[player],
+		data = loaded and loaded.PlayerData }
+end
+
+local function unchanged(player, expected)
+	local current = identity(player)
+	return current.userId == expected.userId and current.session == expected.session
+		and current.data == expected.data
+end
+
 -- Invitations by id, and the invitation each player is part of, either side.
 local invites, inviteOf = {}, {}
 
@@ -284,7 +299,8 @@ function Duo.Request(player, spec)
 	serial = serial + 1
 	if serial > M.MAX_REQUEST_ID then serial = 1 end
 	local invite = { id = serial, actor = player, target = target, plan = plan,
-		untilMs = OPX.Now() + Opt.SHARED_INVITE_MS }
+		untilMs = OPX.Now() + Opt.SHARED_INVITE_MS,
+		actorIdentity = identity(player), targetIdentity = identity(target) }
 	invites[invite.id], inviteOf[player], inviteOf[target] = invite, invite.id, invite.id
 	TriggerClientEvent(M.Event.INVITE, target, invite.id, plan.what, Opt.SHARED_INVITE_MS)
 	return { ok = true }
@@ -364,7 +380,11 @@ function Duo.Reply(target, inviteId, accepted)
 	end
 	drop(invite)
 	local actor = invite.actor
-	if OPX.Now() > invite.untilMs then
+	if not unchanged(actor, invite.actorIdentity) or not unchanged(target, invite.targetIdentity) then
+		TriggerClientEvent(M.Event.UNINVITE, target, invite.id)
+		return
+	end
+	if OPX.Now() >= invite.untilMs then
 		notify(target, 'warning', 'expired')
 		notify(actor, 'info', 'expired')
 		return

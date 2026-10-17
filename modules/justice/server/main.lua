@@ -133,6 +133,10 @@ local function holds(role, data)
 	return true, nil
 end
 
+local function still(player, data, role)
+	return data ~= nil and dataOf(player) == data and (role == nil or holds(role, data) == true)
+end
+
 -- ── money ───────────────────────────────────────────────────────────────────
 
 local function balance(player, method)
@@ -146,8 +150,12 @@ local function charge(player, method, amount, reason)
 	return read and ok == true
 end
 
-local function refund(player, method, amount, reason)
+local function refund(player, method, amount, reason, citizenId)
 	if amount <= 0 then return end
+	if citizenId ~= nil and type(character.AddMoneyOffline) == 'function' then
+		pcall(character.AddMoneyOffline, citizenId, method, amount, reason)
+		return
+	end
 	pcall(character.AddMoney, player, method, amount, reason)
 end
 
@@ -204,8 +212,8 @@ end
 local function giveCard(player, citizenId, name, licence, line)
 	local api = inventory()
 	if S.card == nil or api == nil or type(api.AddItem) ~= 'function' then return false end
-	dropCards(player, citizenId, licence.kind)
-	local read, added = pcall(api.AddItem, player, S.card.name, 1, {
+	dropCards(citizenId, citizenId, licence.kind)
+	local read, added = pcall(api.AddItem, citizenId, S.card.name, 1, {
 		kind = licence.kind, label = licence.label, holder = citizenId, name = name or citizenId,
 		serial = line.serial, expires = line.expires,
 	})
@@ -317,7 +325,9 @@ function M.OpenDesk(player, key)
 			expires = line and line.expires or nil }
 	end
 	local rows = recordOf(cid, false)
+	if rows == nil then return answer(player, false, 'unavailable'), 'unavailable' end
 	local counsel = Storage().Counsel(cid)
+	if not still(player, data) then return false, 'no_character' end
 	local payload = {
 		key = desk.key, label = desk.label, money = S.money, now = at, licences = licences,
 		record = views(rows), warrants = views(warrantsIn(rows)),
@@ -348,6 +358,7 @@ function M.Buy(player, key, kind)
 		local clean, code = Access.Clean(recordOf(cid, false), at, S.cleanDays)
 		if not clean then return answer(player, false, code, { licence = licence.label }), code end
 	end
+	if not still(player, data) then return false, 'no_character' end
 	if balance(player, S.money) < licence.fee then
 		return answer(player, false, 'not_enough_money', { fee = licence.fee }), 'not_enough_money'
 	end
@@ -358,7 +369,7 @@ function M.Buy(player, key, kind)
 	local line = { issued = at, expires = Access.Expiry(licence, at), serial = newSerial(kind), by = desk.key }
 	held[kind] = line
 	if not writeLicences(cid, held) then
-		refund(player, S.money, licence.fee, reason .. ':refund')
+		refund(player, S.money, licence.fee, reason .. ':refund', cid)
 		return answer(player, false, 'unavailable'), 'unavailable'
 	end
 	local carded = giveCard(player, cid, nameOf(data), licence, line)
@@ -382,6 +393,7 @@ function M.PayBail(player, key, id)
 	id = math.tointeger(tonumber(id))
 	if id == nil or id < 1 then return answer(player, false, 'invalid'), 'invalid' end
 	local row = Storage().Get(id)
+	if not still(player, data) then return false, 'no_character' end
 	if row == nil or row.citizen ~= data.citizenId or row.kind ~= M.Kind.WARRANT or not row.active then
 		return answer(player, false, 'invalid'), 'invalid'
 	end
@@ -391,7 +403,7 @@ function M.PayBail(player, key, id)
 		return answer(player, false, 'not_enough_money', { fee = row.bail }), 'not_enough_money'
 	end
 	if not Storage().PayBail(id, data.citizenId, row.bail) then
-		refund(player, S.money, row.bail, reason .. ':refund')
+		refund(player, S.money, row.bail, reason .. ':refund', data.citizenId)
 		return answer(player, false, 'invalid'), 'invalid'
 	end
 	toCity(row.bail, reason, 'justice-bail-' .. id)
@@ -453,6 +465,14 @@ function M.ViewRecord(player, who)
 		name = online and nameOf(dataOf(online)) or nil
 	end
 	local rows = recordOf(cid, viewer == 'judge')
+	if rows == nil then return answer(player, false, 'unavailable'), 'unavailable' end
+	if not still(player, data, viewer) then return false, 'not_allowed' end
+	if viewer == 'lawyer' then
+		local counsel = Storage().Counsel(cid)
+		if counsel == nil or counsel.lawyer ~= data.citizenId or not still(player, data, viewer) then
+			return false, 'not_your_client'
+		end
+	end
 	local payload = { citizenId = cid, name = name, viewer = viewer, now = wall(), rows = views(rows),
 		warrants = #warrantsIn(rows) }
 	TriggerClientEvent(M.Event.RECORD_DATA, player, payload)
@@ -485,6 +505,11 @@ function M.Offer(lawyer, target)
 	if inviteOf[lawyer] ~= nil or inviteOf[target] ~= nil then return answer(lawyer, false, 'busy'), 'busy' end
 	if OPX.Table.Count(invites) >= MAX_INVITES then return answer(lawyer, false, 'busy'), 'busy' end
 	local counsel = Storage().Counsel(client.citizenId)
+	if not still(lawyer, data, 'lawyer') or dataOf(target) ~= client or
+		apart(pointOf(lawyer), pointOf(target)) > OPX.Spots.ServerReach(S.lawyerReach) then
+		return false, 'expired'
+	end
+	if inviteOf[lawyer] ~= nil or inviteOf[target] ~= nil then return answer(lawyer, false, 'busy'), 'busy' end
 	if counsel ~= nil and counsel.lawyer == data.citizenId then
 		return answer(lawyer, false, 'already_client'), 'already_client'
 	end
@@ -506,6 +531,10 @@ function M.Consent(player, id, accepted)
 	local invite = type(id) == 'string' and invites[id] or nil
 	if invite == nil or invite.target ~= player then return false, 'invalid' end
 	dropInvite(invite)
+	if now() >= invite.untilMs or
+		apart(pointOf(invite.lawyer), pointOf(player)) > OPX.Spots.ServerReach(S.lawyerReach) then
+		return answer(player, false, 'expired'), 'expired'
+	end
 	if not accepted then
 		answer(invite.lawyer, false, 'declined')
 		return answer(player, true, 'you_declined'), 'declined'
@@ -562,6 +591,7 @@ function M.Office(player)
 	else
 		return answer(player, false, 'not_allowed'), 'not_allowed'
 	end
+	if not still(player, data, payload.role) then return false, 'not_allowed' end
 	TriggerClientEvent(M.Event.OFFICE_DATA, player, payload)
 	return true, payload
 end
@@ -688,6 +718,7 @@ local function billFine(judgePlayer, defendantCid, amount, recordId, label)
 			if OPX.Table.Count(fines) < 512 then fines[tostring(issued.value.id)] = recordId end
 			return 'invoiced'
 		end
+		return 'unpaid'
 	end
 	local reason = 'justice:fine:' .. tostring(recordId)
 	if balance(target, 'BANK') >= amount and charge(target, 'BANK', amount, reason) then
@@ -849,13 +880,16 @@ function M.Api()
 			local cid = citizenOf(citizenId)
 			if cid == nil then return OPX.Result.Err('no_citizen') end
 			local rows = recordOf(cid, type(options) == 'table' and options.expunged == true)
+			if rows == nil then return OPX.Result.Err('unavailable') end
 			return OPX.Result.Ok({ rows = views(rows), warrants = views(warrantsIn(rows)) })
 		end,
 		--- `(citizenId)` -> Result boolean. Yields.
 		HasWarrant = function(citizenId)
 			local cid = citizenOf(citizenId)
 			if cid == nil then return OPX.Result.Err('no_citizen') end
-			return OPX.Result.Ok(#warrantsIn(recordOf(cid, false)) > 0)
+			local rows = recordOf(cid, false)
+			if rows == nil then return OPX.Result.Err('unavailable') end
+			return OPX.Result.Ok(#warrantsIn(rows) > 0)
 		end,
 		--- `(citizenId, kind)` -> boolean, state ('valid'|'expired'|'none'). Yields offline.
 		HasLicence = function(citizenId, kind)
@@ -893,7 +927,11 @@ local function door(event, handler)
 		local player = playerId(source)
 		if player == nil then return end
 		local args = table.pack(...)
-		CreateThread(function() handler(player, table.unpack(args, 1, math.min(args.n, 4))) end)
+		local data = dataOf(player)
+		CreateThread(function()
+			if not still(player, data) then return end
+			handler(player, table.unpack(args, 1, math.min(args.n, 4)))
+		end)
 	end)
 end
 

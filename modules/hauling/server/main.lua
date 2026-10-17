@@ -1033,11 +1033,11 @@ end
 -- to the audit, with the site, the count and what it would have paid, so staff
 -- can refund it from one line.
 -- @return integer crates lost
-local function restore(inventory, player, taken, tag, sale, dropoff, each)
+local function restore(inventory, player, taken, tag, sale, dropoff, each, citizenId)
 	--- One destination as a function of a count: the bag, or a trunk by id.
 	local function into(vehicle)
 		if vehicle == nil then
-			return function(count) return stored(inventory.AddItem, player, Access.ITEM, count, tag) end
+			return function(count) return stored(inventory.AddItem, citizenId, Access.ITEM, count, tag) end
 		end
 		-- No `player`: this is a put-back into the trunk the item came out of a
 		-- second ago, and not the player reaching into somebody's boot.
@@ -1141,6 +1141,8 @@ end
 -- same crates are counted and paid twice.
 local function completeSale(player, sale)
 	sales[player] = nil
+	local allowed, refusal = mayWork(player, sale.site)
+	if not allowed then return false, refusal end
 	if Claim.TooSoon({ claimedAtMs = sale.startedAtMs }, OPX.Now(),
 		Access.StepMs(Step.DELIVER), Access.CLOCK_TOLERANCE_MS) then
 		return false, 'too_soon'
@@ -1170,10 +1172,24 @@ local function completeSale(player, sale)
 	local stock = stockFor(player, sale.site, dropoff, here.bucket)
 	local taken, sold = {}, 0
 	for _, source in ipairs(stock) do
+		local current = standing(player)
+		local allowed = mayWork(player, sale.site)
+		if citizenOf(player) ~= seller or not allowed or current == nil
+			or current.bucket ~= sale.bucket
+			or (Access.GapSquared(current, dropoff) or math.huge) > Access.VEHICLE_REACH_SQ then
+			break
+		end
+		if source.vehicle ~= nil then
+			local parked = vehicleAt(source.vehicle)
+			if parked == nil or parked.bucket ~= sale.bucket
+				or (Access.GapSquared(parked, dropoff) or math.huge) > dropoff.radius * dropoff.radius then
+				break
+			end
+		end
 		-- Through `stored`: a raise here, after an earlier source was already
 		-- taken, would end the handler with those crates gone and nothing paid.
 		local removed = source.vehicle == nil
-			and stored(inventory.RemoveItem, player, Access.ITEM, source.count, tag)
+			and stored(inventory.RemoveItem, seller or player, Access.ITEM, source.count, tag)
 			or stored(inventory.RemoveFromTrunk, source.vehicle, Access.ITEM, source.count, tag,
 				player)
 		if removed then
@@ -1205,7 +1221,7 @@ local function completeSale(player, sale)
 	if not called or paid ~= true then
 		Open77.log.warn(('[hauling] player %d sold %d crate(s) at %s and was not paid: %s')
 			:format(player, sold, safe(dropoff.key), safe(called and why or paid)))
-		local lost = restore(inventory, player, taken, tag, sale, dropoff, each)
+		local lost = restore(inventory, player, taken, tag, sale, dropoff, each, seller or player)
 		return false, lost > 0 and 'not_paid_lost' or 'not_paid'
 	end
 	Open77.log.info(('[hauling] player %d sold %d crate(s) of %s at %s for %d')
@@ -1265,6 +1281,8 @@ local function complete(player)
 			announce(crate)
 			return false, code
 		end
+		local allowed, refusal = mayWork(player, crate.site)
+		if not allowed then return giveBack(refusal) end
 		local carry = Access.Carry(crate.site)
 		if carry == nil then return giveBack('no_carry_config') end
 		-- The reach is checked AGAIN, because the bar took seconds and the player

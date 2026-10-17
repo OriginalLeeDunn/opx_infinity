@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useLocale } from '@/composables/useLocale'
 import { emit } from '@/bridge/channel'
 import { guard } from '@/bridge/diag'
-import { acquireFocus } from '@/bridge/focus'
+import { acquireFocus, focusOwner } from '@/bridge/focus'
 import { text, records } from '@/bridge/types'
 import type { Payload } from '@/bridge/types'
 import { useBridge } from '@/composables/useBridge'
@@ -165,7 +165,7 @@ function pick(id: string): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (!open.value) return
+  if (!open.value || focusOwner() !== 'spawn') return
   // Kept now that the confirm button is gone, which is what it used to guard
   // against: a control with DOM focus handles Enter itself and has prevented the
   // default by the time this sees it, so one press could otherwise spawn twice.

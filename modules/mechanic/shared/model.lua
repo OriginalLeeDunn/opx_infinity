@@ -255,7 +255,8 @@ function Model.Jobs(jobs, minGrade)
 	local floor = math.tointeger(minGrade) or 0
 	local out = {}
 	for name, grade in pairs(jobs) do
-		out[name] = math.max(finiteNumber(grade) or 0, floor)
+		local own = finiteNumber(grade)
+		out[name] = own ~= nil and math.max(own, floor) or false
 	end
 	return out
 end

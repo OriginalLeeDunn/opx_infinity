@@ -92,6 +92,13 @@ function View.Start()
 	-- raises the screen, and an announcement with no handler is dropped.
 	OPX.UI.On(SURFACE, 'focus:set', onFocus)
 
+	-- Attach the seam before page handlers: On can synchronously replay a
+	-- ready received during boot, and its config must already have a route out.
+	AddEventHandler(EVENT_VIEW, function(payload)
+		if type(payload) ~= 'table' then return end
+		OPX.UI.Send(SURFACE, CHANNEL, payload)
+	end)
+
 	-- The page to the state half.
 	for _, action in ipairs(ACTIONS) do
 		OPX.UI.On(SURFACE, 'downed:' .. action, function(payload)
@@ -99,13 +106,6 @@ function View.Start()
 		end)
 	end
 
-	-- The state half to the page. Registered BEFORE anything can publish: the
-	-- first payload a view ever causes is the `config` that `FromView('ready')`
-	-- publishes straight back, and a handler added after that would miss it.
-	AddEventHandler(EVENT_VIEW, function(payload)
-		if type(payload) ~= 'table' then return end
-		OPX.UI.Send(SURFACE, CHANNEL, payload)
-	end)
 end
 
 --- Gives the focus back on the way out.

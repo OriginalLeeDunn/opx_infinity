@@ -112,9 +112,10 @@ local function dealerMenu(view)
 	end
 	for _, line in ipairs(type(view.buys) == 'table' and view.buys or {}) do
 		local held = tonumber(line.held) or 0
-		local sells = {}
+		local sells, seen = {}, {}
 		for _, count in ipairs({ 1, 5, held }) do
-			if count > 0 and count <= held and (count ~= held or (held ~= 1 and held ~= 5)) then
+			if count > 0 and count <= held and not seen[count] then
+				seen[count] = true
 				sells[#sells + 1] = { id = ('sell.%d.%d'):format(line.index, count),
 					label = locale('underworld.menu.sellCount', { count = count }),
 					value = money(line.price * count), icon = 'money', close = true,

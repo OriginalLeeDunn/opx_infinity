@@ -76,11 +76,16 @@ local function settle(list)
 					local other = OPX.Modules.Record(id)
 					if other == nil then
 						halt(module, 'unavailable', ('requires %q, which is not installed'):format(id))
+						OPX.Api.Withdraw(module.Id)
 						dropped[#dropped + 1] = module.Id
 						settling = true
 						break
 					elseif other.State ~= 'declared' and other.State ~= 'started' then
 						halt(module, 'unavailable', ('requires %q, which is %s'):format(id, other.State))
+						-- A dependency can fail during the same Api phase in which
+						-- this module already published. Optional consumers must not
+						-- receive a contract whose provider will never start.
+						OPX.Api.Withdraw(module.Id)
 						dropped[#dropped + 1] = module.Id
 						settling = true
 						break

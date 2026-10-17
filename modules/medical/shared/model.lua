@@ -279,8 +279,10 @@ function Model.Jobs(svc, minGrade)
 	local floor = math.tointeger(minGrade) or 0
 	local out = {}
 	for name, grade in pairs(svc.jobs) do
-		local own = finiteNumber(grade) or 0
-		out[name] = math.max(own, floor)
+		local own = finiteNumber(grade)
+		-- Keep malformed grades unsatisfiable rather than turning a typo into
+		-- grade zero. The shared gate reports that refusal consistently.
+		out[name] = own ~= nil and math.max(own, floor) or false
 	end
 	return out
 end

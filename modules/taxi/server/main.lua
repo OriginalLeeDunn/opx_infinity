@@ -317,7 +317,14 @@ end
 local function newRide(fields)
 	nextRide = nextRide % 2147483646 + 1
 	fields.id, fields.metres, fields.outSamples = nextRide, 0, 0
+	fields.driverData = loaded(fields.driver)
+	fields.passengerData = fields.passenger and loaded(fields.passenger) or nil
 	return fields
+end
+
+local function participants(ride)
+	return ride.driverData ~= nil and loaded(ride.driver) == ride.driverData and
+		(ride.passenger == nil or (ride.passengerData ~= nil and loaded(ride.passenger) == ride.passengerData))
 end
 
 local function dropRide(ride)
@@ -384,8 +391,11 @@ local function bill(ride, fare)
 			audit('taxi.fare', driver, true, ('%s ride %d: invoiced %d to %d'):format(co.key, ride.id, fare, passenger))
 			return 'invoiced'
 		end
-		Open77.log.warn(('[taxi] invoice refused (%s): charging directly'):format(tostring(read
+		Open77.log.warn(('[taxi] invoice refused (%s): the fare remains unpaid'):format(tostring(read
 			and type(issued) == 'table' and issued.error or issued)))
+		-- An available consent-based billing service refusing a request does
+		-- not authorize a direct debit that bypasses it.
+		return 'unpaid'
 	else
 		note('invoices', 'no invoices contract: fares are charged directly through character money')
 	end
@@ -421,6 +431,7 @@ local function endRide(ride, why)
 	if ride.done then return end
 	ride.done = true
 	dropRide(ride)
+	if not participants(ride) then return end
 	local co = ride.co
 	local fare, surged = Model.Fare(co, ride.metres, gameHour(), config().minRideM)
 	pushMeter(ride, 'ended', fare)
@@ -450,6 +461,7 @@ local function payStreet(ride)
 	local co, npc = ride.co, ride.co.npc
 	ride.done = true
 	dropRide(ride)
+	if not participants(ride) then return end
 	local straight = Model.Distance(ride.pickup, ride.destination) or 0
 	local elapsed = OPX.Now() - (ride.startedMs or OPX.Now())
 	-- A car cannot be at the drop-off sooner than the straight line allows, nor
@@ -502,6 +514,10 @@ local function onTake(player, payload)
 	if rides[player] ~= nil then return answer(player, false, 'busy') end
 	local call = Dispatch.Get(type(payload) == 'table' and payload.callId)
 	if call == nil or call.passenger == player then return answer(player, false, 'no_such_call') end
+	if citizenOf(call.passenger) ~= call.citizenId then
+		Dispatch.Close(call.id)
+		return answer(player, false, 'no_such_call')
+	end
 	local co = companyFor(set, call)
 	if co == nil then return answer(player, false, 'wrong_company') end
 	local taken, why = Dispatch.Take(call.id, player, co.key)
@@ -614,6 +630,12 @@ end
 -- ── the sweep ────────────────────────────────────────────────────────────────
 
 local function sweepRide(ride, now)
+	if not participants(ride) then
+		ride.done = true
+		dropRide(ride)
+		if ride.callId ~= nil then Dispatch.Close(ride.callId) end
+		return
+	end
 	local co = ride.co
 	if ride.kind == Kind.CALL and ride.phase == Phase.ENROUTE then
 		if not member(ride.driver, co, co.dispatch.minGrade) then
@@ -762,7 +784,7 @@ end
 local function contractRide(player)
 	local id = math.tointeger(tonumber(player))
 	local ride = id and (rides[id] or riding[id]) or nil
-	if ride == nil then return Result.Ok(nil) end
+	if ride == nil or not participants(ride) then return Result.Ok(nil) end
 	return Result.Ok({ kind = ride.kind, phase = ride.phase, company = ride.co.key, driver = ride.driver,
 		passenger = ride.passenger, metres = math.floor(ride.metres) })
 end
@@ -800,7 +822,11 @@ function M.Start()
 			if player == nil or player <= 0 then return end
 			if cooled(player, kind) then return answer(player, false, 'rate_limited') end
 			-- On a thread: the account and the bag may yield.
-			CreateThread(function() handler(player, payload) end)
+			local data = loaded(player)
+			CreateThread(function()
+				if data == nil or loaded(player) ~= data then return end
+				handler(player, payload)
+			end)
 		end)
 	end
 	wire(Event.BOARD, 'board', onBoard)

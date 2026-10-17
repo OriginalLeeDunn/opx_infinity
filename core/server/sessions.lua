@@ -98,7 +98,10 @@ function OPX.ForgetSession(playerId)
 	if not playerId then return end
 
 	local session = OPX.Sessions[playerId]
-	if session then session.departing = true end
+	-- An identity-free queued announcement could unload whoever takes this
+	-- slot before the event is delivered. There is no departure to announce.
+	if session == nil then return end
+	session.departing = true
 
 	TriggerEvent(FORGOTTEN, playerId, session and session.userId or nil)
 
@@ -132,9 +135,12 @@ end
 AddEventHandler(OPX.Host.PLAYER_DISCONNECTED, function(rawPlayerId)
 	local playerId = tonumber(rawPlayerId)
 	if not playerId then return end
+	local departed = OPX.Sessions[playerId]
+	if departed == nil then return end
 
 	local function sweep()
-		if OPX.Sessions[playerId] == nil then return end
+		-- The slot can be reused while this cleanup waits for the next frame.
+		if OPX.Sessions[playerId] ~= departed then return end
 		Open77.log.warn(('[session] slot %d left a session behind; no module claimed the ' ..
 			'departure'):format(playerId))
 		OPX.ForgetSession(playerId)

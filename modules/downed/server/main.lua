@@ -64,6 +64,25 @@ local unplaced = {}
 -- The character contract, looked up in `Start`.
 local character
 
+-- Downed state belongs to a particular connection and character. Logout can
+-- keep the same source alive while another character takes its body.
+local function matches(playerId, record)
+	local player = character and character.GetPlayer(playerId)
+	local data = player and player.PlayerData
+	return data ~= nil and data.citizenId == record.citizenId and
+		OPX.UserIdOf(playerId) == record.userId and OPX.Sessions[playerId] == record.session
+end
+
+local function currentRecord(playerId)
+	local record = down[playerId]
+	if record ~= nil and not matches(playerId, record) then
+		down[playerId] = nil
+		M.Storage.Write(record.citizenId, OPX.Now() - record.sinceMs, record.waiting)
+		return nil
+	end
+	return record
+end
+
 -- Answers a value as a finite number, or nil. Named for what it RETURNS: four
 -- other files use a local called `finite` for the predicate, and one name for
 -- both is an `if finite(x) then` that is true for nil.
@@ -170,7 +189,7 @@ end
 -- Sends one player their screen state. Every field is relative, so the two
 -- clocks never have to agree.
 local function pushState(playerId)
-	local record = down[playerId]
+	local record = currentRecord(playerId)
 	if record == nil then
 		TriggerClientEvent(EVENT_STATE, playerId, { down = false })
 		return
@@ -196,6 +215,8 @@ local function goDown(playerId, life, citizenId, stage)
 	if resumed and resumed.citizenId ~= citizenId then resumed = nil end
 
 	local record = {
+		userId = OPX.UserIdOf(playerId),
+		session = OPX.Sessions[playerId],
 		sinceMs = OPX.Now() - (resumed and resumed.downForMs or 0),
 		waiting = resumed ~= nil and resumed.waiting == true,
 		position = position,
@@ -356,7 +377,7 @@ end
 -- Opens a record only for a dead player with a character loaded, and closes one
 -- as soon as the body is alive again or the character has left.
 local function observe(playerId)
-	local record = down[playerId]
+	local record = currentRecord(playerId)
 	if record ~= nil then
 		if record.stage == WOUNDED then
 			-- FLATLINE: a finishing blow, the bleed-out, or anything that went round
@@ -440,7 +461,7 @@ end
 -- `options` may carry the caller's own `health` share and `graceMs`, bounded the
 -- same way as REVIVE; what it leaves out comes from REVIVE.
 local function reviveNow(playerId, why, options)
-	local record = down[playerId]
+	local record = currentRecord(playerId)
 	if record ~= nil and record.stage == WOUNDED and not isDead(playerId) then
 		-- ALIVE ALREADY: a revive of a wounded body is a heal past the floor and a
 		-- release, not a life transition.
@@ -509,7 +530,7 @@ end
 local function onWait()
 	local playerId = tonumber(source) or 0
 	if playerId <= 0 or cooled(playerId, 'wait') then return end
-	local record = down[playerId]
+	local record = currentRecord(playerId)
 	if record == nil then return pushState(playerId) end
 	if not record.waiting then
 		record.waiting = true
@@ -532,7 +553,7 @@ end
 local function onGiveUp()
 	local playerId = tonumber(source) or 0
 	if playerId <= 0 or cooled(playerId, 'giveUp') then return end
-	local record = down[playerId]
+	local record = currentRecord(playerId)
 	local wounded = record ~= nil and record.stage == WOUNDED and not isDead(playerId)
 	if record == nil or not (wounded or isDead(playerId)) then return pushState(playerId) end
 	if OPX.Now() - record.sinceMs < giveUpMs then
@@ -599,6 +620,7 @@ local function onGiveUp()
 	if fading then
 		CreateThread(function()
 			Wait(math.floor(clamp(fade.HOLD_MS, 0, 10000, 1500)))
+			if not matches(playerId, record) then return end
 			pcall(Open77.players.fade, playerId, false, fadeMs)
 		end)
 	end
@@ -625,7 +647,7 @@ local pendingWound = {}
 
 local function isWounded(playerId)
 	if pendingWound[playerId] then return true end
-	local record = down[playerId]
+	local record = currentRecord(playerId)
 	return record ~= nil and record.stage == WOUNDED
 end
 
@@ -677,7 +699,11 @@ local function arbitrate(event)
 	if inWorld(victim) ~= true then return nil end
 
 	pendingWound[victim] = true
-	CreateThread(function() enterWounded(victim) end)
+	local player = character and character.GetPlayer(victim)
+	CreateThread(function()
+		if character.GetPlayer(victim) ~= player then pendingWound[victim] = nil; return end
+		enterWounded(victim)
+	end)
 	local keep = current - woundedSettings().health
 	if keep <= 0 then return false end
 	return keep
@@ -687,7 +713,8 @@ end
 local function bleed()
 	local atMs = OPX.Now()
 	for playerId, record in pairs(down) do
-		if record.stage == WOUNDED and record.bleedAtMs ~= nil and atMs >= record.bleedAtMs then
+		if currentRecord(playerId) == record and record.stage == WOUNDED and
+			record.bleedAtMs ~= nil and atMs >= record.bleedAtMs then
 			record.bleedAtMs = nil
 			local ok, reason = Open77.players.kill(playerId, { cause = 'script', weapon = 'opx:downed:bleedout' })
 			audit('downed.bleedout', playerId, ok == true, ok and (nameOf(playerId) or '?') or tostring(reason))
@@ -772,7 +799,7 @@ end
 local function isDown(playerId)
 	local target = playerOf(playerId)
 	if target == nil then return Result.Err('bad_player') end
-	local record = down[target]
+	local record = currentRecord(target)
 	if record == nil then return Result.Ok({ down = false, waiting = false }) end
 	return Result.Ok({
 		down = true,
@@ -794,7 +821,7 @@ local function setCarried(playerId, caller, carried)
 	local by = callerOf(caller)
 	if by == nil then return Result.Err('invalid_caller') end
 	local target = playerOf(playerId)
-	local record = target and down[target] or nil
+	local record = target and currentRecord(target) or nil
 	if record == nil then return Result.Err('not_down') end
 	if record.stage ~= WOUNDED then return Result.Err('not_wounded') end
 	if carried then
@@ -816,6 +843,7 @@ local function list()
 	local atMs = OPX.Now()
 	local rows = {}
 	for playerId, record in pairs(down) do
+		if currentRecord(playerId) == record then
 		local position = positionOf(playerId) or record.position
 		rows[#rows + 1] = {
 			id = playerId,
@@ -826,6 +854,7 @@ local function list()
 			position = position and { x = position.x, y = position.y, z = position.z,
 				bucket = position.bucket } or nil,
 		}
+		end
 	end
 	table.sort(rows, function(a, b)
 		if a.waiting ~= b.waiting then return a.waiting end

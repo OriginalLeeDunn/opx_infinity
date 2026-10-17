@@ -141,17 +141,24 @@ function Dirty.Mint(player, citizenId, amount, kind, source, at)
 	if amount > left then amount, why = math.floor(left), 'mint_cap' end
 	if amount <= 0 then return 0, 'mint_cap' end
 
+	-- Hold cap capacity before the inventory write can yield.
+	local reservation = { at = OPX.Now(), amount = amount }
+	list[#list + 1] = reservation
 	local paid = false
 	if built.dirty.mode == 'clean' then
 		local api = character()
-		local called, ok = pcall(api.AddMoney, player, built.dirty.cleanType, amount, 'underworld:' .. source)
+		local called, ok = pcall(api.AddMoney, citizenId, built.dirty.cleanType, amount, 'underworld:' .. source)
 		paid = called and ok == true
 	else
-		local added = inventory().AddItem(player, built.dirty.item, amount)
+		local added = inventory().AddItem(citizenId, built.dirty.item, amount)
 		paid = type(added) == 'table' and added.ok == true
 	end
-	if not paid then return 0, 'cannot_carry' end
-	list[#list + 1] = { at = OPX.Now(), amount = amount }
+	if not paid then
+		for index, entry in ipairs(list) do
+			if entry == reservation then table.remove(list, index); break end
+		end
+		return 0, 'cannot_carry'
+	end
 	if built.dirty.mode ~= 'clean' then Storage.Ledger(citizenId, source, amount, at) end
 	OPX.Publish(M.Event.ON_DIRTY, player, { citizenId = citizenId, amount = amount, source = source })
 	return amount, why
@@ -394,7 +401,12 @@ function M.OpenDealer(player, payload)
 	local code = Op.Standing(player, spot, state.entry.reach)
 	if code ~= nil then return answer(player, false, code) end
 	speak(state.npc, 'greeting')
-	TriggerClientEvent(M.Event.VIEW, player, stallView(player, state))
+	local view = stallView(player, state)
+	local live = Op.Character(player)
+	if live == nil or live.data ~= loaded.data then return false end
+	local allowed = M.Allowed(state.entry, live)
+	if not allowed then return false end
+	TriggerClientEvent(M.Event.VIEW, player, view)
 	return true
 end
 
@@ -448,7 +460,7 @@ function M.Buy(player, payload)
 	spec.inputs = clean and { money = { { type = built.dirty.cleanType, amount = price } } }
 		or { items = { { name = built.dirty.item, count = price } } }
 	spec.commit = function(op)
-		local added = inventory().AddItem(op.player, line.item, count)
+		local added = inventory().AddItem(op.citizenId, line.item, count)
 		if type(added) ~= 'table' or not added.ok then return false, 'cannot_carry' end
 		return true, 'bought', { item = line.item, count = count, price = price, clean = clean,
 			dealer = state.entry.id }
@@ -627,6 +639,8 @@ function M.OpenFront(player, payload)
 	for _, batch in ipairs(batches) do
 		rows[#rows + 1] = { clean = batch.clean, minutes = math.max(0, math.ceil(batch.remaining / 60)) }
 	end
+	local live = Op.Character(player)
+	if live == nil or live.data ~= loaded.data or not M.Allowed(entry, live) then return false end
 	TriggerClientEvent(M.Event.VIEW, player, { kind = 'front', front = entry.id, label = entry.label,
 		rate = math.floor(entry.rate * 100 + 0.5), left = left, held = held, amounts = amounts, batches = rows })
 	return true
@@ -642,9 +656,19 @@ function M.Launder(player, payload)
 	if loaded == nil then return answer(player, false, why) end
 	local amount = wanted(payload.amount, 1, entry.perTxMax)
 	if amount == nil then return answer(player, false, 'bad_amount', { max = entry.perTxMax }) end
-	local deposited = Storage.DepositedToday(loaded.citizenId)
-	if deposited == nil then return answer(player, false, 'unavailable') end
 	local citizen = loaded.citizenId
+	-- Hold this citizen's deposit through the SQL read and filing. A snapshot
+	-- read before another batch commits must never evade the daily ceiling.
+	if (pendingLaunder[citizen] or 0) > 0 then return answer(player, false, 'busy') end
+	pendingLaunder[citizen] = amount
+	local held = true
+	local function unclaim()
+		if not held then return end
+		held = false
+		pendingLaunder[citizen] = nil
+	end
+	local deposited = Storage.DepositedToday(citizen)
+	if deposited == nil then unclaim(); return answer(player, false, 'unavailable') end
 	local laundering = type(settings().LAUNDERING) == 'table' and settings().LAUNDERING or {}
 	local clean = Model.Clean(amount, entry.rate)
 	local spec = {
@@ -656,13 +680,8 @@ function M.Launder(player, payload)
 	}
 	spec.check = function(op, again)
 		if again then return nil end
-		if deposited + (pendingLaunder[citizen] or 0) + amount > entry.dailyCap then return 'daily_cap' end
+		if deposited + amount > entry.dailyCap then return 'daily_cap' end
 		return nil
-	end
-	spec.claim = function() pendingLaunder[citizen] = (pendingLaunder[citizen] or 0) + amount end
-	local function unclaim()
-		local left = (pendingLaunder[citizen] or 0) - amount
-		pendingLaunder[citizen] = left > 0 and left or nil
 	end
 	spec.release = unclaim
 	spec.commit = function(op)
@@ -677,6 +696,7 @@ function M.Launder(player, payload)
 			minutes = math.ceil(entry.batchMs / 60000) } or nil)
 	end
 	local ok, code = Op.Begin(player, spec)
+	if not ok then unclaim() end
 	-- `started` is the bar going up: the client says nothing, the bar does.
 	return answer(player, ok, ok and 'started' or code)
 end
@@ -689,7 +709,8 @@ function M.Collect(player, payload)
 	local entry = frontOf(type(payload) == 'table' and payload.front or nil)
 	local loaded, why = atFront(player, entry)
 	if loaded == nil then return answer(player, false, why) end
-	collecting[player] = true
+	local claim = {}
+	collecting[player] = claim
 	local total = 0
 	local ok, failure = pcall(function()
 		local batches = Storage.Batches(loaded.citizenId, entry.id) or {}
@@ -697,7 +718,7 @@ function M.Collect(player, payload)
 			if batch.remaining <= 0 and Storage.Collect(batch.id, loaded.citizenId) then
 				-- Marked collected FIRST, paid SECOND: a payout refused puts the
 				-- mark back rather than paying a batch twice.
-				local called, paid = pcall(character().AddMoney, player, batch.payout, batch.clean,
+				local called, paid = pcall(character().AddMoney, loaded.citizenId, batch.payout, batch.clean,
 					'underworld:launder:' .. entry.id)
 				if called and paid == true then
 					total = total + batch.clean
@@ -710,7 +731,9 @@ function M.Collect(player, payload)
 			end
 		end
 	end)
-	collecting[player] = nil
+	if collecting[player] == claim then collecting[player] = nil end
+	local live = Op.Character(player)
+	if live == nil or live.data ~= loaded.data then return total > 0 end
 	if not ok then
 		Open77.log.warn('[underworld] a collect raised: ' .. tostring(failure))
 		return answer(player, false, 'unavailable')
@@ -772,8 +795,16 @@ local function registerCommands()
 		function(source, args)
 			local citizen = Storage.CitizenOf(args[1])
 			if citizen == nil then return OPX.CommandResult(source, false, 'usage: ledger <citizenId>') end
+			local userId, session = source > 0 and OPX.UserIdOf(source) or nil, OPX.Sessions[source]
+			local function audience()
+				if source <= 0 then return true end
+				if userId == nil or OPX.UserIdOf(source) ~= userId or OPX.Sessions[source] ~= session then return false end
+				local read, allowed = pcall(function() return Open77.acl.isAllowed(source, 'command.' .. Command.LEDGER) end)
+				return read and allowed == true
+			end
 			CreateThread(function()
 				local rows, sum = Storage.LedgerOf(citizen)
+				if not audience() then return end
 				if rows == nil then return OPX.CommandResult(source, false, 'the ledger could not be read') end
 				local lines = { ('%s holds %d dirty eddies by the ledger'):format(citizen, math.floor(sum)) }
 				for _, row in ipairs(rows) do

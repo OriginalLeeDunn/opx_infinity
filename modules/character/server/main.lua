@@ -292,6 +292,7 @@ function M.BeginEntry(source)
 			return
 		end
 
+		if OPX.Sessions[source] ~= session or OPX.UserIdOf(source) ~= userId then return end
 		local entered = M.EnterSession(source)
 		if entered.ok then return end
 		Open77.log.error(('[character] %d could not be brought into the world: %s (%s)')
@@ -397,6 +398,9 @@ local function registerEvents()
 		-- happens: this is a client that reloaded, not an arrival.
 		local player = M.GetPlayer(src)
 		if player then
+			-- Session eviction is announced on a queued event. Until that event
+			-- runs the roster can still carry the previous account's character.
+			if player.PlayerData.userId ~= session.userId then return end
 			TriggerClientEvent(M.Event.LOADED, src, player.PlayerData)
 			return
 		end
@@ -407,7 +411,10 @@ local function registerEvents()
 		-- are.
 		if not OPX.Gate.IsReady(src) then OPX.Buckets.Isolate(src, 'ready') end
 
-		CreateThread(function() M.EnterSession(src) end)
+		CreateThread(function()
+			if OPX.Sessions[src] ~= session or OPX.UserIdOf(src) ~= session.userId then return end
+			M.EnterSession(src)
+		end)
 	end)
 
 	-- The one thing a player still types about their character. It is accepted
@@ -424,9 +431,18 @@ local function registerEvents()
 		if OPX.Cooling(src, 'name.request', 1000) then
 			return OPX.Refuse(src, 'error.tooFast', operation)
 		end
+		local player = M.GetPlayer(src)
+		local session = OPX.Sessions[src]
+		if not player or not session or player.PlayerData.userId ~= OPX.UserIdOf(src) or
+			session.userId ~= player.PlayerData.userId then return end
 
 		CreateThread(function()
-			local named = M.SetName(src, payload.firstName, payload.lastName)
+			if OPX.Sessions[src] ~= session or M.GetPlayer(src) ~= player or
+				OPX.UserIdOf(src) ~= session.userId then return end
+			local named = M.SetName(player, payload.firstName, payload.lastName)
+			-- Saving the name yields too; an answer belongs to the same recipient.
+			if OPX.Sessions[src] ~= session or M.GetPlayer(src) ~= player or
+				OPX.UserIdOf(src) ~= session.userId then return end
 			if not named.ok then
 				-- The bounds ride along: the length sentence names them.
 				OPX.Refuse(src, named.error, operation, nil, select(2, M.NameRefusal(nil)))
@@ -449,7 +465,7 @@ local function registerEvents()
 		if OPX.Cooling(src, 'heading', 1000) then return end
 
 		local player = M.GetPlayer(src)
-		if not player then return end
+		if not player or player.PlayerData.userId ~= OPX.UserIdOf(src) then return end
 
 		local heading = OPX.Validate.Number(
 			type(payload) == 'table' and payload.heading or nil, { min = -360, max = 360 })
@@ -501,6 +517,22 @@ end
 --- cooldown and the suggestion list.
 -- An open command shares its cooldown `key` with the wire door into the same
 -- operation, so that both entrances share one window.
+-- Private lists belong to the connection that requested them, including when
+-- the database answers after a slot was reused or a staff grant was revoked.
+local function recipient(source, command)
+	if source <= 0 then return function() return true end end
+	local userId, session = OPX.UserIdOf(source), OPX.Sessions[source]
+	return function()
+		if userId == nil or OPX.UserIdOf(source) ~= userId or
+			OPX.Sessions[source] ~= session then return false end
+		if command == nil then return true end
+		local read, allowed = pcall(function()
+			return Open77.acl.isAllowed(source, 'command.' .. command)
+		end)
+		return read and allowed == true
+	end
+end
+
 local function registerCommands()
 	OPX.Command.Register('opx.players', { restricted = true, help = 'command.help.players' },
 		function(source)
@@ -597,8 +629,11 @@ DEFAULT_SPAWN = {
 			if source <= 0 then
 				return OPX.CommandNotice(source, raw, 'error', locale('command.inGameOnly'))
 			end
+			local allowed = recipient(source)
 			CreateThread(function()
+				if not allowed() then return end
 				local listed = M.ListCharacters(source)
+				if not allowed() then return end
 				if not listed.ok then
 					return OPX.CommandNotice(source, raw, 'error',
 						locale(OPX.RefusalKey(listed.error)))
@@ -772,8 +807,11 @@ DEFAULT_SPAWN = {
 			if groupType ~= 'job' and groupType ~= 'gang' or not name then
 				return OPX.CommandNotice(source, raw, 'warning', locale('command.usage.group'))
 			end
+			local allowed = recipient(source, 'opx.group')
 			CreateThread(function()
+				if not allowed() then return end
 				local members = M.Groups.GetGroupMembers(groupType, name)
+				if not allowed() then return end
 				if not members.ok then
 					return OPX.CommandNotice(source, raw, 'error', failureText(members, false))
 				end
@@ -838,9 +876,19 @@ end
 --- Publishes the contract. Nothing may read one before this phase ends.
 function M.Api()
 	OPX.Api.Provide('character', 1, {
-		GetPlayer = M.GetPlayer,
-		GetPlayerByCitizenId = M.GetPlayerByCitizenId,
-		GetPlayerByUserId = M.GetPlayerByUserId,
+		-- Internal logout still needs the raw roster entry. Other modules must
+		-- never authorize a new connection using the previous account's role.
+		GetPlayer = function(source) return M.ResolvePlayer(tonumber(source)) end,
+		GetPlayerByCitizenId = function(citizenId)
+			local player = M.GetPlayerByCitizenId(citizenId)
+			if player == nil or player.PlayerData.citizenId ~= citizenId then return nil end
+			return M.ResolvePlayer(player.PlayerData.source)
+		end,
+		GetPlayerByUserId = function(userId)
+			local player = M.GetPlayerByUserId(userId)
+			if player == nil or player.PlayerData.userId ~= userId then return nil end
+			return M.ResolvePlayer(player.PlayerData.source)
+		end,
 		GetPlayers = M.GetPlayers,
 		GetPlayerCount = M.GetPlayerCount,
 		ResolvePlayer = M.ResolvePlayer,

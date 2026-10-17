@@ -476,7 +476,7 @@ local function purchaseOnce(source, data, dealer, entry, dest)
 		-- exists, and a throw here unwound past the answer, the audit line, the
 		-- sale event and -- on an accepted offer -- the company's share and the
 		-- commission. A throw is one more key that was not cut.
-		local called, cut = pcall(keys.Ensure, source, plate, entry.label or entry.record)
+		local called, cut = pcall(keys.Ensure, data.citizenId, plate, entry.label or entry.record)
 		if not called then
 			Open77.log.error(('[dealership] keys.Ensure threw for %s: %s')
 				:format(tostring(plate), tostring(cut)))
@@ -485,7 +485,9 @@ local function purchaseOnce(source, data, dealer, entry, dest)
 		keyed = type(cut) == 'table' and cut.ok == true
 		if not keyed then
 			local code = type(cut) == 'table' and cut.error or 'vehiclekeys.unavailable'
-			if code == 'vehiclekeys.noRoom' then
+			local current = characterOf(source)
+			if code == 'vehiclekeys.noRoom' and current ~= nil
+				and current.citizenId == data.citizenId then
 				OPX.NotifyLocale(source, code, { label = tostring(cut.detail or plate) }, 'error')
 			end
 			Open77.log.warn(('[dealership] %s owns %s but was not given its key: %s')
@@ -996,6 +998,9 @@ function M.Accept(buyer, token, yes, destKey)
 		return Result.Err(code)
 	end
 
+	if Access.OFFER_TIMEOUT_MS > 0 and OPX.Now() - offer.at >= Access.OFFER_TIMEOUT_MS then
+		return refused('dealership.offerExpired')
+	end
 	if vehicles == nil then return refused('dealership.noVehicles') end
 	if currency == nil then return refused('dealership.noCurrency') end
 
@@ -1838,11 +1843,12 @@ function M.Start()
 					'they are one dropped database away from lost'):format(#orphans))
 			end
 
-			raiseFloor()
-			Open77.log.info(('[dealership] showroom: %d from config, %d adopted, %d standing')
-				:format(OPX.Table.Count(configPreviews), #orphans,
-					OPX.Table.Count(showroom)))
 		end
+
+		rebuildPreviews()
+		raiseFloor()
+		Open77.log.info(('[dealership] showroom: %d configured, %d standing')
+			:format(OPX.Table.Count(configPreviews), OPX.Table.Count(showroom)))
 
 		-- A player who connected while the database was being read asked too
 		-- early and was told nothing; they ask again on their own cadence.

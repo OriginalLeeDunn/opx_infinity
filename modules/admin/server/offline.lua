@@ -148,9 +148,11 @@ function Offline.Register()
 			-- that the typed line and the menu are refused by the same rule.
 			local term = M.Trimmed(args[1], 64)
 			if term == nil then return refuse(source, raw, 'search_short') end
+			local allowed = Server.Recipient(source, Command.CHARACTER_FIND)
 
 			Server.Heavy(source, raw, function()
 				local rows, code, page = Offline.Page({ mode = 'search', term = term })
+				if not allowed() then return end
 				if rows == nil then return refuse(source, raw, code) end
 
 				local lines = { locale('admin.find.header',

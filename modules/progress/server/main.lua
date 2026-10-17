@@ -54,6 +54,19 @@ local bars = {}
 local nextId = 0
 local stopped = false
 
+-- A character switch keeps the connection alive. A progress verdict must still
+-- belong to the account, session and character that began the action.
+local function citizenOf(player)
+	local character = OPX.Api.Get('character')
+	local loaded = character and character.GetPlayer(player)
+	return loaded and loaded.PlayerData.citizenId or nil
+end
+
+local function belongs(player, bar)
+	return OPX.UserIdOf(player) == bar.userId and OPX.Sessions[player] == bar.session and
+		citizenOf(player) == bar.citizenId
+end
+
 --- The duration bounds the client holds a bar to.
 local function bounds()
 	local settings = type(M.Settings) == 'table' and M.Settings or {}
@@ -72,6 +85,7 @@ end
 --- Ends a player's bar with a verdict, once, and says so.
 local function settle(source, bar, ending, completed)
 	if bars[source] ~= bar then return end
+	if not belongs(source, bar) then ending, completed = 'left', false end
 	bars[source] = nil
 	local payload = {
 		id = bar.id,
@@ -107,6 +121,9 @@ local function start(source, owner, spec, on)
 	if type(spec) ~= 'table' then return Result.Err('invalid_spec') end
 	if on ~= nil and type(on) ~= 'function' then return Result.Err('invalid_spec') end
 	if stopped then return Result.Err('error.unavailable') end
+	if bars[player] ~= nil and not belongs(player, bars[player]) then
+		settle(player, bars[player], 'left', false)
+	end
 	if bars[player] ~= nil then return Result.Err('progress_busy') end
 
 	local low, high = bounds()
@@ -127,6 +144,9 @@ local function start(source, owner, spec, on)
 
 	nextId = nextId % 2147483646 + 1
 	local bar = {
+		userId = OPX.UserIdOf(player),
+		session = OPX.Sessions[player],
+		citizenId = citizenOf(player),
 		id = nextId,
 		owner = owner,
 		startedAt = OPX.Now(),
@@ -146,7 +166,7 @@ local function start(source, owner, spec, on)
 	-- thread per bar, which ends the moment the verdict is in.
 	local deadline = bar.startedAt + duration + GRACE_MS
 	CreateThread(function()
-		while bars[player] == bar and OPX.Now() < deadline do Wait(500) end
+		while bars[player] == bar and belongs(player, bar) and OPX.Now() < deadline do Wait(500) end
 		settle(player, bar, 'no_answer', false)
 	end)
 	return Result.Ok({ id = bar.id, durationMs = duration })
@@ -163,6 +183,10 @@ local function stop(source, owner, id)
 	local bar = player ~= nil and bars[player] or nil
 	if bar == nil then return Result.Err('progress_not_active') end
 	if bar.owner ~= owner or (id ~= nil and bar.id ~= id) then return Result.Err('not_owner') end
+	if not belongs(player, bar) then
+		settle(player, bar, 'left', false)
+		return Result.Err('progress_not_active')
+	end
 	TriggerClientEvent(M.Event.CANCEL, player, bar.id)
 	settle(player, bar, Ending.STOPPED, false)
 	return Result.Ok(true)
@@ -173,8 +197,13 @@ end
 -- @param source Source
 -- @return Result { id, owner, remainingMs }|nil
 local function state(source)
-	local bar = bars[math.tointeger(tonumber(source)) or -1]
+	local player = math.tointeger(tonumber(source)) or -1
+	local bar = bars[player]
 	if bar == nil then return Result.Ok(nil) end
+	if not belongs(player, bar) then
+		settle(player, bar, 'left', false)
+		return Result.Ok(nil)
+	end
 	return Result.Ok({ id = bar.id, owner = bar.owner,
 		remainingMs = math.max(0, bar.durationMs - math.floor(OPX.Now() - bar.startedAt)) })
 end
@@ -183,6 +212,7 @@ end
 local function report(player, id, ending)
 	local bar = bars[player]
 	if bar == nil or math.tointeger(id) ~= bar.id or type(ending) ~= 'string' then return end
+	if not belongs(player, bar) then return settle(player, bar, 'left', false) end
 	if ending == Ending.FINISHED then
 		local elapsed = OPX.Now() - bar.startedAt
 		if elapsed + EARLY_MS < bar.durationMs then

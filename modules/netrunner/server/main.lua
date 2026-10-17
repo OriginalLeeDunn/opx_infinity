@@ -159,7 +159,7 @@ end
 --- the same deck. Answers the metadata, or nil.
 local function heldDeck(player, session)
 	local api = inventory()
-	local stack = api and valueOf(api.GetSlot, player, session.slot) or nil
+	local stack = api and valueOf(api.GetSlot, session.citizenId, session.slot) or nil
 	if type(stack) ~= 'table' or stack.name ~= session.deck.name then return nil end
 	local metadata = type(stack.metadata) == 'table' and stack.metadata or {}
 	if session.serial ~= nil and metadata.serial ~= nil and metadata.serial ~= session.serial then return nil end
@@ -174,7 +174,7 @@ local function writeRam(player, session, metadata, ram)
 	metadata.ramAt = wallS()
 	metadata.tier, metadata.ramMax = session.deck.tier, session.deck.ram
 	metadata.serial = metadata.serial or session.serial
-	local read, set = pcall(api.SetMetadata, player, session.slot, metadata)
+	local read, set = pcall(api.SetMetadata, session.citizenId, session.slot, metadata)
 	return read and type(set) == 'table' and set.ok == true
 end
 
@@ -327,7 +327,9 @@ local function endSession(player, code)
 	local session = sessions[player]
 	if session == nil then return end
 	sessions[player] = nil
-	if session.busy ~= nil then
+	local loaded = playerOf(player)
+	local owner = loaded ~= nil and loaded.PlayerData.citizenId == session.citizenId
+	if session.busy ~= nil and owner then
 		pcall(spendRam, player, session, -session.busy.ram)
 	end
 	if session.barId ~= nil then
@@ -337,7 +339,7 @@ local function endSession(player, code)
 	OPX.Audit.Log({ event = 'netrunner.out', message = ('player %d left %s (%s)'):format(player, session.network,
 		tostring(code or 'gone')), data = { network = session.network, code = code,
 		trace = math.floor(session.trace * 100) }, source = player })
-	if code ~= nil then
+	if code ~= nil and owner then
 		sendState(player, false)
 		answer(player, code == 'disconnected', code)
 	end
@@ -376,6 +378,8 @@ end
 
 --- Why a run must stop now, or nil.
 local function interrupted(player, session)
+	local loaded = playerOf(player)
+	if loaded == nil or loaded.PlayerData.citizenId ~= session.citizenId then return 'no_character' end
 	if OPX.Life.Down(player) then return 'player_down' end
 	local at = pointOf(player)
 	if at == nil then return 'no_position' end
@@ -490,6 +494,7 @@ function M.JackIn(player, payload)
 	if held == nil then return answer(player, false, why) end
 
 	local session = {
+		citizenId = loaded.PlayerData.citizenId,
 		network = network.key, node = node.key, phase = 'breach',
 		slot = held.slot, deck = held.deck,
 		serial = held.metadata.serial or ('%s-%d-%d'):format(held.deck.name:sub(-6), math.floor(wallS()), player),
@@ -654,19 +659,33 @@ onMined = function(player, outcome)
 	local busy = session.busy
 	session.busy, session.barId = nil, nil
 	if outcome.completed ~= true then
-		spendRam(player, session, -busy.ram)
+		local loaded = playerOf(player)
+		if loaded ~= nil and loaded.PlayerData.citizenId == session.citizenId then
+			spendRam(player, session, -busy.ram)
+		end
 		if outcome.ending == 'left' then return endSession(player, nil) end
 		answer(player, false, 'mine_cancelled')
 		return sendState(player, true)
 	end
 	local why = interrupted(player, session)
 	if why ~= nil then
-		spendRam(player, session, -busy.ram)
+		local loaded = playerOf(player)
+		if loaded ~= nil and loaded.PlayerData.citizenId == session.citizenId then
+			spendRam(player, session, -busy.ram)
+		end
 		return endSession(player, why)
 	end
 	local network = built.networks[session.network]
 	local node = network.nodes[busy.node]
 	local daemon = built.daemons[busy.daemon]
+	-- Another runner may have completed a bar on this shared node while this
+	-- one was mining. The cooldown is enforced again before producing loot.
+	if (dry[network.key .. '|' .. node.key] or 0) > OPX.Now() then
+		spendRam(player, session, -busy.ram)
+		answer(player, false, 'node_dry',
+			{ minutes = math.ceil((dry[network.key .. '|' .. node.key] - OPX.Now()) / 60000) })
+		return sendState(player, true)
+	end
 	local table_ = built.shards[node.table or daemon.table]
 	local loot = Access.Loot(table_, M.Roll(), M.Roll())
 	local loaded = playerOf(player)
@@ -679,13 +698,19 @@ onMined = function(player, outcome)
 		description = ('%s - %s'):format(network.label, loot.label),
 	}
 	local api = inventory()
-	local added = api and api.AddItem and select(2, pcall(api.AddItem, player, built.shardItem.name, 1, metadata))
+	local dryKey = network.key .. '|' .. node.key
+	local previousDry, reservedDry = dry[dryKey], nil
+	if node.cooldownMs > 0 then
+		reservedDry = OPX.Now() + node.cooldownMs
+		dry[dryKey] = reservedDry
+	end
+	local added = api and api.AddItem and select(2, pcall(api.AddItem, session.citizenId, built.shardItem.name, 1, metadata))
 	if type(added) ~= 'table' or added.ok ~= true then
+		if reservedDry ~= nil and dry[dryKey] == reservedDry then dry[dryKey] = previousDry end
 		spendRam(player, session, -busy.ram)
 		answer(player, false, 'cannot_carry')
 		return sendState(player, true)
 	end
-	if node.cooldownMs > 0 then dry[network.key .. '|' .. node.key] = OPX.Now() + node.cooldownMs end
 	OPX.Audit.Log({ event = 'netrunner.shard', message = ('player %d mined %s (%d) on %s.%s'):format(player,
 		loot.kind, loot.value, network.key, node.key), data = { network = network.key, node = node.key,
 		kind = loot.kind, value = loot.value, serial = serial }, source = player })
@@ -717,7 +742,9 @@ function M.Sell(player, payload)
 	if OPX.Cooling(player, 'netrunner.request', built.requestMs) then return answer(player, false, 'too_fast') end
 	local broker = type(payload) == 'table' and type(payload.broker) == 'string' and brokerOf(payload.broker) or nil
 	if broker == nil then return answer(player, false, 'unknown_broker') end
-	if playerOf(player) == nil then return answer(player, false, 'no_character') end
+	local loaded = playerOf(player)
+	if loaded == nil then return answer(player, false, 'no_character') end
+	local citizenId = loaded.PlayerData.citizenId
 	if OPX.Life.Down(player) then return answer(player, false, 'player_down') end
 	local at = pointOf(player)
 	if at == nil then return answer(player, false, 'no_position') end
@@ -728,7 +755,7 @@ function M.Sell(player, payload)
 	if api == nil or type(api.RemoveFromSlot) ~= 'function' then return answer(player, false, 'no_inventory') end
 	local now = wallS()
 	local total, sold, refused, hot = 0, {}, 0, 0
-	local items = itemsOf(player)
+	local items = itemsOf(citizenId)
 	for index = 1, #items do
 		local item = items[index]
 		if type(item) == 'table' and item.name == built.shardItem.name then
@@ -736,7 +763,7 @@ function M.Sell(player, payload)
 			if price == nil then
 				refused = refused + 1
 			else
-				local read, removed = pcall(api.RemoveFromSlot, player, item.slot, 1)
+				local read, removed = pcall(api.RemoveFromSlot, citizenId, item.slot, 1, item)
 				if read and type(removed) == 'table' and removed.ok == true then
 					total = total + price
 					sold[#sold + 1] = item.metadata
@@ -750,12 +777,12 @@ function M.Sell(player, payload)
 	local money = character()
 	if total <= 0 then
 		paid = true
-	elseif money ~= nil and type(money.AddMoney) == 'function' then
-		local read, ok = pcall(money.AddMoney, player, broker.currency, total, 'netrunner:sell:' .. broker.key)
-		paid = read and ok == true
+	elseif money ~= nil and type(money.AddMoneyOffline) == 'function' then
+		local read, result = pcall(money.AddMoneyOffline, citizenId, broker.currency, total, 'netrunner:sell:' .. broker.key)
+		paid = read and type(result) == 'table' and result.ok == true
 	end
 	if not paid then
-		for _, metadata in ipairs(sold) do pcall(api.AddItem, player, built.shardItem.name, 1, metadata) end
+		for _, metadata in ipairs(sold) do pcall(api.AddItem, citizenId, built.shardItem.name, 1, metadata) end
 		return answer(player, false, 'sale_failed')
 	end
 	OPX.Audit.Log({ event = 'netrunner.sell', message = ('player %d sold %d shard(s) for %d at %s'):format(player,

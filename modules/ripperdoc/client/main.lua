@@ -24,6 +24,8 @@ local SUPPLY_MENU = 'ripperdoc.supply'
 local stashes, terminals, jobs = {}, {}, {}
 local invite = nil
 local menuHandle = nil
+local viewPending, viewWorking = nil, false
+local viewGeneration, stopped = 0, false
 
 local function cfg() return type(M.Settings) == 'table' and M.Settings or {} end
 
@@ -68,6 +70,32 @@ local function open(spec)
 	return type(opened.value) == 'table' and opened.value.handle or nil
 end
 
+-- One paced builder at a time: chart and supply replies are full snapshots.
+local function queueView(payload, builder)
+	if stopped then return false end
+	viewGeneration = viewGeneration + 1
+	viewPending = { payload = payload, build = builder }
+	if viewWorking then return true end
+	viewWorking = true
+	CreateThread(function()
+		while viewPending ~= nil and not stopped do
+			local pending, generation = viewPending, viewGeneration
+			viewPending = nil
+			Wait(0)
+			if not stopped and generation == viewGeneration then
+				local ok, why = pcall(pending.build, pending.payload, generation)
+				if not ok then OPX.Note('ripperdoc', 'the menu could not be drawn: ' .. tostring(why)) end
+			end
+		end
+		viewWorking = false
+	end)
+	return true
+end
+
+local function current(generation)
+	return not stopped and generation == viewGeneration
+end
+
 -- ── the answers ─────────────────────────────────────────────────────────────
 
 local function onAnswer(payload)
@@ -105,7 +133,7 @@ local function sourceLabel(row)
 	return locale('ripperdoc.source.' .. tostring(row.source))
 end
 
-local function installRows(chart)
+local function installRows(chart, generation)
 	local rows = {}
 	for index, row in ipairs(type(chart.installs) == 'table' and chart.installs or {}) do
 		if index > 40 then break end
@@ -122,6 +150,10 @@ local function installRows(chart)
 			data = { action = 'install', chrome = row.chrome, tier = row.tier, origin = row.origin,
 				source = row.source, slot = row.slot },
 		}
+		if index % 4 == 0 then
+			Wait(0)
+			if not current(generation) then return rows end
+		end
 	end
 	if #rows == 0 then
 		rows[1] = { id = 'install.none', label = locale('ripperdoc.menu.noStock'), disabled = true }
@@ -129,7 +161,7 @@ local function installRows(chart)
 	return rows
 end
 
-local function removalRows(chart)
+local function removalRows(chart, generation)
 	local rows = {}
 	for index, row in ipairs(type(chart.removals) == 'table' and chart.removals or {}) do
 		local description = locale('ripperdoc.menu.removeQuote', {
@@ -142,6 +174,10 @@ local function removalRows(chart)
 			disabled = row.blocked ~= nil,
 			data = { action = 'remove', serial = row.serial, slot = row.slot },
 		}
+		if index % 4 == 0 then
+			Wait(0)
+			if not current(generation) then return rows end
+		end
 	end
 	if #rows == 0 then
 		rows[1] = { id = 'remove.none', label = locale('ripperdoc.menu.nothingInstalled'), disabled = true }
@@ -149,7 +185,7 @@ local function removalRows(chart)
 	return rows
 end
 
-local function onChart(chart)
+local function buildChart(chart, generation)
 	if type(chart) ~= 'table' or math.type(chart.patient) ~= 'integer' then return end
 	local patient = chart.patient
 	local installed = {}
@@ -159,6 +195,10 @@ local function onChart(chart)
 			value = tostring(row.slot),
 			description = locale('ripperdoc.menu.implant', { serial = tostring(row.serial or '-'),
 				condition = math.floor(OPX.Math.Finite(row.condition) or 100) }) }
+		if index % 4 == 0 then
+			Wait(0)
+			if not current(generation) then return end
+		end
 	end
 	if #installed == 0 then
 		installed[1] = { id = 'body.none', label = locale('ripperdoc.menu.nothingInstalled'), disabled = true }
@@ -174,17 +214,19 @@ local function onChart(chart)
 	local services = type(chart.services) == 'table' and chart.services or {}
 	if services.install then
 		items[#items + 1] = { id = 'install', icon = 'plus', label = locale('ripperdoc.menu.install'),
-			items = installRows(chart) }
+			items = installRows(chart, generation) }
 	end
 	if services.remove then
 		items[#items + 1] = { id = 'remove', icon = 'minus', label = locale('ripperdoc.menu.remove'),
-			items = removalRows(chart) }
+			items = removalRows(chart, generation) }
 	end
+	Wait(0)
+	if not current(generation) then return end
 	closeMenu(menuHandle)
 	menuHandle = open({
 		owner = OWNER, id = CHART_MENU, steal = true, focus = 'cursor', closeOnSelect = true,
 		title = type(chart.label) == 'string' and chart.label or locale('ripperdoc.title'),
-		items = items,
+		items = items, yield = true,
 		on = function(payload)
 			if type(payload) ~= 'table' or payload.action ~= 'select' then return end
 			local data = type(payload.data) == 'table' and payload.data or nil
@@ -194,6 +236,10 @@ local function onChart(chart)
 			TriggerServerEvent(M.Event.PROPOSE, request)
 		end,
 	})
+	if not current(generation) then
+		closeMenu(menuHandle)
+		menuHandle = nil
+	end
 end
 
 -- ── the consent (the patient's prompt) ──────────────────────────────────────
@@ -237,6 +283,11 @@ local function onInvite(payload)
 end
 
 local function onUninvite(id)
+	if viewPending ~= nil and viewPending.build == onInvite
+		and type(viewPending.payload) == 'table' and viewPending.payload.id == id then
+		viewGeneration = viewGeneration + 1
+		viewPending = nil
+	end
 	if invite == nil or invite.id ~= id then return end
 	closeMenu(invite.handle)
 	invite = nil
@@ -259,10 +310,10 @@ local function nearestOf(list, context)
 	return best
 end
 
-local function openSupply(terminal)
+local function buildSupply(terminal, generation)
 	if terminal == nil then return false end
 	local rows = {}
-	for _, row in ipairs(terminal.catalog) do
+	for index, row in ipairs(terminal.catalog) do
 		rows[#rows + 1] = {
 			id = 'row.' .. row.index, icon = 'box',
 			label = ('%s T%d'):format(chromeLabel(row.chrome), row.tier), value = money(row.cost),
@@ -270,17 +321,27 @@ local function openSupply(terminal)
 				grade = row.grade }),
 			data = { index = row.index },
 		}
+		if index % 4 == 0 then
+			Wait(0)
+			if not current(generation) then return false end
+		end
 	end
+	Wait(0)
+	if not current(generation) then return false end
 	closeMenu(menuHandle)
 	menuHandle = open({
 		owner = OWNER, id = SUPPLY_MENU, steal = true, focus = 'cursor', closeOnSelect = true,
 		title = locale('ripperdoc.supply.title', { clinic = terminal.label }),
-		items = rows,
+		items = rows, yield = true,
 		on = function(payload)
 			if type(payload) ~= 'table' or payload.action ~= 'select' or type(payload.data) ~= 'table' then return end
 			TriggerServerEvent(M.Event.SUPPLY, terminal.key, payload.data.index)
 		end,
 	})
+	if not current(generation) then
+		closeMenu(menuHandle)
+		menuHandle = nil
+	end
 	return menuHandle ~= nil
 end
 
@@ -344,7 +405,7 @@ local function registerRows()
 		local rows = target.RegisterSpheres(OWNER, spheres, {
 			id = 'ripperdoc.supply', label = locale('ripperdoc.row.supply'), icon = 'money', distance = r, order = 21,
 			canInteract = worksHere,
-			onSelect = function(context) return openSupply(nearestOf(terminals, context)) end,
+			onSelect = function(context) return queueView(nearestOf(terminals, context), buildSupply) end,
 		})
 		if type(rows) ~= 'table' or not rows.ok then
 			OPX.Note('ripperdoc', ('the terminal rows were refused: %s'):format(tostring(type(rows) == 'table' and rows.error)))
@@ -401,14 +462,16 @@ end
 -- @author dop42
 function M.Init()
 	stashes, terminals, jobs, invite, menuHandle = {}, {}, {}, nil, nil
+	viewPending, viewWorking, stopped = nil, false, false
+	viewGeneration = viewGeneration + 1
 end
 
 --- Wires the answers, then builds and registers on a thread.
 -- @author dop42
 function M.Start()
 	RegisterNetEvent(M.Event.ANSWER, onAnswer)
-	RegisterNetEvent(M.Event.CHART_DATA, onChart)
-	RegisterNetEvent(M.Event.INVITE, onInvite)
+	RegisterNetEvent(M.Event.CHART_DATA, function(chart) queueView(chart, buildChart) end)
+	RegisterNetEvent(M.Event.INVITE, function(payload) queueView(payload, onInvite) end)
 	RegisterNetEvent(M.Event.UNINVITE, onUninvite)
 	CreateThread(function()
 		build()
@@ -420,6 +483,9 @@ end
 --- Closes what is open and takes the rows back.
 -- @author dop42
 function M.Stop()
+	stopped = true
+	viewGeneration = viewGeneration + 1
+	viewPending = nil
 	if invite ~= nil then closeMenu(invite.handle) end
 	closeMenu(menuHandle)
 	invite, menuHandle = nil, nil

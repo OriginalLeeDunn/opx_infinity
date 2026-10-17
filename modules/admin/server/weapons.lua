@@ -392,8 +392,10 @@ function Weapons.Register()
 		handler = function(source, args, raw)
 			local target, who, playerId = Inventory.Resolve(source, raw, args[1])
 			if target == nil then return end
+			local allowed = Server.Recipient(source, Command.WEAPON_READ)
 			Server.Heavy(source, raw, function()
 				local index, _, bag = weaponsInBag(source, raw, 'admin.weapon.read', target, who, playerId)
+				if not allowed() then return end
 				if not bag then return end
 				local drawn
 				if playerId ~= nil then
@@ -401,6 +403,7 @@ function Weapons.Register()
 					local read, held = pcall(contract.GetHeldWeapon, playerId)
 					if read and type(held) == 'table' and type(held.serial) == 'string' then drawn = held end
 				end
+				if not allowed() then return end
 				local lines = { locale('admin.loadout.header', { who = who }) }
 				for _, row in ipairs(bag.items) do
 					local entry = index.byName[row.name]

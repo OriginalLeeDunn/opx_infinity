@@ -185,8 +185,9 @@ function Backend.Apply(door, locked)
 			-- A door the service no longer gives us -- it restarted -- is taken
 			-- back once and set again, rather than left in whatever state it woke in.
 			if reason == 'not_owner' then
-				Backend.Adopt(door, locked)
-				all = true
+				-- Adoption retries every leaf. Its answer is authoritative: a
+				-- refused registration must not be reported as an applied lock.
+				return Backend.Adopt(door, locked)
 			end
 		end
 	end

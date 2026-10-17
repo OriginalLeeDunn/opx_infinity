@@ -131,6 +131,13 @@ function View.Start()
 	-- opens the box, and an announcement with no handler is dropped, not queued.
 	OPX.UI.On(SURFACE, 'focus:set', onFocus)
 
+	-- On may synchronously replay a ready received before this module started.
+	-- Its immediate config answer needs the seam attached before that replay.
+	AddEventHandler(M.Event.VIEW, function(payload)
+		if type(payload) ~= 'table' then return end
+		OPX.UI.Send(payload.surface or SURFACE, CHANNEL, payload)
+	end)
+
 	-- The page to the state half. Every action the seam documents, and nothing
 	-- else: an unknown action reaching `FromView` is ignored there, not here.
 	for _, action in ipairs({ 'ready', 'submit', 'close', 'diag' }) do
@@ -138,14 +145,6 @@ function View.Start()
 			M.FromView(action, payload)
 		end)
 	end
-
-	-- The state half to the page. Registered BEFORE anything can publish: the
-	-- first payload a view ever causes is the `config` that `FromView('ready')`
-	-- publishes straight back, and a handler added after that would miss it.
-	AddEventHandler(M.Event.VIEW, function(payload)
-		if type(payload) ~= 'table' then return end
-		OPX.UI.Send(payload.surface or SURFACE, CHANNEL, payload)
-	end)
 
 	local keys = M.Settings.KEYS
 	local key = type(keys) == 'table' and keys.OPEN or nil

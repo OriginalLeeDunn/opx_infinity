@@ -99,8 +99,8 @@ local STAMP = 'UPDATE opx77_company_ledger l JOIN opx77_company_accounts a ' ..
 function M.Storage.Credit(op)
 	return Storage.Transaction({
 		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor) ' ..
-			'VALUES (?, ?, ?, ?, ?, ?)',
-			values = { op.id, op.kind, op.group, op.amount, op.reason, op.actor } },
+			"VALUES (?, ?, ?, ?, ?, NULLIF(?, ''))",
+			values = { op.id, op.kind, op.group, op.amount, op.reason, op.actor or '' } },
 		{ query = 'INSERT INTO opx77_company_accounts (kind, group_key, balance) VALUES (?, ?, ?) ' ..
 			'ON DUPLICATE KEY UPDATE balance = balance + VALUES(balance)',
 			values = { op.kind, op.group, op.amount } },
@@ -116,9 +116,9 @@ end
 function M.Storage.Debit(op)
 	return Storage.Transaction({
 		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor) ' ..
-			'SELECT ?, kind, group_key, ?, ?, ? FROM opx77_company_accounts ' ..
+			"SELECT ?, kind, group_key, ?, ?, NULLIF(?, '') FROM opx77_company_accounts " ..
 			'WHERE kind = ? AND group_key = ? AND balance >= ?',
-			values = { op.id, -op.amount, op.reason, op.actor, op.kind, op.group, op.amount } },
+			values = { op.id, -op.amount, op.reason, op.actor or '', op.kind, op.group, op.amount } },
 		{ query = 'UPDATE opx77_company_accounts a JOIN opx77_company_ledger l ' ..
 			'ON l.kind = a.kind AND l.group_key = a.group_key ' ..
 			'SET a.balance = a.balance + l.delta WHERE l.op_id = ?',
@@ -135,9 +135,9 @@ end
 function M.Storage.Move(op)
 	return Storage.Transaction({
 		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor) ' ..
-			'SELECT ?, kind, group_key, ?, ?, ? FROM opx77_company_accounts ' ..
+			"SELECT ?, kind, group_key, ?, ?, NULLIF(?, '') FROM opx77_company_accounts " ..
 			'WHERE kind = ? AND group_key = ? AND balance >= ?',
-			values = { op.out, -op.amount, op.reason, op.actor, op.from.kind, op.from.group, op.amount } },
+			values = { op.out, -op.amount, op.reason, op.actor or '', op.from.kind, op.from.group, op.amount } },
 		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor) ' ..
 			'SELECT ?, ?, ?, -delta, reason, actor FROM opx77_company_ledger WHERE op_id = ?',
 			values = { op.into, op.to.kind, op.to.group, op.out } },
@@ -163,9 +163,9 @@ end
 function M.Storage.Note(op)
 	return Storage.Execute([[
 INSERT IGNORE INTO opx77_company_ledger (op_id, kind, group_key, delta, balance_after, reason, actor)
-VALUES (@op, @kind, @group, @delta, @after, @reason, @actor)
-  ]], { op = op.id, kind = op.kind, group = op.group, delta = op.amount, after = op.balance,
-		reason = op.reason, actor = op.actor })
+VALUES (@op, @kind, @group, @delta, NULLIF(@after, ''), @reason, NULLIF(@actor, ''))
+  ]], { op = op.id, kind = op.kind, group = op.group, delta = op.amount, after = op.balance ~= nil and tostring(op.balance) or '',
+		reason = op.reason, actor = op.actor or '' })
 end
 
 --- The newest movements of one account, newest first, a bounded page.

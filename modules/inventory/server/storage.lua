@@ -601,6 +601,9 @@ function Store.SaveUntilClean(container)
 	while true do
 		local deadline = OPX.Now() + 35000
 		while saving[container.id] and OPX.Now() < deadline do Wait(50) end
+		-- Write lifts dirty before awaiting SQL. A timed-out write is still in
+		-- flight, not proof the container is clean or safe to discard.
+		if saving[container.id] then return false end
 		if not dirty[container.id] then return true end
 		local written = Store.Write({ container })
 		if not written then

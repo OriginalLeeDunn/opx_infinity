@@ -1472,9 +1472,12 @@ function M.Contract.SetSkin(snapshot)
 	if not M.BuildAccepted(canonical.gameBuild) then
 		return Result.Err('stored_build_mismatch')
 	end
+	local citizen, token = State.citizenId, State.restoreToken
 	CreateThread(function()
-		local ok, failure = applySnapshot(canonical, 8, nil)
-		Runtime.Publish({ ok = ok, event = 'applied', citizenId = State.citizenId,
+		if State.citizenId ~= citizen or not State.Current(token) then return end
+		local ok, failure = applySnapshot(canonical, 8, token)
+		if State.citizenId ~= citizen or not State.Current(token) then return end
+		Runtime.Publish({ ok = ok, event = 'applied', citizenId = citizen,
 			error = (not ok) and tostring(failure) or nil })
 	end)
 	return Result.Ok({ queued = true, citizenId = State.citizenId })

@@ -1,0 +1,582 @@
+fichier	lignes_actuelles	couverture	preuve
+.github/workflows/check.yml	134	LECTURE_INTEGRALE	lecture integrale equipe performance
+config/admin.lua	325	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/animations.lua	129	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/appearance.lua	255	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/bar.lua	272	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/blips.lua	313	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/business.lua	203	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/calls.lua	167	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/camera.lua	76	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/character.lua	476	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/chat.lua	63	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/client.lua	70	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/clothing.lua	104	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/contracts.lua	297	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/corpo.lua	334	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/crafting.lua	70	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/dealership.lua	394	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/doorlock.lua	169	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/downed.lua	92	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/elevators.lua	141	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/entry.lua	20	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/form.lua	19	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/fuel.lua	256	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/garages.lua	212	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/gunsmith.lua	191	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/hauling.lua	566	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/hud.lua	189	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/inventory.lua	199	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/invoices.lua	120	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/justice.lua	135	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/loading.lua	47	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/mechanic.lua	214	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/media.lua	199	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/medical.lua	219	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/menu.lua	30	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/needs.lua	42	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/netrunner.lua	278	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/panel.lua	16	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/police.lua	262	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/progress.lua	37	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/prompts.lua	30	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/radio.lua	158	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/ripperdoc.lua	278	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/server.lua	164	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/shared.lua	70	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/shops.lua	172	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/spawn.lua	159	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/target.lua	106	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/taxi.lua	176	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/teleports.lua	211	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/theme.lua	57	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/underworld.lua	342	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/vehicles.lua	26	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/weather.lua	63	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+config/workplace.lua	222	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+core/client/boot.lua	86	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+core/client/exports.lua	711	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+core/client/note.lua	111	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+core/client/notify.lua	431	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+core/client/scheduler.lua	308	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+core/client/ui.lua	418	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+core/server/answer.lua	364	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/server/boot.lua	143	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/server/buckets.lua	277	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/server/commands.lua	398	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/server/exports.lua	1411	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/server/gate.lua	480	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/server/note.lua	136	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/server/publish.lua	48	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/server/scheduler.lua	200	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/server/sessions.lua	157	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/server/tunables.lua	118	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/shared/channels.lua	55	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/shared/exports.lua	96	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/shared/glyphs.lua	67	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/shared/lifecycle.lua	425	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/shared/main.lua	85	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+core/shared/registry.lua	279	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/client/lib.lua	37	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+lib/client/modal.lua	388	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+lib/client/spots.lua	554	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+lib/client/surface.lua	386	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+lib/server/audit.lua	263	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/server/life.lua	50	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/server/storage.lua	373	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/anchors.lua	86	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/citizenid.lua	114	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/hooks.lua	119	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/jobgate.lua	286	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/locale.lua	135	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/math.lua	81	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/result.lua	52	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/spots.lua	452	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/string.lua	72	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/table.lua	37	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/text.lua	174	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/validate.lua	60	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+lib/shared/vehicle.lua	156	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+locales/en.lua	96	CONTROLE_AUTOMATIQUE	automated checks
+locales/fr.lua	88	CONTROLE_AUTOMATIQUE	automated checks
+modules/admin/client/announce.lua	67	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/admin/client/combat.lua	31	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/admin/client/controls.lua	339	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/admin/client/doors.lua	155	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/admin/client/forms.lua	418	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/admin/client/keys.lua	136	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/admin/client/main.lua	408	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/admin/client/menu.lua	2675	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/admin/client/noclip.lua	223	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/admin/client/tags.lua	614	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/admin/client/tagsview.lua	344	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/admin/client/target.lua	877	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/admin/data/peds.lua	545	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/admin/data/vehicles.lua	608	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/admin/locales.lua	1235	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/admin/module.lua	425	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/admin/server/characters.lua	254	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/server/combat.lua	86	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/server/doors.lua	178	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/server/inventory.lua	558	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/server/main.lua	976	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/server/menu.lua	346	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/server/models.lua	242	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/server/offline.lua	184	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/server/players.lua	829	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/server/tags.lua	170	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/server/vehicles.lua	513	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/server/weapons.lua	426	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/server/world.lua	320	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/shared/catalog-1.lua	11	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/shared/catalog-2.lua	11	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/shared/catalog-3.lua	11	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/shared/catalog-4.lua	11	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/shared/catalog-5.lua	8	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/shared/catalog.lua	147	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/shared/peds-1.lua	11	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/shared/peds-2.lua	11	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/shared/peds-3.lua	11	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/shared/peds-4.lua	8	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/admin/shared/peds.lua	137	LECTURE_INTEGRALE	opx-audit-admin-coverage.txt
+modules/animations/client/duo.lua	170	LECTURE_INTEGRALE	opx-economy-client-read-child.txt
+modules/animations/client/exports.lua	182	LECTURE_INTEGRALE	opx-economy-client-read-child.txt
+modules/animations/client/keys.lua	99	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/animations/client/main.lua	763	LECTURE_INTEGRALE	opx-economy-client-read-child.txt
+modules/animations/client/picker.lua	874	LECTURE_INTEGRALE	opx-economy-client-read-child.txt
+modules/animations/client/presenter.lua	657	LECTURE_INTEGRALE	opx-economy-client-read-child.txt
+modules/animations/client/prompt.lua	88	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/animations/client/walk.lua	345	LECTURE_INTEGRALE	opx-economy-client-read-child.txt
+modules/animations/locales.lua	503	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/animations/module.lua	96	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/animations/server/commands.lua	248	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/animations/server/duo.lua	558	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/animations/server/main.lua	154	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/animations/server/service.lua	537	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/animations/shared/catalogue.lua	541	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/animations/shared/common.lua	55	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/animations/shared/settings.lua	221	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/appearance/client/clothing.lua	850	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/appearance/client/editor.lua	602	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/appearance/client/garments.lua	109	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/appearance/client/main.lua	1889	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/appearance/client/presence.lua	402	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/appearance/client/snapshot.lua	328	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/appearance/client/view.lua	357	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/appearance/client/wardrobe.lua	2452	LECTURE_INTEGRALE	lecture integrale equipe economie (trace finale)
+modules/appearance/data/garments-1.lua	334	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/appearance/data/garments-2.lua	334	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/appearance/data/garments-3.lua	334	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/appearance/data/garments-4.lua	334	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/appearance/data/garments-5.lua	332	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/appearance/locales.lua	207	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/appearance/module.lua	261	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/appearance/server/main.lua	1551	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/appearance/server/storage.lua	127	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/bar/client/main.lua	350	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/bar/locales.lua	157	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/bar/module.lua	82	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/bar/server/main.lua	771	LECTURE_INTEGRALE	opx-audit-security-extra-coverage.txt
+modules/bar/shared/model.lua	497	LECTURE_INTEGRALE	opx-audit-security-extra-coverage.txt
+modules/blips/client/main.lua	1007	LECTURE_INTEGRALE	opx-economy-client-read-child.txt
+modules/blips/module.lua	116	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/business/client/main.lua	423	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/business/locales.lua	238	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/business/module.lua	82	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/business/server/accounts.lua	334	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/business/server/main.lua	935	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/business/server/storage.lua	187	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/business/shared/access.lua	443	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/calls/client/main.lua	841	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/calls/client/view.lua	92	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/calls/locales.lua	201	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/calls/module.lua	116	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/calls/server/main.lua	1339	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/calls/shared/model.lua	638	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/camera/client/main.lua	353	LECTURE_INTEGRALE	lecture integrale equipe performance (trace finale)
+modules/camera/locales.lua	29	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/camera/module.lua	32	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/character/client/main.lua	285	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/character/client/state.lua	186	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/character/locales.lua	331	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/character/module.lua	260	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/character/server/character.lua	1146	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/character/server/groups.lua	617	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/character/server/main.lua	1007	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/character/server/player.lua	1211	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/character/server/state.lua	116	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/character/server/storage.lua	765	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/chat/client/main.lua	623	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/chat/client/view.lua	165	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/chat/locales.lua	79	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/chat/module.lua	68	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/chat/server/main.lua	337	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/clothing/client/exports.lua	76	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/clothing/client/main.lua	339	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/clothing/locales.lua	57	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/clothing/module.lua	78	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/clothing/server/main.lua	363	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/clothing/server/storage.lua	80	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/clothing/shared/access.lua	200	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/contracts/client/main.lua	396	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/contracts/locales.lua	296	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/contracts/module.lua	109	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/contracts/server/main.lua	1577	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/contracts/server/storage.lua	340	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/contracts/shared/access.lua	559	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/corpo/client/main.lua	341	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/corpo/locales.lua	207	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/corpo/module.lua	107	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/corpo/server/main.lua	1287	LECTURE_INTEGRALE	opx-audit-services-coverage.txt
+modules/corpo/server/security.lua	325	LECTURE_INTEGRALE	opx-audit-services-coverage.txt
+modules/corpo/shared/access.lua	676	LECTURE_INTEGRALE	opx-audit-services-coverage.txt
+modules/crafting/client/main.lua	361	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/crafting/locales.lua	75	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/crafting/module.lua	150	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/crafting/server/main.lua	734	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/crafting/server/storage.lua	265	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/crafting/shared/recipes.lua	618	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/dealership/client/exports.lua	122	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/dealership/client/main.lua	1127	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/dealership/locales.lua	154	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/dealership/module.lua	105	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/dealership/server/main.lua	1893	LECTURE_INTEGRALE	opx-audit-economy-read-coverage.txt
+modules/dealership/server/storage.lua	239	LECTURE_INTEGRALE	opx-audit-economy-read-coverage.txt
+modules/dealership/shared/access.lua	715	LECTURE_INTEGRALE	opx-audit-economy-read-coverage.txt
+modules/diagnostics/client/main.lua	125	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/diagnostics/module.lua	46	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/diagnostics/server/main.lua	89	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/doorlock/client/exports.lua	70	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/doorlock/client/main.lua	779	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/doorlock/client/panel.lua	646	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/doorlock/locales.lua	438	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/doorlock/module.lua	98	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/doorlock/server/backend.lua	238	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/doorlock/server/main.lua	1281	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/doorlock/server/storage.lua	140	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/doorlock/shared/access.lua	820	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/downed/client/main.lua	372	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/downed/client/view.lua	118	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/downed/locales.lua	74	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/downed/module.lua	29	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/downed/server/main.lua	979	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/downed/server/storage.lua	125	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/elevators/client/door.lua	185	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/elevators/client/exports.lua	131	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/elevators/client/main.lua	294	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/elevators/client/panel.lua	232	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/elevators/client/state.lua	121	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/elevators/locales.lua	75	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/elevators/module.lua	56	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/elevators/server/main.lua	697	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/elevators/shared/access.lua	301	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/entry/client/main.lua	501	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/entry/locales.lua	40	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/entry/module.lua	94	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/form/client/main.lua	1006	LECTURE_INTEGRALE	lecture integrale equipe performance (trace finale)
+modules/form/locales.lua	33	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/form/module.lua	46	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/fuel/client/main.lua	502	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/fuel/locales.lua	152	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/fuel/module.lua	82	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/fuel/server/main.lua	929	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/fuel/server/tanks.lua	411	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/fuel/shared/model.lua	362	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/garages/client/exports.lua	89	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/garages/client/main.lua	588	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/garages/locales.lua	95	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/garages/module.lua	118	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/garages/server/main.lua	1065	LECTURE_INTEGRALE	opx-audit-economy-read-coverage.txt
+modules/garages/server/storage.lua	63	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/garages/shared/access.lua	504	LECTURE_INTEGRALE	opx-audit-economy-read-coverage.txt
+modules/gunsmith/client/main.lua	164	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/gunsmith/locales.lua	76	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/gunsmith/module.lua	68	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/gunsmith/server/main.lua	207	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/gunsmith/shared/access.lua	442	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/hauling/client/main.lua	585	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/hauling/locales.lua	128	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/hauling/module.lua	150	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/hauling/server/claim.lua	243	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/hauling/server/main.lua	1760	LECTURE_INTEGRALE	opx-audit-economy-read-coverage.txt
+modules/hauling/shared/access.lua	563	LECTURE_INTEGRALE	opx-audit-economy-read-coverage.txt
+modules/hud/client/main.lua	1280	LECTURE_INTEGRALE	opx-economy-client-read-child.txt
+modules/hud/locales.lua	77	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/hud/module.lua	27	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/inventory/client/keys.lua	137	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/inventory/client/main.lua	978	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/inventory/client/slotbar.lua	241	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/inventory/client/world.lua	439	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/inventory/data/items.lua	155	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/data/weapons.lua	345	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/locales.lua	806	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/inventory/module.lua	184	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/inventory/server/actions.lua	724	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/server/commands.lua	289	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/server/containers.lua	1070	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/server/currency.lua	371	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/server/main.lua	1118	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/server/players.lua	351	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/server/requests.lua	359	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/server/storage.lua	673	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/server/weapons.lua	572	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/server/world.lua	595	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/shared/catalog-1.lua	11	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/shared/catalog-2.lua	11	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/shared/catalog-3.lua	11	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/shared/catalog-4.lua	11	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/shared/catalog-5.lua	8	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/shared/catalog.lua	542	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/inventory/shared/common.lua	461	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/invoices/client/main.lua	247	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/invoices/locales.lua	161	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/invoices/module.lua	91	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/invoices/server/main.lua	856	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/invoices/server/storage.lua	253	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/invoices/shared/model.lua	245	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/justice/client/main.lua	639	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/justice/locales.lua	309	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/justice/module.lua	102	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/justice/server/main.lua	1008	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/justice/server/storage.lua	365	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/justice/shared/access.lua	319	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/loading/client/main.lua	346	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/loading/locales.lua	31	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/loading/module.lua	68	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/mechanic/client/main.lua	418	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/mechanic/locales.lua	192	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/mechanic/module.lua	82	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/mechanic/server/dispatch.lua	150	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/mechanic/server/main.lua	1117	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/mechanic/shared/model.lua	450	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/media/client/main.lua	175	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/media/locales.lua	213	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/media/module.lua	84	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/media/server/main.lua	1097	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/media/shared/model.lua	497	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/medical/client/main.lua	453	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/medical/locales.lua	196	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/medical/module.lua	87	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/medical/server/dispatch.lua	194	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/medical/server/main.lua	1088	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/medical/shared/model.lua	432	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/menu/client/main.lua	1611	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/menu/locales.lua	25	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/menu/module.lua	79	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/needs/client/main.lua	655	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/needs/locales.lua	24	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/needs/module.lua	101	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/needs/server/main.lua	377	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/needs/server/storage.lua	99	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/netrunner/client/main.lua	289	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/netrunner/locales.lua	170	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/netrunner/module.lua	101	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/netrunner/server/main.lua	1106	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/netrunner/shared/access.lua	595	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/panel/client/main.lua	1114	LECTURE_INTEGRALE	opx-economy-client-read-child.txt
+modules/panel/locales.lua	30	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/panel/module.lua	39	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/police/client/main.lua	516	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/police/locales.lua	286	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/police/module.lua	93	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/police/server/dispatch.lua	199	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/police/server/main.lua	1510	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/police/shared/access.lua	550	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/progress/client/main.lua	412	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/progress/locales.lua	25	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/progress/module.lua	107	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/progress/server/main.lua	266	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/prompts/client/main.lua	864	LECTURE_INTEGRALE	opx-economy-client-read-child.txt
+modules/prompts/locales.lua	81	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/prompts/module.lua	38	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/prompts/server/main.lua	120	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/radio/client/main.lua	304	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/radio/locales.lua	114	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/radio/module.lua	72	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/radio/server/main.lua	735	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/radio/shared/model.lua	321	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/ripperdoc/client/main.lua	494	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/ripperdoc/locales.lua	215	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/ripperdoc/module.lua	95	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/ripperdoc/server/identity.lua	163	LECTURE_INTEGRALE	opx-audit-services-coverage.txt
+modules/ripperdoc/server/main.lua	1177	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/ripperdoc/server/storage.lua	131	LECTURE_INTEGRALE	opx-audit-services-coverage.txt
+modules/ripperdoc/shared/model.lua	694	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/shops/client/main.lua	761	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/shops/locales.lua	154	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/shops/module.lua	240	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/shops/server/main.lua	720	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/shops/server/storage.lua	169	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/spawn/client/main.lua	353	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/spawn/locales.lua	97	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/spawn/module.lua	307	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/spawn/server/main.lua	547	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/target/client/main.lua	1285	LECTURE_INTEGRALE	opx-economy-client-read-child.txt
+modules/target/locales.lua	37	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/target/module.lua	29	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/target/shared/model.lua	631	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/taxi/client/main.lua	286	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/taxi/locales.lua	218	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/taxi/module.lua	69	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/taxi/server/dispatch.lua	151	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/taxi/server/main.lua	873	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/taxi/shared/model.lua	400	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/teleports/client/exports.lua	82	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/teleports/client/main.lua	479	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/teleports/locales.lua	79	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/teleports/module.lua	80	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/teleports/server/main.lua	663	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/teleports/shared/access.lua	554	LECTURE_INTEGRALE	opx-audit-root-coverage.txt
+modules/theme/client/main.lua	95	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/theme/module.lua	54	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/theme/server/main.lua	105	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/theme/shared/palette.lua	437	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/underworld/client/main.lua	407	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/underworld/locales.lua	228	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/underworld/module.lua	99	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/underworld/server/drugs.lua	485	LECTURE_INTEGRALE	opx-audit-services-coverage.txt
+modules/underworld/server/main.lua	962	LECTURE_INTEGRALE	opx-audit-services-coverage.txt
+modules/underworld/server/op.lua	489	LECTURE_INTEGRALE	opx-audit-services-coverage.txt
+modules/underworld/server/storage.lua	337	LECTURE_INTEGRALE	opx-audit-services-coverage.txt
+modules/underworld/shared/model.lua	518	LECTURE_INTEGRALE	opx-audit-services-coverage.txt
+modules/vehiclekeys/client/main.lua	105	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+modules/vehiclekeys/locales.lua	39	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/vehiclekeys/module.lua	73	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/vehiclekeys/server/main.lua	532	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/vehicles/locales.lua	48	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/vehicles/module.lua	39	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/vehicles/server/main.lua	940	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/vehicles/server/storage.lua	296	LECTURE_INTEGRALE	opx-audit-economy-coverage.txt
+modules/weather/client/main.lua	460	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/weather/module.lua	22	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/weather/server/commands.lua	327	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/weather/server/main.lua	132	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/weather/server/population.lua	175	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/weather/server/state.lua	464	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/weather/shared/clock.lua	189	LECTURE_INTEGRALE	opx-audit-security-coverage.txt
+modules/workplace/client/main.lua	209	LECTURE_INTEGRALE	opx-audit-economy-client-coverage.txt
+modules/workplace/locales.lua	128	CODE_LU_ET_DONNEES_VALIDÉES	code hors litteraux lu; tests/audit-data.lua
+modules/workplace/module.lua	87	CODE_LU_HORS_COMMENTAIRES	opx-audit-performance-coverage.txt
+modules/workplace/server/main.lua	774	LECTURE_INTEGRALE	opx-audit-security-extra-coverage.txt
+modules/workplace/shared/access.lua	425	LECTURE_INTEGRALE	opx-audit-security-extra-coverage.txt
+open77.lua	1273	DECLARATIONS_VERIFIEES	declarations; tous chemins et boots verifies
+package-lock.json	1563	LECTURE_INTEGRALE	lecture integrale equipe performance
+package.json	25	LECTURE_INTEGRALE	lecture integrale equipe performance
+tests/audit-admin-target.lua	39	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-admin.lua	62	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-animation-offers.lua	49	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-animation-picker.lua	22	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-animation-walk.lua	25	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-animations.lua	44	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-appearance-editor.lua	87	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-appearance.lua	46	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-blips-lifecycle.lua	22	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-contracts.lua	52	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-data.lua	132	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-dealership-lifecycle.lua	41	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-doorlock-request.lua	44	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-doorlock.lua	42	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-downed.lua	59	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-economy-client.lua	133	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-economy.lua	333	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-form-client.lua	179	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-gate.lua	31	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-host.lua	11	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-justice.lua	80	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-mechanic-client.lua	202	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-mechanic.lua	75	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-media.lua	54	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-medical-client.lua	194	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-medical.lua	97	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-netrunner-client.lua	197	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-netrunner.lua	66	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-offline-money.lua	31	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-panel-selected.lua	31	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-player.lua	77	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-police.lua	74	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-radio.lua	42	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-ripperdoc-client.lua	234	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-ripperdoc.lua	70	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-security.lua	270	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-services.lua	208	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-tags-client.lua	41	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-taxi.lua	60	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-underworld-client.lua	187	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-vehicles-economy.lua	144	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/audit-work-services.lua	137	REGRESSION_LUE_ET_EXECUTEE	revue auteur et/ou pair; execute Lua5.4
+tests/host.lua	2916	LECTURE_INTEGRALE	lecture integrale equipe economie; execution Lua5.4
+tests/prop-aliases.lua	230	LECTURE_INTEGRALE	lecture integrale root; tests/run.lua
+tests/run.lua	50754	TESTS_EXECUTES_ET_SECTIONS_MODIFIEES_LUES	sections modifiees lues; suite entiere executee
+tests/tool-garments.mjs	30	REGRESSION_LUE_ET_EXECUTEE	lecture equipe performance; execute Node
+tests/ui-inventory-rpc.mjs	71	REGRESSION_LUE_ET_EXECUTEE	lecture equipe performance; execute Node
+tests/ui-notify-lifecycle.mjs	48	REGRESSION_LUE_ET_EXECUTEE	lecture equipe performance; execute Node
+tests/ui-radio-ptt.mjs	46	REGRESSION_LUE_ET_EXECUTEE	lecture equipe performance; execute Node
+tests/ui-spawn-focus.mjs	64	REGRESSION_LUE_ET_EXECUTEE	lecture equipe performance; execute Node
+tools/check-sandbox-globals.py	120	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+tools/generate-garments.mjs	280	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+tools/generate-prop-aliases.mjs	71	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+tsconfig.json	27	LECTURE_INTEGRALE	lecture integrale equipe performance
+ui/env.d.ts	1	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/shims.d.ts	8	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/boot/ModuleHost.vue	54	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/boot/SurfaceRoot.vue	132	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/boot/createSurface.ts	114	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/boot/main.ts	123	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/boot/registry.ts	52	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/bridge/channel.ts	168	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/bridge/devshim.ts	116	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/bridge/diag.ts	92	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/bridge/focus.ts	121	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/bridge/rpc.ts	119	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/bridge/types.ts	86	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/composables/useBridge.ts	25	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/composables/useCountdown.ts	62	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/composables/useLocale.ts	41	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/design-system/fonts.css	71	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/design-system/shapes.css	258	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/design-system/surface.css	191	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/design-system/theme.ts	173	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/design-system/tokens.css	304	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/calls/HoloRoot.vue	1029	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/chat/ChatInput.vue	858	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/chat/ChatLog.vue	369	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/chat/state.ts	80	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/doorlock/DoorList.vue	393	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/doorlock/DoorSettings.vue	647	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/doorlock/DoorlockView.vue	641	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/doorlock/model.ts	394	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/downed/DownedView.vue	734	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/form/FormView.vue	1112	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/hud/HudInfo.vue	253	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/hud/HudRoot.vue	285	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/hud/HudStatus.vue	333	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/hud/HudVehicle.vue	565	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/hud/HudVitals.vue	361	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/hud/HudVoice.vue	646	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/hud/anchors.ts	42	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/hud/icons.ts	30	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/inventory/InventoryGrid.vue	196	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/inventory/InventorySlot.vue	528	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/inventory/InventoryView.vue	2058	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/inventory/SlotbarRoot.vue	236	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/inventory/format.ts	99	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/inventory/geometry.ts	50	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/inventory/types.ts	159	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/loading/LoadingCover.vue	301	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/menu/MenuView.vue	744	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/notify/NotifyRoot.vue	626	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/notify/NotifyToast.vue	283	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/notify/stinger.ts	137	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/panel/PanelView.vue	2365	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/progress/ProgressRoot.vue	189	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/prompts/PromptsRoot.vue	528	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/radio/RadioHolo.vue	1012	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/spawn/SpawnView.vue	606	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/tags/TagsRoot.vue	524	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/target/TargetView.vue	1637	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/modules/target/glyphs.ts	115	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/stores/corners.ts	35	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/stores/loading.ts	55	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/src/stores/ui.ts	113	LECTURE_INTEGRALE	opx-audit-performance-coverage.txt
+ui/tsconfig.app.json	8	LECTURE_INTEGRALE	lecture integrale equipe performance
+vite.config.ts	169	LECTURE_INTEGRALE	lecture integrale equipe performance

@@ -566,6 +566,10 @@ local function drawNow(inPlace)
 		takeDown()
 		return
 	end
+	if stack[#stack] ~= current then
+		call('Close', result.handle, 'superseded')
+		return
+	end
 	handle, shown = result.handle, current
 end
 

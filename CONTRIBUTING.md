@@ -38,8 +38,11 @@ From the repository root, with `opx_lib` checked out next to it:
 
 ```bash
 OPX_LIB_PATH=../opx_lib lua tests/run.lua           # must be green
+OPX_LIB_PATH=../opx_lib bash -e -c 'for test in tests/audit-*.lua; do lua "$test"; done'
 luac -p $(find . -name '*.lua' -not -name 'open77.lua' -not -path './node_modules/*')
 npm ci && npm run typecheck && npm run build        # only if ui/ changed
+node tests/ui-inventory-rpc.mjs && node tests/ui-radio-ptt.mjs && node tests/ui-notify-lifecycle.mjs && node tests/ui-spawn-focus.mjs
+node tests/tool-garments.mjs                         # garment generator changes
 ```
 
 - `tests/run.lua` boots the real manifest against a stub platform (`tests/host.lua`)
@@ -52,6 +55,9 @@ npm ci && npm run typecheck && npm run build        # only if ui/ changed
   manifest** or CI fails: a file nobody listed never loads, and nothing else tells you.
 - `npm run build` writes `web/index.html`, which **is** the shipped bundle. Commit it
   with the `ui/` change. The sources under `ui/` never leave the repository.
+- The Node UI checks compile the inventory and radio's real handlers and exercise
+  request lifetime and push-to-talk release without a browser or a game. Run them
+  after `npm ci`; CI also rebuilds and checks that `web/` matches the sources.
 - CI (`.github/workflows/check.yml`) also runs `tools/check-sandbox-globals.py` (no
   `setmetatable` in a script the client loads, no `require` in one the server loads),
   and refuses SQL outside `lib/server/storage.lua` and `modules/<id>/server/storage.lua`.

@@ -142,8 +142,8 @@ local function place(row)
 	if row.own and patch.position == nil then return nil end
 
 	if handle ~= nil then
-		local ok = pcall(Open77.anchors.update, handle, patch)
-		if ok then return handle end
+		local called, updated = pcall(Open77.anchors.update, handle, patch)
+		if called and updated == true then return handle end
 		-- A handle the host has forgotten: drop it and make a new one below.
 		drop(playerId)
 	end
@@ -187,6 +187,15 @@ end
 --- Reconciles the anchors with the rows, and sends the page what to draw.
 local function onRows(payload)
 	local rows = type(payload.rows) == 'table' and payload.rows or {}
+
+	-- Release peers that left before spending the resource's anchor quota on
+	-- new arrivals. A full roster otherwise rejects replacements until the
+	-- next changed frame, which may never arrive.
+	local wanted = {}
+	for _, row in ipairs(rows) do wanted[row.playerId] = true end
+	for playerId in pairs(anchors) do
+		if not wanted[playerId] then drop(playerId) end
+	end
 
 	local seen = {}
 	local out = {}

@@ -201,7 +201,7 @@ function Runtime.Start(owner, spec)
 	end
 
 	local settings = tuning()
-	local duration = tonumber(spec.durationMs)
+	local duration = OPX.Math.Finite(spec.durationMs)
 	if duration == nil or duration < settings.min or duration > settings.max then
 		return OPX.Result.Err('invalid_duration',
 			('durationMs must be %d to %d'):format(settings.min, settings.max))

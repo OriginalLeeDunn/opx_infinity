@@ -130,8 +130,10 @@ function Characters.Register()
 		handler = function(source, args, raw)
 			local playerId = Server.Target(source, raw, args[1])
 			if playerId == nil then return end
+			local allowed = Server.Recipient(source, Command.CHARACTER_LIST)
 			Server.Heavy(source, raw, function()
 				local rows, code = Characters.Rows(playerId)
+				if not allowed() then return end
 				if rows == nil then return refuse(source, raw, code) end
 
 				local lines = { locale('admin.char.header',

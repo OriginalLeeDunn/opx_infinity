@@ -67,6 +67,19 @@ local function accessOf(playerId)
 	return access, known
 end
 
+-- Database reads yield. Their recipient and grants must still match when the
+-- answer comes back; a player id alone may now name an unrelated connection.
+local function recipient(playerId, grant, alternative)
+	local userId, session = OPX.UserIdOf(playerId), OPX.Sessions[playerId]
+	return function()
+		if userId == nil or OPX.UserIdOf(playerId) ~= userId or
+			OPX.Sessions[playerId] ~= session then return false end
+		if Server.Permitted(playerId, M.OPENER) ~= true then return false end
+		return grant == nil or Server.Permitted(playerId, grant) == true or
+			(alternative ~= nil and Server.Permitted(playerId, alternative) == true)
+	end
+end
+
 -- Sends rows to one client in chunks under the event size limit.
 local function pushChunks(playerId, event, rows, extra)
 	local offset = 0
@@ -97,17 +110,19 @@ end
 
 -- Sends the item catalogue for the pickers.
 local function pushItems(playerId)
+	local allowed = recipient(playerId)
 	local index, code = Inventory.Catalog()
 	local rows = {}
 	for _, entry in ipairs(index and index.items or {}) do
 		rows[#rows + 1] = { name = entry.name, label = entry.label, category = entry.category,
 			weapon = entry.weapon or nil, ammo = entry.ammo or nil }
 	end
-	pushChunks(playerId, M.Event.ITEMS, rows, { error = code })
+	if allowed() then pushChunks(playerId, M.Event.ITEMS, rows, { error = code }) end
 end
 
 -- Sends one bag's stacks for the removal picker. Yields.
 local function pushBag(playerId, token)
+	local allowed = recipient(playerId, Command.INVENTORY_VIEW, Command.INVENTORY_REMOVE)
 	local target, _, _, targetCode = Inventory.Target(playerId, token)
 	local bag, code
 	if target ~= nil then bag, code = Inventory.Bag(target) end
@@ -117,7 +132,9 @@ local function pushBag(playerId, token)
 		rows[#rows + 1] = { slot = row.slot, name = row.name, count = row.count,
 			label = Inventory.LabelOf(index, row.name) }
 	end
-	pushChunks(playerId, M.Event.BAG, rows, { target = token, error = targetCode or code })
+	if allowed() then
+		pushChunks(playerId, M.Event.BAG, rows, { target = token, error = targetCode or code })
+	end
 end
 
 --- One player's characters, tagged with the player they were read for.
@@ -125,6 +142,7 @@ end
 -- somebody else drops it rather than drawing another account's rows as theirs.
 -- Coroutine only.
 local function pushCharacters(playerId, token)
+	local allowed = recipient(playerId, Command.CHARACTER_LIST)
 	local target = tonumber(token)
 	local rows, code
 	if target ~= nil and target > 0 then
@@ -132,7 +150,9 @@ local function pushCharacters(playerId, token)
 	else
 		code = 'bad_target'
 	end
-	pushChunks(playerId, M.Event.CHARACTERS, rows or {}, { target = token, error = code })
+	if allowed() then
+		pushChunks(playerId, M.Event.CHARACTERS, rows or {}, { target = token, error = code })
+	end
 end
 
 --- The tag a find page is answered under: the QUESTION and not a target.
@@ -169,7 +189,9 @@ end
 
 --- One page of the find, tagged with the question it answers. Coroutine only.
 local function pushFound(playerId, request)
+	local allowed = recipient(playerId, Command.CHARACTER_FIND)
 	local rows, code, page = M.Offline.Page(request)
+	if not allowed() then return end
 	pushChunks(playerId, M.Event.FOUND, rows or {}, {
 		tag = findTag(request),
 		error = code,

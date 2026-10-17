@@ -163,10 +163,17 @@ end
 function Players.Bag(source)
 	local citizenId = Players.Citizen(source)
 	if not citizenId then return nil, 'not_loaded' end
+	local api = characterApi()
+	local player = api and api.GetPlayer(source)
+	if player == nil or type(player.PlayerData) ~= 'table'
+		or player.PlayerData.citizenId ~= citizenId then return nil, 'not_loaded' end
 	local bag, reason = Containers.Load(KIND.CHARACTER, citizenId,
 		Options.BAG_SLOTS, Options.BAG_MAX_WEIGHT)
 	if not bag then return nil, reason end
 	if Players.Citizen(source) ~= citizenId then return nil, 'not_loaded' end
+	player = api.GetPlayer(source)
+	if player == nil or type(player.PlayerData) ~= 'table'
+		or player.PlayerData.citizenId ~= citizenId then return nil, 'not_loaded' end
 	-- A player back in the world before their bag was released takes it back
 	-- rather than being handed a leftover waiting to be written and dropped.
 	bag.unloadWhenClean = nil

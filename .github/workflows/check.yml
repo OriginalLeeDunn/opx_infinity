@@ -6,6 +6,30 @@ on:
   pull_request:
 
 jobs:
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Inventory request lifetime regressions
+        run: node tests/ui-inventory-rpc.mjs
+      - name: Radio push-to-talk release regressions
+        run: node tests/ui-radio-ptt.mjs
+      - name: Check notification audio lifecycle
+        run: node tests/ui-notify-lifecycle.mjs
+      - name: Check modal keyboard ownership
+        run: node tests/ui-spawn-focus.mjs
+      - name: Garment generator encoding regressions
+        run: node tests/tool-garments.mjs
+      - run: npm run build
+      - name: The shipped pages match their sources
+        run: git diff --exit-code -- web/
+
   lua:
     runs-on: ubuntu-latest
     steps:
@@ -41,6 +65,14 @@ jobs:
         env:
           OPX_LIB_PATH: opx_lib
         run: lua5.4 tests/run.lua
+
+      - name: Audit regression scenarios
+        env:
+          OPX_LIB_PATH: opx_lib
+        run: |
+          for test in tests/audit-*.lua; do
+            lua5.4 "$test"
+          done
 
       # THE SUITE CANNOT SEE THIS ONE. It runs plain `lua5.4`, where every global
       # exists; the client's sandbox removes `setmetatable` and the server's removes

@@ -255,6 +255,11 @@ function M.CreatePlayer(entity, offline)
 	function Functions.UpdatePlayerData()
 		self.Revision = self.Revision + 1
 		if self.Offline then return end
+		-- A group write can finish after logout or after a slot changed hands.
+		-- Keep the revision for persistence, but never send that old character's
+		-- complete data to the connection now standing on its source.
+		local source = self.PlayerData.source
+		if M.Players[source] ~= self or OPX.UserIdOf(source) ~= self.PlayerData.userId then return end
 		TriggerClientEvent(M.Event.DATA, self.PlayerData.source, self.PlayerData)
 		-- The whole of PlayerData to its owner above, and NOTHING to anybody else:
 		-- never a name to a stranger (the owner's decision, see `server/state.lua`).
@@ -414,12 +419,18 @@ function M.GetPlayers()
 		else
 			staleCount = staleCount + 1
 			stale = stale or {}
-			stale[staleCount] = source
+			stale[staleCount] = { source = source, userId = player.PlayerData.userId }
 		end
 	end
 
 	for i = 1, staleCount do
-		OPX.ForgetSession(stale[i])
+		local departed = stale[i]
+		local session = OPX.Sessions[departed.source]
+		-- EnsureSession may already have replaced the connection while the
+		-- queued logout still leaves its old character in this roster.
+		if session ~= nil and session.userId == departed.userId then
+			OPX.ForgetSession(departed.source)
+		end
 	end
 	return out
 end
@@ -442,7 +453,11 @@ end
 -- @return Player|nil
 function M.ResolvePlayer(identifier)
 	if type(identifier) == 'table' and identifier.PlayerData then return identifier end
-	if type(identifier) == 'number' then return M.GetPlayer(identifier) end
+	if type(identifier) == 'number' then
+		local player = M.GetPlayer(identifier)
+		if player ~= nil and OPX.UserIdOf(identifier) == player.PlayerData.userId then return player end
+		return nil
+	end
 	if type(identifier) == 'string' then return M.GetPlayerByCitizenId(identifier) end
 	return nil
 end
@@ -495,6 +510,7 @@ end
 -- and the shop that was told "paid" handed its goods over for nothing.
 local function stillLoaded(player)
 	return not player.Offline and M.Players[player.PlayerData.source] == player
+		and OPX.UserIdOf(player.PlayerData.source) == player.PlayerData.userId
 end
 
 --- Announces a balance change to its four audiences: the owning client, the
@@ -1055,7 +1071,8 @@ function M.Login(source, citizenId)
 	-- not run again, so the ghost would sit in the roster until the autosave
 	-- evicted it, its reconnecting owner would be told `character.inUse`, and a
 	-- recycled player id would inherit its PlayerData.
-	if OPX.Sessions[source] ~= session or session.departing then
+	if OPX.Sessions[source] ~= session or session.departing
+		or OPX.UserIdOf(source) ~= session.userId then
 		return Result.Err('entry.noIdentity', tostring(source))
 	end
 

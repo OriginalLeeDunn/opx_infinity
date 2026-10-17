@@ -366,19 +366,32 @@ end
 -- @param amount integer positive
 -- @return Result
 function M.Storage.AddMoney(citizenId, moneyType, amount)
+	-- Match the live ledger's JSON-safe ceiling in the UPDATE itself. A read
+	-- before this write would let concurrent offline payments both pass it.
+	local maximum = 9007199254740991
 	local written = Storage.Execute([[
 UPDATE opx77_characters
    SET money = JSON_SET(money, @path,
        COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(money, @path)) AS SIGNED), 0) + @amount)
  WHERE citizen_id = @citizen AND deleted_at IS NULL
-  ]], { citizen = citizenId, path = '$.' .. moneyType, amount = amount })
+   AND COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(money, @path)) AS SIGNED), 0) <= @remaining
+  ]], { citizen = citizenId, path = '$.' .. moneyType, amount = amount,
+		remaining = maximum - amount })
 	if not written.ok then return written end
 	-- The bridge answers the affected rows as a number or under `affectedRows`;
 	-- zero is a character that is not there, and anything unreadable is left to
 	-- the read that follows to decide.
 	local affected = written.value
 	if type(affected) == 'table' then affected = affected.affectedRows end
-	if tonumber(affected) == 0 then return Result.Err('character.notFound', citizenId) end
+	if tonumber(affected) == 0 then
+		local exists = Storage.Scalar([[
+SELECT COUNT(*) FROM opx77_characters
+ WHERE citizen_id = @citizen AND deleted_at IS NULL
+  ]], { citizen = citizenId })
+		if not exists.ok then return exists end
+		if (tonumber(exists.value) or 0) > 0 then return Result.Err('money.tooLarge', citizenId) end
+		return Result.Err('character.notFound', citizenId)
+	end
 	return Result.Ok(true)
 end
 

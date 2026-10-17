@@ -42,6 +42,8 @@ local tips, tipSerial = {}, 0
 local photosBy, storiesBy = {}, {}
 -- citizen id -> { at, amount }; network -> { at, amount }; desk id -> { x, y, z, at }.
 local paidTo, minted, bought = {}, {}, {}
+-- Caps and scene deduplication span desks and reporters; one sale owns them until settlement.
+local selling = false
 -- player -> the photo being framed: { slot, at, cid, network, barId }.
 local shoots = {}
 -- A per-process counter for serials and idempotency keys.
@@ -261,6 +263,12 @@ local function hourly(store, cid, nowS)
 	return store[cid]
 end
 
+local function unreserve(store, cid, stamp)
+	for index, row in ipairs(store[cid] or {}) do
+		if row == stamp then table.remove(store[cid], index); return end
+	end
+end
+
 local function canCarry(player, name)
 	local api = inventory()
 	if api == nil or type(api.CanCarry) ~= 'function' then return true end
@@ -304,15 +312,25 @@ function M.Story(player, payload)
 		return answer(player, false, 'story_too_soon', { seconds = math.ceil(rules.cooldownMs / 1000 - (nowS - last.at)) })
 	end
 	if #filed >= rules.maxPerHour then return answer(player, false, 'story_quota', { count = rules.maxPerHour }) end
+	-- Reserve before bag operations yield, so overlapping drafts count against
+	-- the same allowance. A failed delivery gives its reservation back.
+	local stamp = { at = nowS }
+	filed[#filed + 1] = stamp
 	local item = built.items.story
-	if not canCarry(player, item.name) then return answer(player, false, 'bag_full') end
+	if not canCarry(who.cid, item.name) then
+		unreserve(storiesBy, who.cid, stamp)
+		return answer(player, false, 'bag_full')
+	end
+	if playerOf(player) ~= who.loaded then unreserve(storiesBy, who.cid, stamp); return false, 'no_character' end
 	local metadata = {
 		serial = nextSerial('S'), network = who.network, by = who.cid, author = who.name,
 		headline = headline, body = body, words = Model.Words(body), at = math.floor(nowS),
 		label = OPX.Text.Clean(headline, 48),
 	}
-	if not give(player, item.name, metadata) then return answer(player, false, 'bag_full') end
-	filed[#filed + 1] = { at = nowS }
+	if not give(who.cid, item.name, metadata) then
+		unreserve(storiesBy, who.cid, stamp)
+		return answer(player, false, 'bag_full')
+	end
 	OPX.Audit.Log({ event = 'media.story', message = ('%s filed "%s" (%d words)'):format(who.cid, headline,
 		metadata.words), data = { serial = metadata.serial, network = who.network }, source = player,
 		citizenId = who.cid })
@@ -376,6 +394,12 @@ local function develop(player, shoot)
 		return answer(player, false, 'photo_moved')
 	end
 	local nowS = wallS()
+	local taken = hourly(photosBy, who.cid, nowS)
+	if #taken >= built.photo.maxPerHour then
+		return answer(player, false, 'photo_quota', { count = built.photo.maxPerHour })
+	end
+	local stamp = { at = nowS }
+	taken[#taken + 1] = stamp
 	local metadata = {
 		serial = nextSerial('P'), network = who.network, by = who.cid, author = who.name,
 		x = math.floor(at.x * 10 + 0.5) / 10, y = math.floor(at.y * 10 + 0.5) / 10,
@@ -384,9 +408,10 @@ local function develop(player, shoot)
 	}
 	local uploaded, how = screenshot(player, metadata)
 	metadata.uploaded = uploaded == true
-	if not give(player, built.items.photo.name, metadata) then return answer(player, false, 'bag_full') end
-	local taken = hourly(photosBy, who.cid, nowS)
-	taken[#taken + 1] = { at = nowS }
+	if not give(who.cid, built.items.photo.name, metadata) then
+		unreserve(photosBy, who.cid, stamp)
+		return answer(player, false, 'bag_full')
+	end
 	OPX.Audit.Log({ event = 'media.photo', message = ('%s shot %s at %.1f %.1f %.1f (crowd %d, upload %s)'):format(
 		who.cid, metadata.serial, metadata.x, metadata.y, metadata.z, metadata.crowd, tostring(how)),
 		data = { serial = metadata.serial, uploaded = metadata.uploaded }, source = player, citizenId = who.cid })
@@ -477,7 +502,7 @@ end
 -- @param payload table { network, desk }
 -- @return boolean ok
 -- @return string code
-function M.Sell(player, payload)
+local function sellOnce(player, payload)
 	if OPX.Cooling(player, 'media.request', built.requestMs) then return answer(player, false, 'too_fast') end
 	payload = type(payload) == 'table' and payload or {}
 	local desk = deskOf(payload.network, payload.desk)
@@ -552,7 +577,7 @@ function M.Sell(player, payload)
 	-- 1. The pieces leave the bag.
 	local removed = {}
 	for _, piece in ipairs(picked) do
-		local read, done = pcall(api.RemoveFromSlot, player, piece.slot, 1)
+		local read, done = pcall(api.RemoveFromSlot, who.cid, piece.slot, 1, piece)
 		if read and type(done) == 'table' and done.ok == true then
 			removed[#removed + 1] = piece
 		else
@@ -560,7 +585,7 @@ function M.Sell(player, payload)
 		end
 	end
 	local function putBack()
-		for _, piece in ipairs(removed) do pcall(api.AddItem, player, piece.name, 1, piece.metadata) end
+		for _, piece in ipairs(removed) do pcall(api.AddItem, who.cid, piece.name, 1, piece.metadata) end
 	end
 	if #removed == 0 then return answer(player, false, 'nothing_to_sell') end
 
@@ -582,9 +607,9 @@ function M.Sell(player, payload)
 	local paid = total <= 0
 	if not paid then
 		local money = character()
-		if money ~= nil and type(money.AddMoney) == 'function' then
-			local read, ok = pcall(money.AddMoney, player, built.currency, total, reason)
-			paid = read and ok == true
+		if money ~= nil and type(money.AddMoneyOffline) == 'function' then
+			local read, result = pcall(money.AddMoneyOffline, who.cid, built.currency, total, reason)
+			paid = read and type(result) == 'table' and result.ok == true
 		end
 	end
 	if not paid then
@@ -612,6 +637,19 @@ function M.Sell(player, payload)
 	return answer(player, true, capped > 0 and 'sold_capped' or (old > 0 and 'sold_old' or 'sold'),
 		{ photos = photos, stories = stories, total = OPX.Locale.Money(total, built.currency), desk = desk.label,
 			left = capped })
+end
+
+--- Serializes the cap check through settlement; always releases after a failure.
+function M.Sell(player, payload)
+	if selling then return answer(player, false, 'busy') end
+	selling = true
+	local called, ok, code = pcall(sellOnce, player, payload)
+	selling = false
+	if not called then
+		Open77.log.error(('[media] a desk sale raised: %s'):format(tostring(ok)))
+		return answer(player, false, 'sale_failed')
+	end
+	return ok, code
 end
 
 -- ── the tips line ───────────────────────────────────────────────────────────
@@ -716,14 +754,14 @@ function M.Kit(player)
 	local given = {}
 	if not hasPass then
 		local network = built.networks[who.network]
-		if give(player, passItem.name, { cid = who.cid, name = who.name, network = who.network,
+		if give(who.cid, passItem.name, { cid = who.cid, name = who.name, network = who.network,
 			networkLabel = network and network.label or who.network, grade = who.grade,
 			gradeLabel = gradeLabel(who.grade), serial = nextSerial('ID'), issued = math.floor(wallS()),
 			label = OPX.Text.Clean(('%s - %s'):format(passItem.label, who.name), 48) }) then
 			given[#given + 1] = passItem.label
 		end
 	end
-	if wantCamera and give(player, cameraItem.name, { serial = nextSerial('CAM'), issuedTo = who.cid }) then
+	if wantCamera and give(who.cid, cameraItem.name, { serial = nextSerial('CAM'), issuedTo = who.cid }) then
 		given[#given + 1] = cameraItem.label
 	end
 	if #given == 0 then return answer(player, false, 'bag_full') end
@@ -776,7 +814,11 @@ end
 local function onCameraUsed(source, info)
 	local slot = type(info) == 'table' and math.tointeger(info.slot) or nil
 	-- Its own thread: the use handler has a deadline, a photo has a bar.
-	CreateThread(function() M.TakePhoto(source, slot) end)
+	local loaded = playerOf(source)
+	CreateThread(function()
+		if loaded == nil or playerOf(source) ~= loaded then return end
+		M.TakePhoto(source, slot)
+	end)
 	return { ok = true, consume = 0 }
 end
 
@@ -974,6 +1016,7 @@ function M.Init()
 	lastBreak, lastAnyBreak, breaks, feed = {}, nil, {}, {}
 	tips, tipSerial, photosBy, storiesBy = {}, 0, {}, {}
 	paidTo, minted, bought, shoots = {}, {}, {}, {}
+	selling = false
 end
 
 --- Publishes the server half of the media contract.
@@ -1022,7 +1065,11 @@ function M.Start()
 		if player == nil or player <= 0 then return end
 		local verb = type(payload) == 'table' and VERBS[payload.verb] or nil
 		if verb == nil then return answer(player, false, 'invalid') end
-		CreateThread(function() verb(player, payload) end)
+		local loaded = playerOf(player)
+		CreateThread(function()
+			if loaded == nil or playerOf(player) ~= loaded then return end
+			verb(player, payload)
+		end)
 	end)
 	AddEventHandler(OPX.Host.PLAYER_DISCONNECTED, function(playerId)
 		local player = math.tointeger(tonumber(playerId))

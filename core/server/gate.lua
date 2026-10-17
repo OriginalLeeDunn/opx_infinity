@@ -387,7 +387,7 @@ function OPX.Gate.Watch(source, timeoutMs, onGiveUp)
 			Wait(WATCH_TICK_MS)
 
 			local live = OPX.Sessions[source]
-			if not live or live.userId ~= userId or live.released then return end
+			if live ~= session or live.released then return end
 
 			-- The whole decision runs under `pcall`: a raise here would leave this
 			-- player holding the gate for the rest of the session.

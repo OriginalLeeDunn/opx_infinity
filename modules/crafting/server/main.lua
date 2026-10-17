@@ -33,6 +33,7 @@ local benches = {}
 -- Player id -> { started, count }, the request window. Per PLAYER and not per
 -- bench: a client looping on the door costs the same whichever key it names.
 local windows = {}
+local ordering = {}
 
 -- Set by `Stop`, so a thread that wakes during the teardown does not write.
 local stopped = false
@@ -368,7 +369,7 @@ end
 -- @param benchKey any
 -- @param recipeKey any
 -- @return Result { id, seconds }
-local function order(player, benchKey, recipeKey)
+local function orderOnce(player, benchKey, recipeKey)
 	local bench = benches[Recipes.Key(benchKey) or '']
 	if bench == nil then return Result.Err(Refusal.NO_SUCH_BENCH) end
 
@@ -407,8 +408,19 @@ local function order(player, benchKey, recipeKey)
 	-- and what is taken below is taken from whoever it holds.
 	if citizenOf(player) ~= citizenId then return Result.Err(Refusal.NO_CHARACTER) end
 
+	local have = carried(player, bench)
+	-- Both the shelf and bag reads can yield. Decide again at the point where
+	-- materials are taken, including identity, access and the physical bench.
+	if citizenOf(player) ~= citizenId then return Result.Err(Refusal.NO_CHARACTER) end
+	if OPX.Life.Down(player) then return Result.Err(Refusal.DOWNED) end
+	allowed, refusal = gateOk(bench, player, nil)
+	if not allowed then return Result.Err(refusal) end
+	allowed, refusal = gateOk(bench, player, recipe.key)
+	if not allowed then return Result.Err(refusal) end
+	near, tooFar = reachOk(player, bench)
+	if not near then return Result.Err(tooFar) end
 	local money = purse(player)
-	local may, why = Recipes.Allowed(recipe, carried(player, bench),
+	local may, why = Recipes.Allowed(recipe, have,
 		money[recipe.money or ''], shelf.value.cooking, bench.queue)
 	if not may then return Result.Err(why) end
 
@@ -416,7 +428,7 @@ local function order(player, benchKey, recipeKey)
 	local taken = {}
 	for index = 1, #recipe.inputs do
 		local input = recipe.inputs[index]
-		local removed = inventory.RemoveItem(player, input.item, input.count)
+		local removed = inventory.RemoveItem(citizenId, input.item, input.count)
 		if type(removed) ~= 'table' or not removed.ok then
 			restore(citizenId, taken)
 			return Result.Err(Refusal.SHORT)
@@ -424,6 +436,10 @@ local function order(player, benchKey, recipeKey)
 		taken[#taken + 1] = input
 	end
 
+	if citizenOf(player) ~= citizenId then
+		restore(citizenId, taken)
+		return Result.Err(Refusal.NO_CHARACTER)
+	end
 	if recipe.price > 0 then
 		local paid, refusalKey = M.Contracts.character.RemoveMoney(player, recipe.money,
 			recipe.price, ('crafting:%s'):format(bench.key))
@@ -486,6 +502,22 @@ local function order(player, benchKey, recipeKey)
 		price = recipe.price, money = recipe.money, order = placed.value })
 
 	return Result.Ok({ id = placed.value, seconds = seconds })
+end
+
+--- Holds a character's bench queue until its tail and new deadline are committed.
+local function order(player, benchKey, recipeKey)
+	local citizenId, key = citizenOf(player), Recipes.Key(benchKey)
+	if citizenId == nil or key == nil then return orderOnce(player, benchKey, recipeKey) end
+	local identity = citizenId .. '\0' .. key
+	if ordering[identity] then return Result.Err(Refusal.TOO_FAST) end
+	ordering[identity] = true
+	local called, result = pcall(orderOnce, player, benchKey, recipeKey)
+	ordering[identity] = nil
+	if not called then
+		Open77.log.error(('[crafting] an order at %s raised: %s'):format(key, tostring(result)))
+		return Result.Err(Refusal.UNAVAILABLE)
+	end
+	return result
 end
 
 --- Hands over one finished order. Yields.
@@ -602,6 +634,7 @@ end
 -- @author dop42
 function M.Init()
 	benches, windows, stopped = {}, {}, false
+	ordering = {}
 	-- Filled in `Start`: `Init` runs before any contract is published, so a read
 	-- here would answer nil for the life of the resource.
 	M.Contracts = {}

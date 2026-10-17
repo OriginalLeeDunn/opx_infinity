@@ -45,6 +45,8 @@ local npcs = {}
 local holding = {}
 -- One posting at a time per poster citizen id.
 local posting = {}
+-- Concurrent accepts of different gigs share the merc's active-gig cap.
+local accepting = {}
 -- Per-player request windows.
 local windows = {}
 -- District fixer -> the ms it last posted.
@@ -604,7 +606,8 @@ local function create(spec, who)
 			local data = loaded.PlayerData
 			if data ~= nil and data.citizenId ~= record.posterCid and passes(data, Access.TAKERS)
 				and credOf(data.source).cred >= record.minCred then
-				tell(data.source, 'contracts.incoming', { fixer = record.posterName or '?',
+				tell(data.source, 'contracts.incoming', { fixer = record.posterKind == M.Poster.PLAYER
+					and record.posterCid or (record.posterName or '?'),
 					title = record.title, amount = money((Access.Split(record.reward, record.cutPct))) },
 					'info')
 			end
@@ -681,6 +684,8 @@ local function accept(player, id)
 	if contract.deadlineAt <= wall() then return false, 'not_available' end
 	-- A gig somebody else is in the middle of taking is, to this merc, taken.
 	if claims[id] then return false, 'taken' end
+	if accepting[citizenId] then return false, 'already_working' end
+	accepting[citizenId] = true
 
 	local ok, refused = withClaim(id, function()
 		local handlers = types[contract.type]
@@ -688,6 +693,7 @@ local function accept(player, id)
 			local can, why2 = handlers.canStart(contract, player)
 			if not can then return false, why2 or 'cannot_start' end
 		end
+		if dataOf(player) ~= data then return false, 'no_character' end
 		local boardDeadline = contract.deadlineAt
 		local moved, why2 = move(contract, State.ACCEPTED, { mercCid = citizenId,
 			deadlineAt = wall() + Access.ACCEPT_TTL_S }, citizenId)
@@ -703,6 +709,7 @@ local function accept(player, id)
 		move(contract, State.IN_PROGRESS, nil, citizenId)
 		return true
 	end)
+	accepting[citizenId] = nil
 	if not ok then return false, refused end
 	Open77.log.info(('[contracts] gig %d taken by %s'):format(id, safe(citizenId)))
 	OPX.Publish(M.Event.ON_ACCEPTED, player, busPayload(contract))
@@ -710,7 +717,7 @@ local function accept(player, id)
 		minutes = math.max(1, Access.ACCEPT_TTL_S // 60) }, 'success')
 	if contract.posterKind == M.Poster.PLAYER then
 		tellCitizen(contract.posterCid, 'contracts.taken', { title = contract.title,
-			merc = nameOf(data) }, 'info')
+				merc = citizenId }, 'info')
 	end
 	sendActive(player)
 	return true
@@ -759,7 +766,7 @@ local function deliver(player, npcKey)
 		-- THE PARCEL COMES OUT FIRST, and the proof is written only for one that
 		-- did: the item is the evidence, and a second press finds none.
 		local inventory = inventoryApi()
-		local taken = inventory ~= nil and inventory.RemoveWhere(player, Access.ITEM,
+		local taken = inventory ~= nil and inventory.RemoveWhere(citizenId, Access.ITEM,
 			{ contract = contract.id }) or nil
 		if type(taken) ~= 'table' or taken.ok ~= true or (tonumber(taken.value) or 0) < 1 then
 			return false, 'no_package'
@@ -983,7 +990,7 @@ types.deliver_item = {
 	start = function(contract, player)
 		local inventory = inventoryApi()
 		if inventory == nil then return false, 'no_inventory' end
-		local added = inventory.AddItem(player, Access.ITEM, 1, { contract = contract.id,
+		local added = inventory.AddItem(contract.mercCid, Access.ITEM, 1, { contract = contract.id,
 			label = contract.title })
 		if type(added) ~= 'table' or added.ok ~= true then return false, 'no_room' end
 		return true
@@ -1356,8 +1363,8 @@ end
 --- Declares the tables and the tunables. Never yields.
 -- @author dop42
 function M.Init()
-	contracts, claims, npcs, holding, posting, windows, fixerClock, retried = {}, {}, {}, {}, {},
-		{}, {}, {}
+	contracts, claims, npcs, holding, posting, windows, fixerClock, retried, accepting = {}, {}, {}, {}, {},
+		{}, {}, {}, {}
 	OPX.Schema.Add(M.Storage.SCHEMA)
 	OPX.Tune.Declare{
 		CONTRACT_FIXER_CUT = { value = Access.CUT_DEFAULT, type = 'integer', min = 0, max = 100,
@@ -1444,9 +1451,11 @@ function M.Start()
 			local value = form[key]
 			if type(value) == 'string' or type(value) == 'number' then copy[key] = value end
 		end
+		local data = dataOf(player)
 		CreateThread(function()
+			if data == nil or dataOf(player) ~= data then return end
 			local ok, why = postFromPlayer(player, copy)
-			if not ok then refuse(player, why) end
+			if not ok and dataOf(player) == data then refuse(player, why) end
 		end)
 	end)
 
@@ -1458,9 +1467,11 @@ function M.Start()
 		local verb = VERBS[payload.verb]
 		local id = math.tointeger(tonumber(payload.id)) or -1
 		if verb == nil then return refuse(player, 'bad_request') end
+		local data = dataOf(player)
 		CreateThread(function()
+			if data == nil or dataOf(player) ~= data then return end
 			local ok, why = verb(player, id)
-			if not ok then refuse(player, why) end
+			if not ok and dataOf(player) == data then refuse(player, why) end
 		end)
 	end)
 
@@ -1472,14 +1483,16 @@ function M.Start()
 		if type(key) ~= 'string' or #key > 24 or not key:match('^%d+$') then
 			return refuse(player, 'wrong_dropoff')
 		end
+		local data = dataOf(player)
 		CreateThread(function()
+			if data == nil or dataOf(player) ~= data then return end
 			local ok, why = deliver(player, key)
-			if not ok then refuse(player, why) end
+			if not ok and dataOf(player) == data then refuse(player, why) end
 		end)
 	end)
 
-	AddEventHandler(OPX.Host.PLAYER_DISCONNECTED, function()
-		local player = tonumber(source) or 0
+	AddEventHandler(OPX.Host.PLAYER_DISCONNECTED, function(rawPlayer)
+		local player = tonumber(rawPlayer) or 0
 		windows[player] = nil
 	end)
 

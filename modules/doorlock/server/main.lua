@@ -400,6 +400,14 @@ local function toggle(player, payload)
 	end
 	local door = doors[Access.Id(payload.id) or 0]
 	if door == nil then return answer(player, false, 'unknown_door') end
+	local userId, session = OPX.UserIdOf(player), OPX.Sessions[player]
+	local function recheck()
+		if OPX.UserIdOf(player) ~= userId or OPX.Sessions[player] ~= session then return 'not_allowed' end
+		if doors[door.id] ~= door then return 'unknown_door' end
+		local far = outOfReach(player, door)
+		if far ~= nil then return far end
+		if isDown(player) then return 'player_down' end
+	end
 	local far = outOfReach(player, door)
 	if far ~= nil then return answer(player, false, far, door) end
 	if isDown(player) then return answer(player, false, 'player_down', door) end
@@ -411,6 +419,10 @@ local function toggle(player, payload)
 	local ok, how, item, needsCode = Access.Evaluate(door, subjectOf(player, door), OPX.Now())
 	if not ok then return answer(player, false, how, door, { state = wanted }) end
 	if vetoed(player, door, false, how) then return answer(player, false, 'not_allowed', door) end
+	-- Inventory reads and veto hooks may yield. The old position and slot are
+	-- no longer proof that this request can turn the current door.
+	local changed = recheck()
+	if changed ~= nil then return answer(player, false, changed, door) end
 
 	-- ox asks for the code with `lib.callback.await('ox_doorlock:inputPassCode')`
 	-- inside the same request. A server here cannot wait on a client mid-event,
@@ -437,6 +449,8 @@ local function toggle(player, payload)
 	if item ~= nil and item.remove and not spendItem(player, item) then
 		return answer(player, false, 'no_key', door)
 	end
+	changed = recheck()
+	if changed ~= nil then return answer(player, false, changed, door) end
 
 	setState(door, wanted, player, player, item)
 	answer(player, true, wanted == 1 and 'locked' or 'unlocked', door, { state = wanted, how = how })

@@ -4479,11 +4479,80 @@ do
 			select(1, pcall(Scheduler.Every, 'str', 'soon', noop)) == false)
 		check('and so is a negative one',
 			select(1, pcall(Scheduler.Every, 'neg', -1, noop)) == false)
+		for _, interval in ipairs({ 0 / 0, math.huge, -math.huge }) do
+			check('a non-finite client interval is refused',
+				select(1, pcall(Scheduler.Every, 'nonfinite', interval, noop)) == false)
+		end
+		check('a numeric string interval stays legal',
+			select(1, pcall(Scheduler.Every, 'numeric', '250', noop)) == true)
 		check('zero stays legal, because a caller may mean every pass',
 			select(1, pcall(Scheduler.Every, 'zero', 0, noop)) == true)
 
 		Scheduler.Stop()
 	end
+end
+
+section('a page that mounted before the downed module started still gets its state')
+do
+	local env, control = Host.Environment('client')
+	local failure = nil
+	for _, file in ipairs(Host.LoadOrder('open77.lua', 'client')) do
+		local chunk, why = loadfile(file, 't', env)
+		if not chunk then failure = why break end
+		local ok, raised = pcall(chunk)
+		if not ok then failure = raised break end
+	end
+	check('the client loads', failure == nil, failure)
+	if failure == nil then
+		control.Fire('onClientResourceStart', 'opx_infinity')
+		local frames = 0
+		while #control.pages == 0 and frames < 500 do
+			control.Pump(1)
+			frames = frames + 1
+		end
+		local page = control.pages[1]
+		check('the page exists before the downed module has started', page ~= nil
+			and not env.OPX.Modules.IsRunning('downed'), tostring(page))
+		if page ~= nil then
+			-- The warm cache: the page is up and the hologram reports ready now.
+			control.PageEmit(page, 'opx:ready', {})
+			control.PageEmit(page, 'opx:downed:ready', {})
+			control.Pump(240)
+			check('and it has started since', env.OPX.Modules.IsRunning('downed'))
+			local holo = nil
+			for _, one in ipairs(page.sent) do
+				if one.channel == 'opx:downed:view' and type(one.payload) == 'table'
+					and one.payload.kind == 'config' then
+					holo = one.payload
+					break
+				end
+			end
+			check('and the death screen catalogue got its state from the replayed ready', holo ~= nil)
+		end
+	end
+end
+
+
+section('a destroyed surface ignores late page callbacks')
+do
+	local callbacks = {}
+	local page = { on = function(_, channel, callback) callbacks[channel] = callback end,
+		destroy = function() end }
+	local env = { OPX = {}, WebUI = { create = function() return page end },
+		Open77 = { log = { info = function() end, error = function() end, warn = function() end } } }
+	setmetatable(env, { __index = _G })
+	assert(loadfile('lib/client/surface.lua', 't', env))()
+	local surface = env.OPX.Surface.Create({ id = 'audit', entry = 'web/index.html' })
+	local invoked = 0
+	env.OPX.Surface.On(surface, 'action', function() invoked = invoked + 1 end)
+	callbacks['audit:action']({})
+	check('a live surface dispatches page callbacks', invoked == 1)
+	env.OPX.Surface.Destroy(surface)
+	callbacks['audit:action']({})
+	callbacks['audit:ready']({})
+	check('a destroyed surface cannot dispatch or become ready again', invoked == 1 and not surface.ready)
+	check('destroy releases callbacks and latched messages',
+		next(surface.handlers) == nil and next(surface.latched) == nil)
 end
 
 -- ── core and lib: the audit of 2026-10 ───────────────────────────────────────
@@ -6926,6 +6995,12 @@ do
 			'citizen-garage', inventoryModule.Options.BAG_SLOTS, inventoryModule.Options.BAG_MAX_WEIGHT)
 		garageBag.transient = nil
 		inventoryModule.Players.Attach(src)
+		local garageKeys = OPX.Api.Get('vehiclekeys')
+		local ensureKey = garageKeys.Ensure
+		garageKeys.Ensure = function(target, ...)
+			check('a garage cuts keys for its original citizen after spawning', type(target) == 'string' and target ~= '')
+			return ensureKey(target, ...)
+		end
 		local function keysTo(plate)
 			return inventoryModule.Containers.CountWhere(garageBag, 'vehicle_key', { plate = plate })
 		end
@@ -11924,6 +11999,8 @@ do
 		env.Open77.players.all = function() return {} end
 		answered = rowsFrom(storage.FIND_PAGE + 1)
 		local before = #control.clientEvents
+		control.accounts[5] = 'staff-account'
+		env.OPX.EnsureSession(5)
 		env.source = 5
 		control.netEvents[admin.Event.REFRESH]('found', { mode = 'recent' })
 		control.Pump(10)
@@ -12885,7 +12962,7 @@ do
 		control.Admit(42, 'vk-account')
 		env.OPX.EnsureSession(41)
 		env.OPX.EnsureSession(42)
-		character.Players[42] = { PlayerData = { source = 42, citizenId = 'VKW-4A7C',
+		character.Players[42] = { PlayerData = { source = 42, citizenId = 'VKW-4A7C', userId = 'vk-account',
 			charInfo = { firstName = 'Vincent', lastName = 'Kowalski' } } }
 		control.acl.granted['41'] = { ['command.opx.admin.self.tags'] = true }
 
@@ -17045,7 +17122,7 @@ do
 		inventory.Storage.Write = function() return true end
 
 		local function playerOf(source, citizenId)
-			return { PlayerData = { citizenId = citizenId, source = source } }
+			return { PlayerData = { citizenId = citizenId, source = source, userId = 'user-' .. source } }
 		end
 		local people = { [1] = playerOf(1, 'CIT-0001'), [2] = playerOf(2, 'CIT-0002') }
 		local character = {
@@ -17060,6 +17137,13 @@ do
 		}
 		inventory.Contracts.character = character
 		admin.Contracts.character = character
+		local roster = OPX.Modules.Get('character')
+		for id, person in pairs(people) do
+			control.Admit(id, person.PlayerData.userId)
+			OPX.EnsureSession(id)
+			roster.Players[id] = person
+			roster.Registry.byCitizenId[person.PlayerData.citizenId] = id
+		end
 
 		env.CreateThread(function() inventory.Players.Attach(1) end)
 		env.CreateThread(function() inventory.Players.Attach(2) end)
@@ -17972,6 +18056,42 @@ do
 				and character.GetMoney(BOB, 'EDDIES') == 0)
 		check('and the economy is still the same size', total() == START, tostring(total()))
 
+		control.Advance(3100)
+		Actions.Give(ALICE, BOB, slot, 1)
+		for index = #control.clientEvents, 1, -1 do
+			local sent = control.clientEvents[index]
+			if sent.name == inventory.Event.GIVE_OFFER and sent.source == BOB then
+				offerToken = sent[1]; break
+			end
+		end
+		local readBag = Players.Bag
+		Players.Bag = function(player)
+			local bag = readBag(player)
+			if player == BOB then control.Stand(BOB, 900, 900, 0) end
+			return bag
+		end
+		took, tookWhy = Actions.AnswerGive(BOB, offerToken, true)
+		Players.Bag = readBag
+		check('a give rechecks reach after loading both bags', not took and tookWhy == 'too_far'
+			and Currency.CountIn(aliceBag) == 180 and Currency.CountIn(bobBag) == 120)
+		control.Stand(BOB, 100.5, 200, 30)
+
+		local pile = World.CreateDrop(ALICE, Players.Citizen(ALICE), World.Position(ALICE), 'bandage')
+		Containers.Add(pile, 'bandage', 1)
+		Players.Bag = function(player)
+			local bag = readBag(player)
+			control.Stand(ALICE, 900, 900, 0)
+			return bag
+		end
+		local taken, takeWhy = Actions.TakeDrop(ALICE, pile.id)
+		Players.Bag = readBag
+		check('taking a pile rechecks reach after loading the bag', not taken and takeWhy == 'too_far'
+			and Containers.CountIn(pile, 'bandage') == 1)
+		pile.items = {}
+		World.RemoveDrop(pile.id)
+		World.Forget(ALICE)
+		control.Stand(ALICE, 100, 200, 30)
+
 		-- ── the burn ──────────────────────────────────────────────────────────
 		local bobSlot = nil
 		for index, stack in pairs(bobBag.items) do
@@ -18152,6 +18272,32 @@ do
 			check('while an ordinary item still goes in the boot',
 				(Containers.Move(aliceBag, gauze, boot9, nil, nil)) == true)
 
+			local bootSlot = next(boot9.items)
+			local swapped, swapWhy = Containers.Move(boot9, bootSlot, aliceBag, notes, nil)
+			check('the reverse half of a swap cannot leave eddies in transient storage either',
+				not swapped and swapWhy == 'no_drop' and total() == before
+					and aliceBag.items[notes].name == 'eddies' and boot9.items[bootSlot].name == 'bandage')
+
+			-- The target stack leaves its bag too: its weapon guard gets a vote.
+			Containers.Add(aliceBag, 'scrap_metal', 1)
+			local metal
+			for index, stack in pairs(aliceBag.items) do
+				if stack.name == 'scrap_metal' then metal = index end
+			end
+			local beforeLeave, reverseChecked = inventory.Weapons.BeforeLeave, false
+			inventory.Weapons.BeforeLeave = function(container, entry)
+				if container == aliceBag and entry == aliceBag.items[metal] then
+					reverseChecked = true
+					return 'holstering'
+				end
+				return nil
+			end
+			swapped, swapWhy = Containers.Move(boot9, bootSlot, aliceBag, metal, nil)
+			inventory.Weapons.BeforeLeave = beforeLeave
+			check('a swap also waits for the returning stack weapon snapshot',
+				not swapped and swapWhy == 'holstering' and reverseChecked
+					and aliceBag.items[metal].name == 'scrap_metal')
+
 			-- ── and then the car is gone ───────────────────────────────────────
 			-- The sweep is the second half: it is what actually destroys the
 			-- container, and the money must not be in it when it does.
@@ -18275,6 +18421,62 @@ end
 -- therefore always two things at once: that the wire answer said no, AND that
 -- `control.trips.calls` is still empty -- a refusal that had already moved the
 -- player is not a refusal.
+section('inventory: a caller removes only the slot contents it previously read')
+do
+	local env, _, why = boot('server')
+	check('the server boots for checked slot removal', why == nil, why)
+	if why == nil then
+		local inventory = env.OPX.Modules.Get('inventory')
+		local bag = inventory.Containers.Transient('stash', 'tests:checked-slot', 4, 1000)
+		local readBag = inventory.Players.Bag
+		inventory.Players.Bag = function() return bag end
+		bag.items[1] = { name = 'bandage', count = 2, metadata = { serial = 'new' } }
+		local api = env.OPX.Api.Get('inventory')
+		local old = api.RemoveFromSlot(1, 1, 1, { name = 'bandage', metadata = { serial = 'old' } })
+		check('a replacement with different metadata is preserved', not old.ok and old.error == 'slot_changed'
+			and bag.items[1].count == 2)
+		local different = api.RemoveFromSlot(1, 1, 1, { name = 'water', metadata = { serial = 'new' } })
+		check('a different item in the same slot is preserved', not different.ok and different.error == 'slot_changed')
+		local same = api.RemoveFromSlot(1, 1, 1, { name = 'bandage', metadata = { serial = 'new' } })
+		check('the priced contents can still be removed once', same.ok and bag.items[1].count == 1)
+		inventory.Players.Bag = readBag
+		inventory.Containers.Discard(bag.id)
+	end
+end
+
+section('inventory: a slow in-flight save cannot let an unload discard the bag')
+do
+	local env, control, why = boot('server')
+	check('the server boots for the save timeout', why == nil, why)
+	if why == nil then
+		local inventory = env.OPX.Modules.Get('inventory')
+		local bag = inventory.Containers.Transient('stash', 'tests:slow-save', 4, 1000)
+		bag.transient = nil
+		inventory.Containers.Add(bag, 'bandage', 1)
+		local save = inventory.Storage.Save
+		local answered = false
+		inventory.Storage.Save = function()
+			local finishAt = env.OPX.Now() + 60000
+			while env.OPX.Now() < finishAt do env.Wait(50) end
+			answered = true
+			return env.OPX.Result.Ok(true)
+		end
+		env.CreateThread(function() inventory.Storage.Write({ bag }) end)
+		control.Pump(1)
+		env.CreateThread(function() inventory.Containers.Unload(bag.id) end)
+		control.Pump(1)
+		control.Advance(36000)
+		control.Pump(2)
+		check('an unload timing out behind SQL preserves the unsaved container',
+			not answered and inventory.Containers.Get(bag.id) == bag and bag.unloadWhenClean == true)
+		control.Advance(25000)
+		control.Pump(5)
+		check('the eventual successful save can finish the deferred unload',
+			answered and inventory.Containers.Get(bag.id) == nil)
+		inventory.Storage.Save = save
+	end
+end
+
 section('teleports: the destination and the gate are the server\'s, and pure')
 do
 	-- WHERE THE PLAYER IS STANDING, movable between requests. The stub's fixed
@@ -20113,6 +20315,35 @@ do
 			('%d / %d'):format(bag.scrap_metal, purse))
 		crafting.Storage.Placed = realPlaced
 
+		-- A slow shelf/bag read must not authorize the world as it stood before.
+		local identity, gate = 'ABC12345', true
+		crafting.Contracts.character.GetPlayer = function()
+			return { PlayerData = { citizenId = identity } }
+		end
+		contract.RegisterBench('tests:stale', { owner = 'tests',
+			position = { x = 10, y = 0, z = 0 }, reach = 2,
+			canUse = function() return gate end,
+			recipes = { { KEY = 'rounds', OUTPUT = 'ammo_handgun', SECONDS = 60, PRICE = 25,
+				MONEY = 'EDDIES', INPUTS = { scrap_metal = 2 } } } })
+		local countItem = crafting.Contracts.inventory.GetItemCount
+		for _, change in ipairs({ 'identity', 'position', 'gate' }) do
+			identity, gate = 'ABC12345', true
+			bag.scrap_metal, purse = 2, 100
+			control.Stand(1, 10, 0, 0)
+			crafting.Contracts.inventory.GetItemCount = function(...)
+				local result = countItem(...)
+				if change == 'identity' then identity = 'OTHER001'
+				elseif change == 'position' then control.Stand(1, 100, 0, 0)
+				else gate = false end
+				return result
+			end
+			answer = nil
+			env.CreateThread(function() answer = contract.Order(1, 'tests:stale', 'rounds') end)
+			settle(control, function() return answer ~= nil end, 20)
+			check('an order rechecks ' .. change .. ' after reading the bag',
+				answer ~= nil and not answer.ok and bag.scrap_metal == 2 and purse == 100)
+		end
+		crafting.Contracts.inventory.GetItemCount = countItem
 		crafting.Storage.Shelf, crafting.Storage.Place = realShelf, realPlace
 		crafting.Contracts.inventory, crafting.Contracts.character = realInventory, realCharacter
 		contract.UnregisterBenches('tests')
@@ -21994,6 +22225,22 @@ do
 			#offline == 1 and tostring(offline[1].citizenId) or #offline)
 		check('and pays nothing to the character now on the connection', #paid == paidBefore,
 			#paid - paidBefore)
+		holder = 'SELLER01'
+		trunks['veh-1'].docks = 2
+		wallet.AddMoneyOffline = function() return { ok = false, error = 'money.vetoed' } end
+		inventory.RemoveFromTrunk = function(...)
+			holder = 'SOMEBODY'
+			lockedTrunks['veh-1'] = true
+			return realRemove(...)
+		end
+		at = at + 10000
+		fire(2, M.Event.BEGIN, Step.DELIVER, SELLER)
+		at = at + Access.DELIVER_MS + 1
+		fire(2, M.Event.FINISH)
+		inventory.RemoveFromTrunk = realRemove
+		check('an unpaid switched seller gets the crates back in their own bag',
+			(bags.SELLER01 or {}).docks == 2 and (bags.SOMEBODY or {}).docks == nil)
+		lockedTrunks['veh-1'], bags.SELLER01 = nil, nil
 		wallet = { AddMoney = function(player, kind, amount, reason)
 			paid[#paid + 1] = { player = player, kind = kind, amount = amount, reason = reason }
 			return true
@@ -23829,6 +24076,8 @@ do
 
 	if type(vehicles) == 'table' and type(character) == 'table' then
 		local DRIVER, PLATE, CITIZEN = 71, 'RACE001', 'citizen-racer'
+		control.Admit(DRIVER, 'account-71')
+		OPX.EnsureSession(DRIVER)
 		character.Players[DRIVER] = { PlayerData = {
 			citizenId = CITIZEN, source = DRIVER, userId = 'account-71' } }
 		-- THE INDEX AS WELL AS THE ROSTER, the way `character.RegisterPlayer`
@@ -23993,6 +24242,8 @@ do
 
 	if type(vehicles) == 'table' and type(character) == 'table' and type(savePass) == 'function' then
 		local DRIVER, PLATE, CITIZEN = 72, 'STORE01', 'citizen-storer'
+		control.Admit(DRIVER, 'account-72')
+		OPX.EnsureSession(DRIVER)
 		character.Players[DRIVER] = { PlayerData = {
 			citizenId = CITIZEN, source = DRIVER, userId = 'account-72' } }
 		character.Registry.byCitizenId[CITIZEN] = DRIVER
@@ -24118,6 +24369,8 @@ do
 	local character = OPX and OPX.Modules.Get('character') or nil
 	if type(vehicles) == 'table' and type(character) == 'table' then
 		local DRIVER, PLATE, CITIZEN = 73, 'STOP001', 'citizen-stopper'
+		control.Admit(DRIVER, 'account-73')
+		OPX.EnsureSession(DRIVER)
 		character.Players[DRIVER] = { PlayerData = {
 			citizenId = CITIZEN, source = DRIVER, userId = 'account-73' } }
 		character.Registry.byCitizenId[CITIZEN] = DRIVER
@@ -24769,8 +25022,13 @@ do
 		appearance.Storage.SaveClothing = function() writes = writes + 1; return { ok = true } end
 
 		local function load()
-			character.Players[PLAYER] = { PlayerData = {
-				citizenId = CITIZEN, source = PLAYER, clothing = STORED } }
+			-- Reset the same character's clothes; replacing the Player would model
+			-- a logout, which correctly retires the fitting-room grant.
+			local player = character.Players[PLAYER]
+			if player == nil then player = { PlayerData = {} }; character.Players[PLAYER] = player end
+			player.PlayerData.citizenId, player.PlayerData.source = CITIZEN, PLAYER
+			player.PlayerData.userId = control.accounts[PLAYER]
+			player.PlayerData.clothing = STORED
 		end
 
 		--- A record that is the stored one with `change` laid over its equipment.
@@ -24906,6 +25164,7 @@ do
 			local taken = 0
 			money.RemoveMoney = function() taken = taken + 1; return true end
 			control.Admit(PLAYER, 'account-shopper')
+			load()
 			control.Stand(PLAYER, -1180.0, 1550.0, 25.0)
 			env.source = PLAYER
 			control.netEvents[shops.Event.WEAR]({ shop = 'thrift_watson', look = 'corpo_black' })
@@ -25532,7 +25791,9 @@ do
 			{ 'modules/menu/client/main.lua', 'OPX.Modal.FocusResponder(FOCUS)' },
 			{ 'modules/panel/client/main.lua', 'OPX.Modal.FocusResponder(FOCUS)' },
 			{ 'modules/spawn/client/main.lua',
-				'if payload.focus ~= true or payload.owner ~= OWNER then' },
+				-- The release also covers a spawn surface already closed when
+				-- this delayed focus broadcast arrives.
+				'payload.focus ~= true or payload.owner ~= OWNER then' },
 		}
 		local unfixed = {}
 		for _, entry in ipairs(COPIES) do
@@ -28356,6 +28617,8 @@ do
 		local shops = env.OPX.Modules.Get('shops')
 		local GUESSER = 913
 		control.Admit(GUESSER, 'account-913')
+		env.OPX.Modules.Get('character').Players[GUESSER] = { PlayerData = { source = GUESSER,
+			userId = 'account-913', citizenId = 'guesser' } }
 		-- A code is redeemed only at a shop's counter with its room open (the
 		-- owner, 2026-10), so the guesser stands at one with the room up.
 		control.Stand(GUESSER, -1180.0, 1550.0, 25.0)
@@ -30356,7 +30619,7 @@ do
 		OPX.EnsureSession(33)
 		-- A loaded character: a connection with none does not speak to the server.
 		OPX.Modules.Get('character').Players[33] =
-			{ PlayerData = { source = 33, citizenId = 'CIT-TRIM-33' } }
+			{ PlayerData = { source = 33, userId = 'account-trimmed', citizenId = 'CIT-TRIM-33' } }
 		local before = #control.clientEvents
 		local errors = #control.log.error
 		env.source = 33
@@ -30447,7 +30710,7 @@ do
 
 			control.Admit(32, 'account-id-32-durable')
 			OPX.EnsureSession(32)
-			character.Players[32] = { PlayerData = { source = 32, citizenId = 'VKW-4A7C',
+			character.Players[32] = { PlayerData = { source = 32, userId = 'account-id-32-durable', citizenId = 'VKW-4A7C',
 				charInfo = { firstName = 'Vincent', lastName = 'Kowalski' } } }
 			env.source = 32
 			control.netEvents[said]('hello again')
@@ -33852,6 +34115,9 @@ local function creatorBridge(state)
 	return Host.Database({
 		scalar = function(sql)
 			if sql:find('JSON_EXTRACT', 1, true) then return state.balance end
+			if sql:find('COUNT(*)', 1, true) and sql:find('opx77_characters', 1, true) then
+				return state.missing and 0 or 1
+			end
 			return 1
 		end,
 		update = function(sql, params)
@@ -36283,7 +36549,13 @@ do
 			rows[index] = { name = 'w' .. index, category = 'weapon', weapon = true,
 				label = (index % 2 == 0 and 'Katana ' or 'Pistol ') .. index }
 		end
-		control.netEvents[admin.Event.ITEMS]({ rows = rows, offset = 0, total = 250, done = true })
+		-- Match the server's twenty-row events while keeping the whole 250-row fixture.
+		for offset = 0, #rows - 1, 20 do
+			local chunk = {}
+			for index = offset + 1, math.min(offset + 20, #rows) do chunk[#chunk + 1] = rows[index] end
+			control.netEvents[admin.Event.ITEMS]({ rows = chunk, offset = offset, total = #rows,
+				done = offset + #chunk >= #rows })
+		end
 		admin.Menu.OpenAt('weaponList', { t = 'me' })
 		control.Pump(10)
 		check('the search form opens over the weapon list', admin.Forms.Open('search', nil) == true)
@@ -36625,7 +36897,13 @@ do
 		-- ONE EVENT OF 600 ROWS, which no server sends (it pages them 20 at a time):
 		-- a fixture shortcut, and the reason `OPX_BUDGET_METER` names this handler.
 		-- What a real page costs is held by "the staff lists are paged by the server".
-		control.netEvents[admin.Event.ITEMS]({ rows = rows, offset = 0, total = 600, done = true })
+		-- Match the server's twenty-row events while keeping the whole 600-row fixture.
+		for offset = 0, #rows - 1, 20 do
+			local chunk = {}
+			for index = offset + 1, math.min(offset + 20, #rows) do chunk[#chunk + 1] = rows[index] end
+			control.netEvents[admin.Event.ITEMS]({ rows = chunk, offset = offset, total = #rows,
+				done = offset + #chunk >= #rows })
+		end
 		local realWait, fromBuilder = env.Wait, 0
 		env.Wait = function(ms)
 			local caller = debug.getinfo(2, 'S')
@@ -36675,7 +36953,13 @@ do
 		end
 		-- One event of 150 players, a fixture shortcut as the catalogue above is:
 		-- the server pages the roster 20 a time (see that same section).
-		control.netEvents[admin.Event.ROSTER]({ rows = rows, offset = 0, total = 150, done = true })
+		-- Match the server's twenty-row events while keeping the whole 150-row fixture.
+		for offset = 0, #rows - 1, 20 do
+			local chunk = {}
+			for index = offset + 1, math.min(offset + 20, #rows) do chunk[#chunk + 1] = rows[index] end
+			control.netEvents[admin.Event.ROSTER]({ rows = chunk, offset = offset, total = #rows,
+				done = offset + #chunk >= #rows })
+		end
 		control.Pump(10)
 
 		-- Counts the dearest resume of every thread started while `fn` runs.
@@ -41928,6 +42212,31 @@ do
 			if car.id == id then car.position.x = 102.0 end
 		end
 
+		-- Identical coordinates in another instance are no longer at this pump.
+		for _, moveVehicle in ipairs({ false, true }) do
+			bagOf(env, id):set('fuel', 30)
+			control.Advance(1000)
+			local started = fuel.Refuel(P, { method = 'EDDIES' })
+			check('the instance test starts a pour', started)
+			if moveVehicle then
+				for _, car in ipairs(control.vehicles.world) do
+					if car.id == id then car.bucket = 7 end
+				end
+			else
+				control.Bucket(P, 7)
+			end
+			control.Advance(500)
+			control.Pump(3)
+			answer = fuelAnswer(control, ANSWER, P)
+			local expected = moveVehicle and 'vehicle_moved' or 'moved_away'
+			check('changing the ' .. (moveVehicle and 'vehicle' or 'player') .. ' instance stops the pour',
+				not Tanks.Held(id) and (answer.stopped == expected or answer.code == expected))
+			control.Bucket(P, 0)
+			for _, car in ipairs(control.vehicles.world) do
+				if car.id == id then car.bucket = 0 end
+			end
+		end
+
 		-- Not enough money.
 		money.EDDIES = 0
 		bagOf(env, id):set('fuel', 30)
@@ -42013,6 +42322,14 @@ do
 		check('a bag with no room is refused before anything is charged (ox\'s petrolcan_cannot_carry)',
 			not ok and code == 'cannot_carry' and money.EDDIES == 400, code)
 		fake.carry = true
+
+		control.Advance(1000)
+		fuel.CanBuy(P, { method = 'EDDIES' })
+		control.Bucket(P, 7)
+		finish(5000, 'finished')
+		check('a purchase completed in another instance gives and costs nothing',
+			money.EDDIES == 400 and #fake.added == 1)
+		control.Bucket(P, 0)
 
 		-- Pour it, away from any pump.
 		control.Stand(P, 300.0, 0.0, 0.0)
@@ -42698,8 +43015,13 @@ do
 		control.Admit(SHOOTER, 'user-shooter')
 		env.Open77.ready.isReady = function() return true end
 		local character = OPX.Api.Get('character')
+		local bodies = {}
 		character.GetPlayer = function(id)
-			return { PlayerData = { citizenId = 'CIT-W-' .. tostring(id) } }
+			if bodies[id] == nil then
+				bodies[id] = { PlayerData = { citizenId = 'CIT-W-' .. tostring(id),
+					userId = control.accounts[id], source = id } }
+			end
+			return bodies[id]
 		end
 		env.Open77.players.name = function(id) return 'Player ' .. tostring(id) end
 		local health, frozen, regen, kills, teleports, poses = { [VICTIM] = 40 }, {}, {}, {}, {}, {}
@@ -42922,6 +43244,15 @@ end
 local function contractsInventory(OPX)
 	local fake = { bags = {}, registered = {}, room = true }
 	local realGet = OPX.Api.Get
+	local function citizen(target)
+		if type(target) == 'string' then return target end
+		local player = realGet('character').GetPlayer(target)
+		return player and player.PlayerData.citizenId or target
+	end
+	setmetatable(fake.bags, { __index = function(bags, target)
+		local key = citizen(target)
+		if key ~= target then return rawget(bags, key) end
+	end })
 	local api = {
 		RegisterItem = function(name, definition, owner)
 			fake.registered[#fake.registered + 1] = { name = name, definition = definition, owner = owner }
@@ -42929,15 +43260,17 @@ local function contractsInventory(OPX)
 		end,
 		CanCarry = function() return { ok = true, value = fake.room } end,
 		AddItem = function(target, name, count, metadata)
+			target = citizen(target)
 			fake.bags[target] = fake.bags[target] or {}
 			table.insert(fake.bags[target], { name = name, count = count, metadata = metadata })
 			return { ok = true }
 		end,
 		RemoveWhere = function(target, name, match)
+			target = citizen(target)
 			local taken = 0
 			for key, bag in pairs(fake.bags) do
-				-- A citizen id reaches every bag here; the gig tag tells them apart.
-				if key == target or type(target) == 'string' then
+				-- Stable citizen targets name exactly one character's bag.
+				if key == target then
 					for index = #bag, 1, -1 do
 						local item = bag[index]
 						local fits = item.name == name
@@ -44756,7 +45089,8 @@ do
 		local netrunner = OPX.Modules.Get('netrunner')
 		local progress = OPX.Modules.Get('progress')
 		local P, COP = 71, 72
-		local runner = standCharacter(env, control, P, 'NETR0001', { EDDIES = 0, BANK = 0 })
+		local RUNNER_CID = OPX.CitizenId.Build({ 2, 3, 4, 5, 6, 7 })
+		local runner = standCharacter(env, control, P, RUNNER_CID, { EDDIES = 0, BANK = 0 })
 		runner.PlayerData.job = { name = 'unemployed', onDuty = true, grade = { level = 0 } }
 		runner.PlayerData.jobs = { unemployed = 0 }
 		local meta = {}
@@ -44870,6 +45204,12 @@ do
 		check('a step "finished" early is refused by the server\'s clock, and the breach with it',
 			api().Session(P) == nil)
 
+		jack()
+		runner.PlayerData.citizenId = OPX.CitizenId.Build({ 3, 4, 5, 6, 7, 8 })
+		netrunner.Tick()
+		check('a run cannot continue on a connection that switched citizen', api().Session(P) == nil)
+		runner.PlayerData.citizenId = RUNNER_CID
+
 		-- A failed step raises the trace and runs again; then the breach lands.
 		netrunner.Roll = function() return 0.99 end
 		jack()
@@ -44900,7 +45240,7 @@ do
 		control.Advance(1000)
 		ok, code = netrunner.Daemon(P, { node = 'door_warehouse', daemon = 'door_unlock' })
 		check('door_unlock opens the door through the doorlock contract', ok and code == 'door_opened'
-			and doors.arasaka_waterfront_warehouse.state == 0 and turned[1].by == 'netrunner:NETR0001', code)
+			and doors.arasaka_waterfront_warehouse.state == 0 and turned[1].by == ('netrunner:' .. RUNNER_CID), code)
 		check('and costs its RAM off the deck\'s metadata', math.floor(slots[2].metadata.ram) == 3, slots[2].metadata.ram)
 		control.Advance(1000)
 		ok, code = netrunner.Daemon(P, { node = 'door_warehouse', daemon = 'door_unlock' })
@@ -44978,9 +45318,16 @@ do
 		control.Stand(P, 300.5, 0.0, 0.0)
 		control.Advance(1000)
 		local value = added[1].metadata.value
+		local removeShard, saleTarget = bag.RemoveFromSlot, nil
+		bag.RemoveFromSlot = function(target, ...)
+			saleTarget = target
+			return removeShard(target, ...)
+		end
 		ok, code = netrunner.Sell(P, { broker = 'kabuki_fence' })
 		check('a hot shard sells at half price at the Kabuki fence', ok and code == 'sold_hot'
 			and runner.PlayerData.money.EDDIES == math.floor(value * 1.0 * 0.5), runner.PlayerData.money.EDDIES)
+		check('the broker removes shards from the original citizen bag', saleTarget == RUNNER_CID)
+		bag.RemoveFromSlot = removeShard
 		local shardsLeft = 0
 		for _, stack in pairs(slots) do
 			if stack.name == 'data_shard' then shardsLeft = shardsLeft + 1 end
@@ -45823,7 +46170,13 @@ do
 
 		-- The inventory fake: stashes and bags as item -> count.
 		local stashes, bags, full = {}, {}, {}
+		local function bagKey(target)
+			if type(target) == 'string' then return target end
+			local player = OPX.Api.Get('character').GetPlayer(target)
+			return player and player.PlayerData.citizenId or target
+		end
 		local function bagOf(target)
+			target = bagKey(target)
 			bags[target] = bags[target] or {}
 			return bags[target]
 		end
@@ -45833,7 +46186,10 @@ do
 		end
 		local fake = {
 			AddItem = function(target, name, count)
-				if full[target] then return { ok = false, error = 'too_heavy' } end
+				local player = type(target) == 'string' and OPX.Api.Get('character').GetPlayerByCitizenId(target) or nil
+				if full[target] or (player and full[player.PlayerData.source]) then
+					return { ok = false, error = 'too_heavy' }
+				end
 				local bag = bagOf(target)
 				bag[name] = (bag[name] or 0) + (count or 1)
 				return { ok = true }
@@ -45900,13 +46256,13 @@ do
 		end
 
 		local BT, CU, BB = 71, 72, 73
-		local tender = standCharacter(env, control, BT, 'BARTEND1', { BANK = 1000, EDDIES = 0 })
+		local tender = standCharacter(env, control, BT, OPX.CitizenId.Generate(), { BANK = 1000, EDDIES = 0 })
 		tender.PlayerData.job = { name = 'bartender', onDuty = true, grade = { name = 'Bartender', level = 1 } }
 		tender.PlayerData.jobs = { bartender = 1 }
-		local customer = standCharacter(env, control, CU, 'BARCUST1', { BANK = 1000, EDDIES = 0 })
+		local customer = standCharacter(env, control, CU, OPX.CitizenId.Generate(), { BANK = 1000, EDDIES = 0 })
 		customer.PlayerData.job = { name = 'unemployed', onDuty = true, grade = { level = 0 } }
 		customer.PlayerData.jobs = {}
-		local barback = standCharacter(env, control, BB, 'BARBACK1', { BANK = 1000, EDDIES = 0 })
+		local barback = standCharacter(env, control, BB, OPX.CitizenId.Generate(), { BANK = 1000, EDDIES = 0 })
 		barback.PlayerData.job = { name = 'bartender', onDuty = true, grade = { name = 'Barback', level = 0 } }
 		barback.PlayerData.jobs = { bartender = 0 }
 
@@ -46292,7 +46648,10 @@ do
 					return { ok = true, value = { balance = amount } }
 				end }
 			end
-			if name == 'invoices' and useInvoices then
+			if name == 'invoices' then
+				-- Direct billing means the service is absent. A running invoice
+				-- service refusing a bill must never authorize a direct debit.
+				if not useInvoices then return nil end
 				return { Issue = function(spec)
 					invoices[#invoices + 1] = spec
 					return { ok = true, value = { id = #invoices } }
@@ -46505,6 +46864,30 @@ do
 	end
 end
 
+section('concurrent paced menu builds keep independent instruction budgets')
+do
+	local env, control, why = boot('client')
+	check('the client boots', why == nil, why)
+	if why == nil then
+		local menu = env.OPX.Api.Get('menu')
+		local opened = {}
+		local function spec(count, id)
+			local items = {}
+			for index = 1, count do items[index] = { id = 'item' .. index, label = 'Row ' .. index } end
+			return { owner = 'audit', id = id, items = items, on = function() end,
+				yield = true, steal = true }
+		end
+		local small, large = spec(12, 'short'), spec(100, 'long')
+		local worst = resumeCost(env, control, function()
+			env.CreateThread(function() opened[1] = menu.Open(small) end)
+			env.CreateThread(function() opened[2] = menu.Open(large) end)
+		end, 100)
+		check('both interleaved menu builds finish', opened[1] ~= nil and opened[1].ok
+			and opened[2] ~= nil and opened[2].ok)
+		check('the shorter build cannot clear the longer build\'s pacing', worst < 4500, worst)
+	end
+end
+
 section('taxi: the client draws the board and the meter inside its budget')
 do
 	local env, control, why = boot('client', nil)
@@ -46518,13 +46901,15 @@ do
 			calls[index] = { id = index, company = index % 2 == 0 and 'delamain' or nil, short = 'DLMN',
 				x = index, y = 0, z = 0, distance = index * 10, ageS = 120 }
 		end
+		local boardCallbackCost
 		local worst = resumeCost(env, control, function()
-			control.netEvents[taxi.Event.BOARD_VIEW]({ calls = calls, driving = true,
+			boardCallbackCost = callCost(control.netEvents[taxi.Event.BOARD_VIEW], { calls = calls, driving = true,
 				street = { { company = 'delamain', short = 'DLMN', available = true } } })
 		end, 40)
 		local state = OPX.Api.Get('menu').State().value
 		check('a full board opens the dispatch menu', state.open == true and state.menu == 'taxi.board', state.menu)
-		check('and no resume passes 8,000 instructions', worst < 8000, worst)
+		check('the event only queues the board inside 1,000 instructions', boardCallbackCost < 1000, boardCallbackCost)
+		check('and every build and menu-validation resume stays under 4,500 instructions', worst < 4500, worst)
 		local cost = callCost(control.netEvents[taxi.Event.ALERT], calls[1])
 		check('an alert and its pin fit the budget', cost < 9000, cost)
 		control.netEvents[taxi.Event.METER]({ company = 'DLMN', metres = 1234, fare = 77, moneyType = 'BANK',
@@ -46532,6 +46917,18 @@ do
 		control.netEvents[taxi.Event.CLOSED]({ id = 1 })
 		control.netEvents[taxi.Event.ANSWER]({ ok = false, code = 'nonsense' })
 		check('the meter, a closed call and an unknown code are taken without a raise', true)
+		control.netEvents[taxi.Event.BOARD_VIEW]({ calls = calls })
+		control.Pump(2)
+		control.netEvents[taxi.Event.BOARD_VIEW]({ calls = { calls[1] } })
+		control.Pump(40)
+		state = OPX.Api.Get('menu').State().value
+		check('a newer board replaces a snapshot still being built', state.open == true and state.total == 1)
+		control.netEvents[taxi.Event.BOARD_VIEW]({ calls = calls })
+		control.Pump(2)
+		taxi.Stop()
+		control.Pump(40)
+		check('stopping while a board is being built cannot reopen its menu',
+			OPX.Api.Get('menu').State().value.open == false)
 	end
 end
 
@@ -46841,7 +47238,7 @@ do
 				and citizen.PlayerData.metadata.licences.driving.serial == line.serial
 				and citizen.PlayerData.metadata.licences.driving.expires > 0)
 		check('a card goes in the bag carrying the kind, the holder and the serial',
-			#cards == 1 and cards[1].target == CIT and cards[1].name == 'licence_card'
+			#cards == 1 and cards[1].target == cid and cards[1].name == 'licence_card'
 				and cards[1].meta.kind == 'driving' and cards[1].meta.holder == cid
 				and cards[1].meta.serial == line.serial)
 		check('the fee is deposited to the city account, once, with an idempotency key', #deposits == 1
@@ -47207,15 +47604,19 @@ do
 			equipment = { Head = 'Items.Cap_01', OuterChest = 'Items.Jacket_01', Outfit = false } }
 		cop.PlayerData.clothing = civilian
 		local saves, revoked, refuseSave = {}, {}, false
+		local function clothingPlayer(who)
+			local characters = OPX.Api.Get('character')
+			return type(who) == 'string' and characters.GetPlayerByCitizenId(who) or characters.GetPlayer(who)
+		end
 		local appearance = {
 			GetClothing = function(who)
-				local data = OPX.Api.Get('character').GetPlayer(who)
+				local data = clothingPlayer(who)
 				return { ok = true, value = data and data.PlayerData.clothing }
 			end,
 			SaveClothing = function(who, record)
 				if refuseSave then return { ok = false, error = 'clothing.invalid' } end
 				saves[#saves + 1] = { who = who, record = record }
-				OPX.Api.Get('character').GetPlayer(who).PlayerData.clothing = record
+				clothingPlayer(who).PlayerData.clothing = record
 				return { ok = true, value = record }
 			end,
 		}
@@ -47536,6 +47937,8 @@ do
 		local media = OPX.Modules.Get('media')
 		local progress = OPX.Modules.Get('progress')
 		local ANCHOR, VIEWER, STRINGER, EDITOR = 81, 82, 83, 84
+		local CIDS = {}
+		for index = 1, 4 do CIDS[index] = OPX.CitizenId.Build({ index, 2, 3, 4, 5, 6 }) end
 		local metas = {}
 		local function stand(source, cid, job, grade, onDuty)
 			local loaded = standCharacter(env, control, source, cid, { EDDIES = 0, BANK = 0 })
@@ -47546,10 +47949,10 @@ do
 			loaded.Functions.SetMetaData = function(key, value) metas[source][key] = value end
 			return loaded
 		end
-		local anchor = stand(ANCHOR, 'MEDI0001', 'reporter', 2)
-		stand(VIEWER, 'MEDI0002', 'unemployed', 0)
-		local stringer = stand(STRINGER, 'MEDI0003', 'reporter', 0)
-		stand(EDITOR, 'MEDI0004', 'reporter', 3)
+		local anchor = stand(ANCHOR, CIDS[1], 'reporter', 2)
+		stand(VIEWER, CIDS[2], 'unemployed', 0)
+		local stringer = stand(STRINGER, CIDS[3], 'reporter', 0)
+		stand(EDITOR, CIDS[4], 'reporter', 3)
 		control.Stand(ANCHOR, 0.0, 0.0, 0.0)
 		control.Stand(VIEWER, 5.0, 0.0, 0.0)
 		control.Stand(STRINGER, 2000.0, 0.0, 0.0)
@@ -47589,6 +47992,11 @@ do
 			end,
 			CanCarry = function() return { ok = true, value = true } end,
 		}
+		-- The inventory contract also accepts stable citizen ids for yielding sales.
+		for _, player in ipairs({ ANCHOR, VIEWER, STRINGER, EDITOR }) do
+			local loaded = OPX.Api.Get('character').GetPlayer(player)
+			if loaded ~= nil then bags[loaded.PlayerData.citizenId] = bags[player] end
+		end
 		local accounts = nil
 		local realGet = OPX.Api.Get
 		OPX.Api.Get = function(name, minimum)
@@ -47650,7 +48058,7 @@ do
 		local story = nil
 		for _, stack in pairs(bags[ANCHOR]) do if stack.name == 'press_story' then story = stack.metadata end end
 		check('a story becomes a press_story carrying the byline, headline and word count',
-			ok and story ~= nil and story.by == 'MEDI0001' and story.network == 'n54' and story.words == 27
+			ok and story ~= nil and story.by == CIDS[1] and story.network == 'n54' and story.words == 27
 				and story.headline == 'Convoy hit in the Badlands', code)
 		control.Advance(1000)
 		ok, code = media.Story(ANCHOR, { headline = 'Another one already', body = body })
@@ -47689,7 +48097,7 @@ do
 		local photo = nil
 		for _, stack in pairs(bags[ANCHOR]) do if stack.name == 'press_photo' then photo = stack.metadata end end
 		check('the photo carries the server\'s reads: where, when, who, the crowd in frame',
-			photo ~= nil and photo.by == 'MEDI0001' and photo.x == 0 and photo.crowd == 1 and photo.uploaded == false
+			photo ~= nil and photo.by == CIDS[1] and photo.x == 0 and photo.crowd == 1 and photo.uploaded == false
 				and type(photo.serial) == 'string')
 		check('and the camera stays in the bag', bags[ANCHOR][9] ~= nil)
 
@@ -47702,6 +48110,12 @@ do
 		control.Advance(1000)
 		ok, code = media.Sell(ANCHOR, { network = 'wns', desk = 'japantown_bureau' })
 		check('an Anchor of N54 cannot sell to the WNS bureau', not ok and code == 'wrong_newsroom', code)
+		local priceStory = media.Model.StoryPrice
+		media.Model.StoryPrice = function() error('test price failure') end
+		control.Advance(1000)
+		local failedSale, failedCode = media.Sell(ANCHOR, { network = 'n54', desk = 'corpo_plaza_newsroom' })
+		check('a raised sale releases its lock and refuses cleanly', not failedSale and failedCode == 'sale_failed')
+		media.Model.StoryPrice = priceStory
 		control.Advance(1000)
 		ok, code = media.Sell(ANCHOR, { network = 'n54', desk = 'corpo_plaza_newsroom' })
 		local expected = (120 + 25) + (150 + 3 * 27)
@@ -47717,16 +48131,18 @@ do
 		-- The desk through the accounts contract.
 		local withdrawn = {}
 		local balance = 0
+		local nestedOk, nestedCode
 		accounts = {
 			Withdraw = function(kind, key, amount, reason, opId)
 				if amount > balance then return { ok = false, error = 'insufficient_funds' } end
+				nestedOk, nestedCode = media.Sell(STRINGER, { network = 'wns', desk = 'japantown_bureau' })
 				balance = balance - amount
 				withdrawn[#withdrawn + 1] = { kind = kind, key = key, amount = amount, reason = reason, opId = opId }
 				return { ok = true, value = { balance = balance } }
 			end,
 			Deposit = function(_, _, amount) balance = balance + amount; return { ok = true } end,
 		}
-		bags[ANCHOR][21] = { name = 'press_photo', metadata = { by = 'MEDI0001', at = math.floor(OPX.Now() / 1000),
+		bags[ANCHOR][21] = { name = 'press_photo', metadata = { by = CIDS[1], at = math.floor(OPX.Now() / 1000),
 			crowd = 0, x = 900, y = 0, z = 0 } }
 		control.Advance(1000)
 		ok, code = media.Sell(ANCHOR, { network = 'n54', desk = 'corpo_plaza_newsroom' })
@@ -47739,10 +48155,12 @@ do
 		check('with the accounts contract the desk pays from the reporter job account, with an opId',
 			ok and #withdrawn == 1 and withdrawn[1].kind == 'job' and withdrawn[1].key == 'reporter'
 				and type(withdrawn[1].opId) == 'string' and anchor.PlayerData.money.BANK - before == withdrawn[1].amount, code)
+		check('a sale owns the cap and scene counters through the yielding treasury call',
+			nestedOk == false and nestedCode == 'busy')
 		accounts = nil
 
 		-- A Stringer sells anywhere.
-		bags[STRINGER][1] = { name = 'press_story', metadata = { by = 'MEDI0003', words = 10,
+		bags[STRINGER][1] = { name = 'press_story', metadata = { by = CIDS[3], words = 10,
 			at = math.floor(OPX.Now() / 1000) } }
 		control.Stand(STRINGER, 400.5, 0.0, 0.0)
 		control.Advance(1000)
@@ -47760,7 +48178,7 @@ do
 			and tip.text:find('Maelstrom', 1, true) ~= nil and lastTo(media.Event.TIP, EDITOR) ~= nil, code)
 		local named = false
 		for key, value in pairs(tip or {}) do
-			if value == VIEWER or value == 'MEDI0002' then named = true end
+			if value == VIEWER or value == CIDS[2] then named = true end
 		end
 		check('and it is anonymous: no id, no citizen id in what reporters get', tip ~= nil and not named)
 		control.Advance(1000)
@@ -47772,7 +48190,7 @@ do
 		ok, code = media.Kit(EDITOR)
 		local pass = nil
 		for _, stack in pairs(bags[EDITOR]) do if stack.name == 'press_pass' then pass = stack.metadata end end
-		check('/presskit gives the reporter their own pass and a camera', ok and pass ~= nil and pass.cid == 'MEDI0004'
+		check('/presskit gives the reporter their own pass and a camera', ok and pass ~= nil and pass.cid == CIDS[4]
 			and pass.network == 'n54' and count(EDITOR, 'press_camera') == 1, code)
 		control.Advance(1000)
 		ok, code = media.Kit(EDITOR)
@@ -48175,6 +48593,27 @@ end
 		ok = run(function() return Server.Respond(C, issued.value.id, 'pay') end)
 		check('and the split follows its cut', ok and stranger.PlayerData.money.BANK == 200
 			and deposits[('invoices:%d:rest'):format(issued.value.id)].amount == 800)
+		local depositOnce = fakeAccounts.Deposit
+		fakeAccounts.Deposit = function(...)
+			depositOnce(...)
+			return { ok = false, error = 'accounts.unknown' }
+		end
+		local issuerBefore = stranger.PlayerData.money.BANK
+		local uncertain = run(function() return api.Issue({ issuer = X, target = C, amount = 100,
+			reason = 'Lost treasury answer', account = { kind = 'job', key = 'mechanic' }, cutPct = 20 }) end)
+		run(function() return Server.Respond(C, uncertain.value.id, 'pay') end)
+		check('an ambiguous treasury credit does not pay the company share to the issuer too',
+			stranger.PlayerData.money.BANK == issuerBefore + 20
+				and Server.Invoices()[uncertain.value.id].state == 'settling')
+		fakeAccounts.Deposit = depositOnce
+		control.Advance(31000)
+		Server.Sweep()
+		control.Pump(20)
+		check('the pending treasury share settles by replaying its original deposit id',
+			store.rows[uncertain.value.id].state == 'paid'
+				and stranger.PlayerData.money.BANK == issuerBefore + 20
+				and deposits[('invoices:%d:rest'):format(uncertain.value.id)].amount == 80)
+
 		issued = run(function() return api.Issue({ issuer = X, target = C, amount = 10, reason = 'x',
 			account = { kind = 'corp', key = 'x' } }) end)
 		check('a malformed account is refused', not issued.ok and issued.error == 'bad_account', issued.error)
@@ -48311,9 +48750,13 @@ local function corpoSurvey(env, file)
 end
 
 -- A bag per player, by slot, in place of the inventory contract.
-local function corpoBag()
+local function corpoBag(OPX)
 	local bags = {}
 	local function of(player)
+		if type(player) == 'number' then
+			local loaded = OPX.Api.Get('character').GetPlayer(player)
+			player = loaded and loaded.PlayerData.citizenId or player
+		end
 		bags[player] = bags[player] or {}
 		return bags[player]
 	end
@@ -48474,7 +48917,7 @@ do
 		local employee, meta = corpoStand(env, control, P, 'CORP0001', 'arasaka', 0)
 		local spy, spyMeta = corpoStand(env, control, SPY, 'CORP0002', 'militech', 0)
 		corpoStand(env, control, OTHER, 'CORP0003', 'unemployed', 0)
-		local bag, slotsOf, count = corpoBag()
+		local bag, slotsOf, count = corpoBag(OPX)
 		local contracts = nil
 		local npc = { next = 500, list = {}, removed = {}, follows = {} }
 		env.Open77.npcs = {
@@ -49175,7 +49618,7 @@ do
 	end
 end
 
-section('radio: the client draws the menu and routes the microphone only once granted')
+section('radio: the client draws the handset and routes the microphone only once granted')
 do
 	local env, control, why = boot('client')
 	check('the client boots with the radio module', why == nil, why)
@@ -49184,13 +49627,18 @@ do
 		control.Pump(5)
 		local mapping = control.keyMappings.byId['opx.radio.talk']
 		check('the talk key is registered on CAPSLOCK', mapping ~= nil and mapping.key == 'CAPSLOCK')
-		control.netEvents[radio.Event.STATE]({ power = true, handset = true, needsHandset = true, active = 'ncpd',
+		control.netEvents[radio.Event.STATE]({ open = true, power = true, handset = true, needsHandset = true, active = 'ncpd',
 			channels = { { key = 'ncpd', label = 'NCPD Dispatch', short = 'NCPD', joined = true, active = true },
 				{ key = 'interagency', label = 'Interagency', short = 'INTER', joined = true, muted = true } } })
-		local spec = radio.Spec()
-		check('the menu has power, the two channels and a close row',
-			spec.items[1].toggle == true and spec.items[3].label == 'NCPD Dispatch'
-			and spec.items[4].value ~= nil and spec.items[#spec.items].close == true)
+		local page = control.pages[#control.pages]
+		local handset
+		for _, sent in ipairs(page.sent) do
+			if sent.channel == 'opx:radio:holo' then handset = sent.payload end
+		end
+		check('the handset is open with power and the two channels',
+			handset ~= nil and handset.open == true and handset.power == true
+			and #handset.channels == 2 and handset.channels[1].label == 'NCPD Dispatch'
+			and handset.channels[2].muted == true)
 		control.voice.transmit = nil
 		control.netEvents[radio.Event.KEYED]({ on = true, channel = 'NCPD' })
 		check('a grant for a key nobody holds opens no microphone', control.voice.transmit == nil)
@@ -49199,9 +49647,27 @@ do
 		control.netEvents[radio.Event.KEYED]({ on = true, channel = 'NCPD' })
 		check('the grant routes the microphone into the channels and the room',
 			control.voice.transmit ~= nil and control.voice.transmit.enabled == true and control.voice.transmit.intent == 'all')
+		control.netEvents[radio.Event.KEYED]({ on = true, channel = 'NCPD' })
+		local function routeJobs()
+			local count = 0
+			for _, line in ipairs(env.OPX.Scheduler.Report()) do
+				if line:find('radio.route', 1, true) and line:find('running', 1, true) then count = count + 1 end
+			end
+			return count
+		end
+		check('duplicate grants keep one route upkeep job', routeJobs() == 1)
+		check('the talk key also registered a release callback', mapping ~= nil and type(mapping.released) == 'function')
+		if mapping ~= nil and mapping.released ~= nil then mapping.released('opx.radio.talk') end
+		check('release cancels upkeep and returns the microphone to proximity',
+			routeJobs() == 0 and control.voice.transmit.enabled == false
+			and control.voice.transmit.intent == 'proximity')
+		if mapping ~= nil then mapping.pressed('opx.radio.talk') end
+		control.netEvents[radio.Event.KEYED]({ on = true, channel = 'NCPD' })
+		check('an immediate re-press starts one fresh route job', routeJobs() == 1)
 		control.netEvents[radio.Event.KEYED]({ on = false, code = 'held_too_long' })
 		check('the server taking it back hands the route back to proximity',
 			control.voice.transmit.enabled == false and control.voice.transmit.intent == 'proximity')
+		check('a revoked grant cancels the route upkeep', routeJobs() == 0)
 	end
 end
 
@@ -49464,6 +49930,12 @@ do
 			end)
 			check('and replayed it moves nothing', r.ok and r.value.replay and db.accounts['job:ncpd'] == 350)
 			r = run(env, control, function()
+				return accounts.Transfer('job', 'ncpd', 'gang', 'valentinos', 250, 'other recipient', 'op:3')
+			end)
+			check('a transfer opId cannot claim to have paid a different recipient',
+				not r.ok and r.error == 'accounts.opIdConflict' and db.accounts['job:ncpd'] == 350)
+
+			r = run(env, control, function()
 				return accounts.Transfer('job', 'ncpd', 'job', 'trauma', 9999, 'broke', 'op:4')
 			end)
 			check('a transfer the payer cannot cover credits nobody',
@@ -49598,6 +50070,27 @@ do
 			check('a deposit the treasury refuses gives the cash back',
 				not ok and boss.PlayerData.money.EDDIES == 3500 and db.accounts['job:ncpd'] == 1500, code)
 			db.down = false
+
+			-- Every payout targets the original citizen after a yielding account call.
+			local realWithdraw, realDeposit = business.Accounts.Withdraw, business.Accounts.Deposit
+			local character = OPX.Api.Get('character')
+			local realAdd, realOffline = character.AddMoney, character.AddMoneyOffline
+			local paidCitizen, paidConnection
+			character.AddMoney = function(...) paidConnection = true; return realAdd(...) end
+			character.AddMoneyOffline = function(citizen, _, amount)
+				paidCitizen = citizen
+				return OPX.Result.Ok({ balance = amount, offline = true })
+			end
+			business.Accounts.Withdraw = function() return OPX.Result.Ok({ balance = 1500 }) end
+			ok = run(env, control, function() return Server.Withdraw(B, 'job', 'ncpd', 10) end)
+			check('a treasury payout addresses the citizen rather than a recycled connection',
+				ok and paidCitizen == bossCid and not paidConnection)
+			paidCitizen = nil
+			business.Accounts.Deposit = function() return OPX.Result.Err('accounts.failed') end
+			ok = run(env, control, function() return Server.Deposit(B, 'job', 'ncpd', 10) end)
+			check('a treasury refund also addresses the original citizen', not ok and paidCitizen == bossCid)
+			character.AddMoney, character.AddMoneyOffline = realAdd, realOffline
+			business.Accounts.Withdraw, business.Accounts.Deposit = realWithdraw, realDeposit
 
 			-- Gangs too, through SetGang.
 			local jefe = staff(env, control, db, 95, 'Jefe', 'unemployed', 0, 'valentinos', 3, 0)

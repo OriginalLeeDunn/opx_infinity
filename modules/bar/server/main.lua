@@ -273,7 +273,7 @@ settleMix = function(op, outcome)
 	end
 	-- The drink last: into the bag, or onto the stash shelf when the bag is full.
 	local where = 'bag'
-	if not ok(api.AddItem(player, recipe.item, recipe.count)) then
+	if not ok(api.AddItem(op.citizenId, recipe.item, recipe.count)) then
 		where = 'stash'
 		if not ok(api.AddToStash(venue.stash.name, recipe.item, recipe.count)) then
 			for _, back in ipairs(taken) do api.AddToStash(venue.stash.name, back.item, back.count) end
@@ -368,7 +368,7 @@ function M.Buy(player, venueId, index)
 				return answer(player, false, broke and 'venue_broke' or 'unavailable'), broke and 'venue_broke' or 'unavailable'
 			end
 		else
-			local read, taken = pcall(character.RemoveMoney, player, 'BANK', row.price, reason)
+			local read, taken = pcall(character.RemoveMoney, data.citizenId, 'BANK', row.price, reason)
 			if not read or taken ~= true then return answer(player, false, 'not_enough_money'), 'not_enough_money' end
 		end
 	end
@@ -378,7 +378,7 @@ function M.Buy(player, venueId, index)
 				pcall(accounts().Deposit, venue.account.kind, venue.account.key, row.price, reason .. ':refund',
 					opId .. ':refund')
 			else
-				pcall(character.AddMoney, player, 'BANK', row.price, reason .. ':refund')
+				pcall(character.AddMoney, data.citizenId, 'BANK', row.price, reason .. ':refund')
 			end
 		end
 		return answer(player, false, 'stash_full'), 'stash_full'
@@ -455,6 +455,7 @@ function M.Serve(player, target, item)
 	end
 	serves[state.id] = { id = state.id, bartender = player, customer = context.target,
 		bartenderCid = context.data.citizenId, customerCid = context.customer.citizenId,
+		bartenderSession = OPX.Sessions[player], customerSession = OPX.Sessions[context.target],
 		venue = venue.id, item = item, price = price, at = OPX.Now() }
 	serveOf[player] = state.id
 	local params = { item = itemLabel(item), price = price, venue = venue.label }
@@ -487,7 +488,7 @@ local function payOut(serve, venue)
 	end
 	local toStaff = deposited and staff or serve.price
 	if toStaff > 0 then
-		local read, paid = pcall(character.AddMoney, serve.bartender, S.money, toStaff, 'bar:sale:' .. venue.id)
+		local read, paid = pcall(character.AddMoney, serve.bartenderCid, S.money, toStaff, 'bar:sale:' .. venue.id)
 		if not read or paid ~= true then
 			OPX.Audit.Log({ event = 'bar.payoutLost', severity = 'warn', source = serve.bartender,
 				message = ('%d for %s could not be paid'):format(toStaff, venue.id) })
@@ -498,7 +499,7 @@ end
 
 --- Charges the customer straight from their purse. Answers whether it went.
 local function chargeDirect(serve)
-	local read, taken = pcall(character.RemoveMoney, serve.customer, S.money, serve.price,
+	local read, taken = pcall(character.RemoveMoney, serve.customerCid, S.money, serve.price,
 		('bar:%s:%s'):format(serve.venue, serve.item))
 	return read and taken == true
 end
@@ -518,14 +519,15 @@ function M.Complete(id)
 	local bartender, customer = dataOf(serve.bartender), dataOf(serve.customer)
 	local venue = S.venues[serve.venue]
 	if bartender == nil or customer == nil or venue == nil or bartender.citizenId ~= serve.bartenderCid
-		or customer.citizenId ~= serve.customerCid then
+		or customer.citizenId ~= serve.customerCid or OPX.Sessions[serve.bartender] ~= serve.bartenderSession
+		or OPX.Sessions[serve.customer] ~= serve.customerSession then
 		return false, 'left'
 	end
 	local passed, code = M.Allowed(venue, bartender)
 	if not passed then return answer(serve.bartender, false, code), code end
 
 	-- The bartender gives the drink up first.
-	if not take(serve.bartender, serve.item) then
+	if not take(serve.bartenderCid, serve.item) then
 		answer(serve.customer, false, 'serve_failed')
 		return answer(serve.bartender, false, 'not_enough_items'), 'not_enough_items'
 	end
@@ -537,17 +539,17 @@ function M.Complete(id)
 	if serve.price > 0 and not useInvoice then
 		-- Direct: the customer's money before their drink.
 		if not chargeDirect(serve) then
-			give(serve.bartender, serve.item)
+			give(serve.bartenderCid, serve.item)
 			answer(serve.customer, false, 'not_enough_money', params)
 			return answer(serve.bartender, false, 'customer_short'), 'customer_short'
 		end
 		billing = 'direct'
 	end
-	if not give(serve.customer, serve.item) then
+	if not give(serve.customerCid, serve.item) then
 		if billing == 'direct' then
-			pcall(character.AddMoney, serve.customer, S.money, serve.price, 'bar:refund:' .. serve.venue)
+			pcall(character.AddMoney, serve.customerCid, S.money, serve.price, 'bar:refund:' .. serve.venue)
 		end
-		give(serve.bartender, serve.item)
+		give(serve.bartenderCid, serve.item)
 		answer(serve.customer, false, 'cannot_carry')
 		return answer(serve.bartender, false, 'customer_full'), 'customer_full'
 	end
@@ -556,6 +558,16 @@ function M.Complete(id)
 	if billing == 'direct' then
 		staff, house = payOut(serve, venue)
 	elseif useInvoice then
+		-- Earlier inventory calls may yield. The invoice API takes live slots,
+		-- so never issue the old customer's bill to their replacement.
+		local currentBartender, currentCustomer = dataOf(serve.bartender), dataOf(serve.customer)
+		if currentBartender == nil or currentCustomer == nil or
+			currentBartender.citizenId ~= serve.bartenderCid or currentCustomer.citizenId ~= serve.customerCid or
+			OPX.Sessions[serve.bartender] ~= serve.bartenderSession or
+			OPX.Sessions[serve.customer] ~= serve.customerSession then
+			if take(serve.customerCid, serve.item) then give(serve.bartenderCid, serve.item) end
+			return false, 'left'
+		end
 		local read, issued = pcall(api.Issue, {
 			issuer = serve.bartender, target = serve.customer, amount = serve.price,
 			reason = ('%s - %s'):format(venue.label, itemLabel(serve.item)),
@@ -571,7 +583,7 @@ function M.Complete(id)
 			staff, house = payOut(serve, venue)
 		else
 			-- Neither: the drink goes back behind the bar.
-			if take(serve.customer, serve.item) then give(serve.bartender, serve.item) end
+			if take(serve.customerCid, serve.item) then give(serve.bartenderCid, serve.item) end
 			answer(serve.customer, false, 'not_enough_money', params)
 			return answer(serve.bartender, false, 'customer_short'), 'customer_short'
 		end
@@ -712,7 +724,15 @@ function M.Start()
 			RegisterNetEvent(event, function(a, b)
 				local player = playerOf(source)
 				if player == nil or not check(a, b) then return end
-				CreateThread(function() fn(player, a, b) end)
+				local user, session = OPX.UserIdOf(player), OPX.Sessions[player]
+				local data = dataOf(player)
+				local citizenId = data and data.citizenId
+				CreateThread(function()
+					local current = dataOf(player)
+					if user == nil or citizenId == nil or OPX.UserIdOf(player) ~= user or
+						OPX.Sessions[player] ~= session or current == nil or current.citizenId ~= citizenId then return end
+					fn(player, a, b)
+				end)
 			end)
 		end
 		local function venueArg(a) return type(a) == 'string' and #a <= Model.ID_MAX end

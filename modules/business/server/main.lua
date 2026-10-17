@@ -37,6 +37,7 @@ local offers, offerOf = {}, {}
 local nextOffer = 0
 -- Citizen ids with a staff change in flight: one change per employee at a time.
 local changing = {}
+local hiring = {}
 local sweepJob = nil
 
 local OWNER = 'business'
@@ -363,6 +364,12 @@ local function sendTerminal(source, kind, key)
 	end
 	local desks = {}
 	for index, desk in ipairs(wanted) do desks[index] = deskView(desk) end
+	local current = dataOf(source)
+	if current == nil or current.citizenId ~= data.citizenId then return false, 'no_character' end
+	for _, desk in ipairs(wanted) do
+		local fresh = deskOf(source, desk.kind, desk.key)
+		if fresh == nil or fresh.level ~= desk.level then return false, 'not_boss' end
+	end
 	TriggerClientEvent(M.Event.SHOW, source, { desks = desks })
 	return true
 end
@@ -388,7 +395,7 @@ local function headcount(kind, key)
 end
 
 --- The checks an offer passes when it is made AND when it is accepted.
-local function hireable(desk, target)
+local function hireable(desk, target, checkedCount)
 	local rules = Access.Rules(desk.kind, desk.key)
 	if not Access.MayHire(desk.kind, desk.key, desk.level) then return false, 'not_boss' end
 	if Access.Grade(desk.kind, desk.key, rules.hireGrade) == nil then return false, 'bad_grade' end
@@ -402,10 +409,15 @@ local function hireable(desk, target)
 	if heldGrade(data, desk.kind, desk.key) ~= nil then return false, 'already_member' end
 	local close = near(standing(desk.player.PlayerData.source), standing(target), Access.HIRE_RADIUS)
 	if not close then return false, 'too_far' end
-	if rules.maxEmployees > 0 then
+	if rules.maxEmployees > 0 and not checkedCount then
 		local count = headcount(desk.kind, desk.key)
 		if count == nil then return false, 'roster_failed' end
 		if count >= rules.maxEmployees then return false, 'full' end
+		local fresh = deskOf(desk.data.source, desk.kind, desk.key)
+		local current = dataOf(target)
+		if fresh == nil or fresh.citizenId ~= desk.citizenId then return false, 'not_boss' end
+		if current == nil or current.citizenId ~= data.citizenId then return false, 'no_target' end
+		return hireable(fresh, target, true)
 	end
 	return true, nil, data, rules
 end
@@ -451,7 +463,7 @@ end
 -- @param id any
 -- @param accept boolean
 -- @return boolean, string|nil
-local function answer(source, id, accept)
+local function answerOnce(source, id, accept)
 	id = math.tointeger(tonumber(id))
 	local offer = id and offers[id] or nil
 	if offer == nil or offer.target ~= source then return false, 'no_offer' end
@@ -512,6 +524,23 @@ local function answer(source, id, accept)
 	return true
 end
 
+-- Hold the group's headcount read through the membership write: two recruits
+-- accepting together must not both consume its final employee place.
+local function answer(source, id, accept)
+	local offer = offers[math.tointeger(tonumber(id))]
+	if offer == nil then return false, 'no_offer' end
+	local key = offer.kind .. ':' .. offer.key
+	if hiring[key] then return false, 'busy' end
+	hiring[key] = true
+	local ok, done, why = pcall(answerOnce, source, id, accept)
+	hiring[key] = nil
+	if not ok then
+		Open77.log.error('[business] accepting a hire raised: ' .. safe(done))
+		return false, 'generic'
+	end
+	return done, why
+end
+
 --- Nearby players a boss could offer a contract to: ids and distances only.
 local function nearby(source, kind, key)
 	local desk, why = deskOf(source, kind, key)
@@ -552,7 +581,8 @@ local function manage(source, kind, key, citizenId, verb)
 		-- The boss is read again AFTER the yields above: a boss demoted
 		-- meanwhile acts with the grade they hold now.
 		local fresh = deskOf(source, kind, key)
-		if fresh == nil or not Access.IsBoss(kind, key, fresh.level) then return false, 'not_boss' end
+		if fresh == nil or fresh.citizenId ~= desk.citizenId
+			or not Access.IsBoss(kind, key, fresh.level) then return false, 'not_boss' end
 		if not Access.MayManage(fresh.level, member.grade) then return false, 'rank' end
 
 		if verb == Verb.FIRE then
@@ -623,14 +653,12 @@ local function deposit(source, kind, key, amount)
 			:format(amount, kind, key, safe(put.detail)) })
 		return false, 'unknown'
 	end
-	local called, back = pcall(api.AddMoney, source, Access.POCKET, amount, 'business:refund')
-	if not called or not back then
-		local offline = call('AddMoneyOffline', desk.citizenId, Access.POCKET, amount, 'business:refund')
-		if not offline.ok then
-			OPX.Audit.Log({ event = 'money.company.unknown', severity = 'error', source = source,
-				citizenId = desk.citizenId, message = ('deposit of %d to %s:%s failed and the refund ' ..
-				'did not land'):format(amount, kind, key) })
-		end
+	-- The account write yielded: this connection may now hold another citizen.
+	local back = call('AddMoneyOffline', desk.citizenId, Access.POCKET, amount, 'business:refund')
+	if not back.ok then
+		OPX.Audit.Log({ event = 'money.company.unknown', severity = 'error', source = source,
+			citizenId = desk.citizenId, message = ('deposit of %d to %s:%s failed and the refund '
+				.. 'did not land'):format(amount, kind, key) })
 	end
 	return false, put.error
 end
@@ -641,25 +669,21 @@ local function withdraw(source, kind, key, amount)
 	local desk, why = deskOf(source, kind, key)
 	if desk == nil then return false, why end
 	if not Access.BankAuth(kind, key, desk.level) then return false, 'no_bank' end
-	local api = characterApi()
 	local reason = ('business:withdraw:%s:%s'):format(kind, key)
 	local opId = Accounts.Mint('boss-wdr')
 	local took = Accounts.Withdraw(kind, key, amount, reason, opId, desk.citizenId)
 	if not took.ok then return false, took.error end
 
-	local ok, paid = pcall(api.AddMoney, source, Access.POCKET, amount, reason)
-	if not ok or not paid then
-		local offline = call('AddMoneyOffline', desk.citizenId, Access.POCKET, amount, reason)
-		if not offline.ok then
-			local undo = Accounts.Deposit(kind, key, amount, reason .. ':undo', opId .. ':undo',
-				desk.citizenId)
-			if not undo.ok then
-				OPX.Audit.Log({ event = 'money.company.unknown', severity = 'error', source = source,
-					citizenId = desk.citizenId, message = ('withdrawal %s of %d from %s:%s was debited, ' ..
-					'not paid and not credited back'):format(opId, amount, kind, key) })
-			end
-			return false, 'generic'
+	local paid = call('AddMoneyOffline', desk.citizenId, Access.POCKET, amount, reason)
+	if not paid.ok then
+		local undo = Accounts.Deposit(kind, key, amount, reason .. ':undo', opId .. ':undo',
+			desk.citizenId)
+		if not undo.ok then
+			OPX.Audit.Log({ event = 'money.company.unknown', severity = 'error', source = source,
+				citizenId = desk.citizenId, message = ('withdrawal %s of %d from %s:%s was debited, '
+					.. 'not paid and not credited back'):format(opId, amount, kind, key) })
 		end
+		return false, 'generic'
 	end
 	tell(source, 'business.bank.withdrew', { amount = money(amount), balance = money(took.value.balance) },
 		'success')
@@ -777,7 +801,7 @@ end
 --- Resets the state and contributes the treasury tables.
 -- @author dop42
 function M.Init()
-	windows, offers, offerOf, nextOffer, changing = {}, {}, {}, 0, {}
+	windows, offers, offerOf, nextOffer, changing, hiring = {}, {}, {}, 0, {}, {}
 	Accounts.Reset()
 	OPX.Schema.Add(M.Storage.SCHEMA)
 end

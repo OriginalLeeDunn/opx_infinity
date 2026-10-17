@@ -209,8 +209,12 @@ local function interrupted(player, session, poured)
 	if seated(player) then return 'leave_vehicle' end
 	local at = pointOf(player)
 	if at == nil then return 'no_position' end
+	if at.bucket ~= session.bucket then return 'moved_away' end
 	local snapshot = Tanks.Snapshot(session.vehicleId)
 	if snapshot == nil then return 'vehicle_gone' end
+	if (math.tointeger(OPX.Math.Finite(snapshot.bucket)) or 0) ~= session.bucket then
+		return 'vehicle_moved'
+	end
 	local x, y, z = Tanks.Position(snapshot)
 	if x == nil then return 'vehicle_gone' end
 	if distance(session.origin, x, y, z) > config.moveTolerance
@@ -318,7 +322,11 @@ finish = function(player, outcome)
 	Tanks.Hold(session.vehicleId, false)
 	-- `finished` was judged against the progress module's clock; everything else
 	-- is billed by this one, and a stop the step asked for says why.
-	local poured = outcome.completed == true and session.maxLitres or pouredBy(session, now)
+	local elapsedPour = pouredBy(session, now)
+	-- Completion can arrive before the next sweep: re-read the world here too.
+	local why = interrupted(player, session, elapsedPour)
+	if why ~= nil then session.stopped = session.stopped or why end
+	local poured = outcome.completed == true and why == nil and session.maxLitres or elapsedPour
 	if outcome.ending == 'left' then poured = 0 end
 	local cost = 0
 	if poured > 0 and session.kind == 'pump' then
@@ -417,7 +425,7 @@ function M.Refuel(player, payload)
 
 	local x, y, z = Tanks.Position(snapshot)
 	local code = startPour(player, {
-		kind = 'pump', vehicleId = snapshot.id, station = place.station.key,
+		kind = 'pump', vehicleId = snapshot.id, station = place.station.key, bucket = place.at.bucket,
 		pump = place.pump, price = price, method = method,
 		startLitres = litres, maxLitres = most, rate = config.refillRate,
 		origin = { x = x, y = y, z = z },
@@ -491,7 +499,7 @@ function M.CanBuy(player, payload)
 	local progress = OPX.Api.Get('progress')
 	if progress == nil or type(progress.Start) ~= 'function' then return answer(player, false, 'no_bar'), 'no_bar' end
 	local session = { kind = refill and 'refill' or 'buy', method = method, price = price, slot = slot,
-		station = place.station.key, pump = place.pump }
+		station = place.station.key, pump = place.pump, bucket = place.at.bucket }
 	local started = progress.Start(player, OWNER, {
 		label = locale(refill and 'fuel.bar.refill' or 'fuel.bar.buy'),
 		durationMs = config.can.durationMs,
@@ -520,7 +528,8 @@ function M.Purchased(player, session, outcome)
 	if api == nil then return answer(player, false, 'no_inventory') end
 	-- Still at a pump: the bar held them, but a bar is the client's.
 	local at = pointOf(player)
-	if at == nil or distance(session.pump, at.x, at.y, at.z) > OPX.Spots.ServerReach(config.useRadius) then
+	if at == nil or at.bucket ~= session.bucket
+		or distance(session.pump, at.x, at.y, at.z) > OPX.Spots.ServerReach(config.useRadius) then
 		return answer(player, false, 'moved_away')
 	end
 	if not charge(player, session.method, session.price, reason) then
@@ -596,7 +605,7 @@ function M.CanPour(player, vehicleId, slot)
 
 	local x, y, z = Tanks.Position(snapshot)
 	local code = startPour(player, {
-		kind = 'can', vehicleId = snapshot.id, slot = can.slot,
+		kind = 'can', vehicleId = snapshot.id, slot = can.slot, bucket = at.bucket,
 		startLitres = litres, maxLitres = math.min(room, inside), rate = config.can.rate,
 		origin = { x = x, y = y, z = z },
 	})

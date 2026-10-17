@@ -169,15 +169,31 @@ function toggleMute(): void {
 
 const pressing = ref(false)
 
+function listenForRelease(active: boolean): void {
+  if (active) {
+    window.addEventListener('pointerup', pttUp)
+    window.addEventListener('pointercancel', pttUp)
+    window.addEventListener('blur', pttUp)
+  } else {
+    window.removeEventListener('pointerup', pttUp)
+    window.removeEventListener('pointercancel', pttUp)
+    window.removeEventListener('blur', pttUp)
+  }
+}
+
 function pttDown(event: PointerEvent): void {
   if (event.button !== 0 || pressing.value) return
   pressing.value = true
+  // A focus change need not produce pointerleave or pointerup on this button.
+  // Keep a release path while held so switching windows cannot leave it keyed.
+  listenForRelease(true)
   emit('opx:radio:talk', { on: true })
 }
 
 function pttUp(): void {
   if (!pressing.value) return
   pressing.value = false
+  listenForRelease(false)
   emit('opx:radio:talk', { on: false })
 }
 

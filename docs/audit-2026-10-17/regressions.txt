@@ -1,0 +1,101 @@
+admin target: stop invalidation checks passed
+audit-admin: PASS
+animation offers: concurrent commit and shutdown isolation passed
+animation picker: late open closed after Shutdown
+animation walk: refused lease and retry checks passed
+animation consent audit: PASS
+appearance editor: stale transaction checks passed
+appearance rollback and SetSkin character isolation passed
+appearance panel Wear character isolation passed
+appearance grant audit regression checks passed
+blips lifecycle: stopped reconcile cannot recreate pins
+contracts audit regressions passed
+PASS data schema: 3687 bilingual locale keys, 250 peds, 277 vehicles, 1603 garments
+dealership lifecycle: pending offer and registration shutdown passed
+doorlock request audit regression checks passed
+doorlock audit regression checks passed
+downed audit regressions passed
+client economic surface lifecycle: 5 checks passed
+hauling client snapshot: bounded commit and concurrent changes passed
+progress finite duration checks passed
+spawn late-focus regression passed
+economy SQL and shop ownership regression checks passed
+economy cached-bag, receiver logout and crafting queue regression checks passed
+economy recruiting authority, capacity and trunk-load regressions passed
+economy stash load ownership regression passed
+economy vehicle-key delayed ownership/reach regressions passed
+
+== form: stale edit sequences cannot replace newer accepted text
+  ok   submission preserves the newest accepted sequence
+readiness gate audit regression checks passed
+host JSON: 5 checks passed
+justice audit regressions passed
+
+== mechanic: full dispatch boards stay inside the client instruction budget
+  ok   the complete board opens
+  ok   the event only queues work
+  ok   every worker resume stays under 4500 instructions
+  ok   a newer snapshot supersedes one being built
+  ok   a large impound lot opens without exceeding the resume budget
+MECHANIC_LOT_WORST	2731
+  ok   stopping during a build cannot reopen the menu
+MECHANIC_BOARD_CALLBACK	35	WORST_RESUME	2882
+mechanic audit regressions passed
+media story audit regression checks passed
+
+== medical: full dispatch boards stay inside the client instruction budget
+  ok   the complete board opens
+  ok   the event only queues work
+  ok   every worker resume stays under 4500 instructions
+  ok   a newer snapshot supersedes one being built
+  ok   stopping during a build cannot reopen the menu
+MEDICAL_BOARD_CALLBACK	27	WORST_RESUME	2731
+medical audit regressions passed
+
+== netrunner: full daemon menus stay inside the client instruction budget
+  ok   all forty daemons and jack-out remain available
+  ok   the state event fits its budget
+  ok   every worker resume fits its budget
+  ok   the latest requested menu replaces an unfinished build
+  ok   an offline session cannot reopen a pending menu
+  ok   stopping cancels pending menus
+NETRUNNER_CALLBACK	266	WORST_RESUME	3301
+netrunner audit regression checks passed
+offline money audit regression checks passed
+panel merged selected bound passed
+player audit regression checks passed
+placement audit regression checks passed
+player source resolution regression checks passed
+player list session ownership regression checks passed
+police audit regressions passed
+radio authority audit regression checks passed
+
+== ripperdoc: full patient charts stay inside the client budget
+  ok   the full chart opens
+  ok   the chart event only queues work
+  ok   every chart construction and menu validation resume stays bounded
+  ok   the newest chart owns the install submenu
+  ok   a consent invitation supersedes an unfinished chart
+  ok   withdrawing a queued invitation cancels its builder
+  ok   stopping cancels unfinished charts
+RIPPERDOC_CALLBACK	32	WORST_RESUME	2914
+  ok   all sixty supply rows open in bounded resumes
+RIPPERDOC_SUPPLY_WORST	2731
+ripperdoc identity audit: PASS
+security audit regressions passed
+audit-services: PASS
+audit-services: offer claim and detention PASS
+audit-services: mint cap, deposit lock and ledger PASS
+audit-services: street settlement PASS
+tags client: quota turnover and refused-update checks passed
+taxi audit regressions passed
+
+== underworld: fence offers retain exact one and five item quantities
+  ok   a fence row with 1 held items is enabled
+  ok   the sell quantities are distinct and include the full stack 1
+  ok   a fence row with 5 held items is enabled
+  ok   the sell quantities are distinct and include the full stack 5
+  ok   a fence row with 7 held items is enabled
+  ok   the sell quantities are distinct and include the full stack 7
+vehicles economy: 16 checks passed
+audit-work-services: PASS

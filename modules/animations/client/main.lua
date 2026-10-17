@@ -88,6 +88,7 @@ local shelves = nil
 -- The parts of the offer being assembled: its serial, its part count and the
 -- rows of each part that has landed.
 local incoming = nil
+local offerGeneration = 0
 
 -- What the server offers with a nearby player: paired-kind ids, shortcuts and
 -- whether any two profiles may be asked for. Nothing until the offer lands.
@@ -467,11 +468,13 @@ function Runtime.Reply(inviteId, accepted)
 end
 
 -- Spends work units, giving the frame back once COMMIT_UNITS are spent.
-local function breathe(spent)
+local function breathe(spent, token)
 	units = units + spent
-	if units < COMMIT_UNITS then return end
-	units = 0
-	if type(Wait) == 'function' and coroutine.isyieldable() then Wait(0) end
+	if units >= COMMIT_UNITS then
+		units = 0
+		if type(Wait) == 'function' and coroutine.isyieldable() then Wait(0) end
+	end
+	return token == offerGeneration
 end
 
 -- What one row of the offer costs to take in, in work units.
@@ -507,7 +510,7 @@ end
 
 -- Builds the picker's index of an offer: by category, then all of them in
 -- category order.
-local function indexOf(built)
+local function indexOf(built, token)
 	local byCategory = {}
 	local entries = Catalogue.Entries()
 	for position = 1, #entries do
@@ -517,7 +520,7 @@ local function indexOf(built)
 			byCategory[entry.category] = rows
 			rows[#rows + 1] = entry
 		end
-		breathe(1)
+		if not breathe(1, token) then return nil end
 	end
 	local all = {}
 	for position = 1, #Catalogue.CATEGORIES do
@@ -530,18 +533,21 @@ end
 -- Takes a whole offer in, on its own thread: a hundred-odd definitions
 -- adopted and indexed in one resume is past the client's instruction budget.
 -- What the picker reads is swapped in at the end, never half-built.
-local function commit(assembled)
+local function commit(assembled, token)
+	if token ~= offerGeneration then return end
 	shelves, units = nil, 0
 	Catalogue.Forget()
 	local built = {}
 	for part = 1, #assembled.rows do
 		local rows = assembled.rows[part]
 		for position = 1, #rows do
+			if token ~= offerGeneration then return end
 			take(rows[position], built)
-			breathe(rowUnits(rows[position]))
+			if not breathe(rowUnits(rows[position]), token) then return end
 		end
 	end
-	local indexed = indexOf(built)
+	local indexed = indexOf(built, token)
+	if token ~= offerGeneration or indexed == nil then return end
 	offer, shelves, duos = built, indexed, assembled.duos
 	if Runtime.OnOffered then Runtime.OnOffered() end
 end
@@ -586,10 +592,12 @@ local function onOffer(number, part, parts, rows, extra)
 	if incoming.landed < parts then return end
 	local assembled = incoming
 	incoming = nil
+	offerGeneration = offerGeneration + 1
+	local token = offerGeneration
 	if type(CreateThread) == 'function' then
-		CreateThread(function() commit(assembled) end)
+		CreateThread(function() commit(assembled, token) end)
 	else
-		commit(assembled)
+		commit(assembled, token)
 	end
 end
 
@@ -710,6 +718,7 @@ end
 --- Builds the request state.
 -- @author dop42
 function Runtime.Init()
+	offerGeneration = offerGeneration + 1
 	pending, owners, offer, lock, serial, sweepJob = {}, {}, nil, nil, 0, nil
 	shelves, incoming, duos = nil, nil, NO_DUOS
 	-- Posted here rather than at load: the presenter only calls them from its
@@ -741,6 +750,7 @@ end
 -- Named apart from `Runtime.Stop`, which is the request that ends a playback.
 -- @author dop42
 function Runtime.Shutdown()
+	offerGeneration = offerGeneration + 1
 	if sweepJob ~= nil then
 		OPX.Scheduler.Cancel(sweepJob)
 		sweepJob = nil

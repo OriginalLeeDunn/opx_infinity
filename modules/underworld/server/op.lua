@@ -131,8 +131,9 @@ end
 
 --- Whether the connection still carries the same character.
 local function sameCharacter(op)
+	if op.departed then return false end
 	local loaded = Op.Character(op.player)
-	return loaded ~= nil and loaded.citizenId == op.citizenId
+	return loaded ~= nil and loaded.citizenId == op.citizenId and loaded.data == op.loaded.data
 end
 
 --- How many dirty eddies a list of items carries.
@@ -154,22 +155,19 @@ end
 function Op.Refund(player, citizenId, payload)
 	local lost = {}
 	local bag, purse = inventory(), character()
-	local target = player or citizenId
+	-- A previous inventory write may yield across a character switch.
+	local target = citizenId
 	for _, entry in ipairs(type(payload) == 'table' and payload.items or {}) do
 		local added = bag ~= nil and bag.AddItem(target, entry.name, entry.count) or nil
 		if type(added) ~= 'table' or not added.ok then
-			-- A full bag is not a reason to lose a refund: the character's row.
-			if target ~= citizenId and bag ~= nil then added = bag.AddItem(citizenId, entry.name, entry.count) end
-			if type(added) ~= 'table' or not added.ok then
-				lost[#lost + 1] = ('%dx %s'):format(entry.count, entry.name)
-			end
+			lost[#lost + 1] = ('%dx %s'):format(entry.count, entry.name)
 		end
 	end
 	for _, entry in ipairs(type(payload) == 'table' and payload.money or {}) do
 		local ok = false
 		if purse ~= nil then
 			if player ~= nil then
-				local called, added = pcall(purse.AddMoney, player, entry.type, entry.amount, 'underworld:refund')
+				local called, added = pcall(purse.AddMoney, citizenId, entry.type, entry.amount, 'underworld:refund')
 				ok = called and added == true
 			end
 			if not ok and type(purse.AddMoneyOffline) == 'function' then
@@ -189,7 +187,7 @@ local function reserve(op)
 	local taken = { items = {}, money = {} }
 	local bag, purse = inventory(), character()
 	for _, entry in ipairs(inputs.items or {}) do
-		local removed = bag ~= nil and bag.RemoveItem(op.player, entry.name, entry.count) or nil
+		local removed = bag ~= nil and bag.RemoveItem(op.citizenId, entry.name, entry.count) or nil
 		if type(removed) ~= 'table' or not removed.ok then
 			Op.Refund(op.player, op.citizenId, taken)
 			return entry.name == M.Built.dirty.item and 'not_enough_dirty' or 'not_enough_items'
@@ -198,7 +196,7 @@ local function reserve(op)
 	end
 	for _, entry in ipairs(inputs.money or {}) do
 		local called, removed = false, false
-		if purse ~= nil then called, removed = pcall(purse.RemoveMoney, op.player, entry.type, entry.amount,
+		if purse ~= nil then called, removed = pcall(purse.RemoveMoney, op.citizenId, entry.type, entry.amount,
 			'underworld:' .. op.kind) end
 		if not called or removed ~= true then
 			Op.Refund(op.player, op.citizenId, taken)
@@ -230,7 +228,7 @@ local function release(op)
 end
 
 local function tell(op, ok, code, result)
-	if type(op.spec.after) ~= 'function' then return end
+	if type(op.spec.after) ~= 'function' or not sameCharacter(op) then return end
 	local called, failure = pcall(op.spec.after, op, ok, code, result)
 	if not called then Open77.log.warn(('[underworld] the %s answer raised: %s'):format(op.kind, tostring(failure))) end
 end
@@ -346,8 +344,9 @@ function Op.Begin(player, spec)
 	if byPlayer[player] ~= nil then return false, 'busy' end
 	local progress = OPX.Api.Get('progress')
 	if progress == nil or type(progress.Start) ~= 'function' then return false, 'no_bar' end
-	local loaded = spec.loaded or Op.Character(player)
+	local loaded = Op.Character(player)
 	if loaded == nil then return false, 'no_character' end
+	if spec.loaded ~= nil and spec.loaded.data ~= loaded.data then return false, 'left' end
 	local why, at = Op.Standing(player, spec.anchor, spec.reach)
 	if why ~= nil then return false, why end
 
@@ -465,7 +464,7 @@ function Op.Start()
 		local op = player ~= nil and byPlayer[player] or nil
 		-- A bar settles `left` through the progress module; an op still
 		-- reserving is cancelled where it resumes.
-		if op ~= nil and op.state == 'reserving' then op.player = -1 end
+		if op ~= nil and op.state == 'reserving' then op.departed = true end
 	end)
 end
 

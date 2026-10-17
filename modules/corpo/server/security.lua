@@ -171,7 +171,8 @@ function Security.Detain(player, payload)
 		durationMs = built.security.detainMs, cancelable = true },
 		function(who, outcome) onDetained(who, outcome) end)
 	if type(started) ~= 'table' or not started.ok then return S.Answer(player, false, 'busy') end
-	detentions[player] = { suspect = suspect, corp = corp.key, enclave = enclave.key, barId = started.value.id }
+	detentions[player] = { suspect = suspect, suspectCid = target.PlayerData.citizenId,
+		guardCid = guard.PlayerData.citizenId, corp = corp.key, enclave = enclave.key, barId = started.value.id }
 	S.Answer(suspect, false, 'being_detained', { corp = corp.label })
 	return true, 'detaining'
 end
@@ -221,7 +222,8 @@ onDetained = function(player, outcome)
 	local corp = guard and securityOf(guard) or nil
 	local target = S.PlayerOf(detention.suspect)
 	local a, b = S.PointOf(player), S.PointOf(detention.suspect)
-	if corp == nil or corp.key ~= detention.corp or target == nil or a == nil or b == nil then
+	if corp == nil or corp.key ~= detention.corp or target == nil or a == nil or b == nil
+		or guard.PlayerData.citizenId ~= detention.guardCid or target.PlayerData.citizenId ~= detention.suspectCid then
 		return S.Answer(player, false, 'not_trespassing')
 	end
 	local enclave = sharedEnclave(corp, a, target, b)
@@ -230,23 +232,31 @@ onDetained = function(player, outcome)
 		return S.Answer(player, false, 'too_far')
 	end
 	local took = handoff(detention.suspect, player, corp, enclave, b)
+	-- Police contracts may yield; a replacement occupant is never ejected.
+	local liveTarget = S.PlayerOf(detention.suspect)
+	local sameTarget = liveTarget ~= nil and liveTarget.PlayerData.citizenId == detention.suspectCid
 	local mode = built.security.eject
 	local ejected = false
-	if enclave.eject ~= nil and (mode == 'always' or (mode == 'no_police' and not took))
+	if sameTarget and enclave.eject ~= nil and (mode == 'always' or (mode == 'no_police' and not took))
 		and type(Open77.players.teleport) == 'function' then
 		local read, pending = pcall(Open77.players.teleport, detention.suspect, enclave.eject, { dismount = true })
 		ejected = read and pending ~= nil
 	end
-	local record = S.Record(player, corp.key)
+	local record = S.Record(detention.guardCid, corp.key)
 	Access.Move(record, built.security.standing, built)
-	S.SaveRecord(player, corp.key, record)
+	S.SaveRecord(detention.guardCid, corp.key, record)
 	if inside[enclaveId(enclave)] ~= nil then inside[enclaveId(enclave)][detention.suspect] = nil end
 	OPX.Audit.Security('corpo.detained', ('player %d detained player %d in %s'):format(player, detention.suspect,
 		enclaveId(enclave)), { corp = corp.key, enclave = enclave.key, police = took, ejected = ejected }, player)
 	OPX.Publish(M.Event.ON_DETAINED, player, { corp = corp.key, enclave = enclave.key, suspect = detention.suspect,
 		by = player, police = took })
-	S.Answer(detention.suspect, false, took and 'detained_police' or 'detained', { corp = corp.label })
-	S.Answer(player, true, took and 'detained_police' or 'detained', { label = enclave.label, standing = record.s })
+	if sameTarget then
+		S.Answer(detention.suspect, false, took and 'detained_police' or 'detained', { corp = corp.label })
+	end
+	local liveGuard = S.PlayerOf(player)
+	if liveGuard ~= nil and liveGuard.PlayerData.citizenId == detention.guardCid then
+		S.Answer(player, true, took and 'detained_police' or 'detained', { label = enclave.label, standing = record.s })
+	end
 end
 
 -- ── reads for the contract ──────────────────────────────────────────────────

@@ -224,8 +224,12 @@ end
 --- A citizen's record, newest first. Yields.
 -- @author dop42
 function Storage.List(citizenId, limit, withExpunged)
-	return rows(OPX.Storage.Query(SQL.LIST, { citizen = citizenId, all = withExpunged and 1 or 0 }),
-		recordOf, limit)
+	local read = OPX.Storage.Query(SQL.LIST, { citizen = citizenId, all = withExpunged and 1 or 0 })
+	if not read.ok or type(read.value) ~= 'table' then
+		logged(read, 'a citizen record read')
+		return nil
+	end
+	return rows(read, recordOf, limit)
 end
 
 --- One entry by id, or nil. Yields.

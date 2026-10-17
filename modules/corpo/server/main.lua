@@ -274,19 +274,21 @@ local unfund = S.Unfund
 --- Pays a player out of a corp's money. Answers ok and how, or false and why.
 function S.Pay(player, corp, amount, opId, reason)
 	if amount <= 0 then return true, 'none' end
+	local cid = type(player) == 'string' and player or citizenOf(playerOf(player))
+	if cid == nil then return false, 'payment_failed' end
 	local via, why = fund(corp, amount, opId, reason)
 	if via == nil then return false, why end
 	local api = character()
 	local paid = false
 	if api ~= nil and type(api.AddMoney) == 'function' then
-		local read, ok = pcall(api.AddMoney, player, built.currency, amount, reason)
+		local read, ok = pcall(api.AddMoney, cid, built.currency, amount, reason)
 		paid = read and ok == true
 	end
 	if not paid then
 		unfund(corp, amount, via, opId, reason)
 		return false, 'payment_failed'
 	end
-	OPX.Audit.Log({ event = 'corpo.pay', message = ('player %d paid %d by %s (%s, %s)'):format(player, amount,
+	OPX.Audit.Log({ event = 'corpo.pay', message = ('player %s paid %d by %s (%s, %s)'):format(player, amount,
 		corp.key, via, opId), data = { corp = corp.key, amount = amount, via = via, op = opId }, source = player })
 	return true, via
 end
@@ -409,10 +411,10 @@ local function giveItem(player, kind, metadata)
 	return read and type(added) == 'table' and added.ok == true
 end
 
-local function takeSlot(player, slot)
+local function takeSlot(player, slot, name, metadata)
 	local api = inventory()
 	if api == nil or type(api.RemoveFromSlot) ~= 'function' then return false end
-	local read, removed = pcall(api.RemoveFromSlot, player, slot, 1)
+	local read, removed = pcall(api.RemoveFromSlot, player, slot, 1, { name = name, metadata = metadata })
 	return read and type(removed) == 'table' and removed.ok == true
 end
 
@@ -473,10 +475,10 @@ function S.Fail(assignment, reason, loss, keepItem)
 	local player = assignment.player
 	local online = player ~= nil and citizenOf(playerOf(player)) == assignment.cid
 	if online and not keepItem and assignment.item ~= nil then
-		local slot = slotOf(player, assignment)
-		if slot ~= nil then takeSlot(player, slot) end
+		local slot, metadata = slotOf(player, assignment)
+		if slot ~= nil then takeSlot(assignment.cid, slot, itemName(assignment.item), metadata) end
 	end
-	local who = online and player or assignment.cid
+	local who = assignment.cid
 	local record = recordOf(who, assignment.corp)
 	Access.Fail(record, loss or assignment.loss, built)
 	saveRecord(who, assignment.corp, record)
@@ -485,7 +487,7 @@ function S.Fail(assignment, reason, loss, keepItem)
 		source = online and player or nil })
 	OPX.Publish(M.Event.ON_FAILED, online and player or nil, { cid = assignment.cid, corp = assignment.corp,
 		kind = assignment.kind, template = assignment.template, reason = reason })
-	if online then
+	if online and citizenOf(playerOf(player)) == assignment.cid then
 		answer(player, false, 'failed_' .. reason, { label = assignment.label, standing = record.s })
 		sendActive(player)
 	end
@@ -500,20 +502,23 @@ function S.Complete(assignment, player)
 	despawn(assignment)
 	local corp = built.corps[assignment.corp]
 	local reason = ('corpo:%s:%d'):format(assignment.corp, assignment.id)
-	local paid, via = pay(player, corp, assignment.pay, ('corpo:%d:%s:pay'):format(assignment.id, assignment.serial),
+	local paid, via = pay(assignment.cid, corp, assignment.pay, ('corpo:%d:%s:pay'):format(assignment.id, assignment.serial),
 		reason)
-	local record = recordOf(player, corp.key)
+	local record = recordOf(assignment.cid, corp.key)
 	local _, owed = Access.Succeed(record, assignment.standing, built)
 	if owed then
 		local bonus = built.quarter.bonus
-		local got = pay(player, corp, bonus, ('corpo:q:%s:%s:%d'):format(assignment.cid, corp.key, record.q),
+		local got = pay(assignment.cid, corp, bonus, ('corpo:q:%s:%s:%d'):format(assignment.cid, corp.key, record.q),
 			reason .. ':quarter')
 		if got then
 			record.qPaid = true
-			answer(player, true, 'quarter_bonus', { corp = corp.label, amount = OPX.Locale.Money(bonus) })
+			if citizenOf(playerOf(player)) == assignment.cid then
+				answer(player, true, 'quarter_bonus', { corp = corp.label, amount = OPX.Locale.Money(bonus) })
+			end
 		end
 	end
-	saveRecord(player, corp.key, record)
+	saveRecord(assignment.cid, corp.key, record)
+	if citizenOf(playerOf(player)) ~= assignment.cid then return end
 	OPX.Publish(M.Event.ON_COMPLETED, player, { cid = assignment.cid, corp = corp.key, kind = assignment.kind,
 		template = assignment.template, pay = paid and assignment.pay or 0, standing = record.s,
 		funded = paid and via or nil })
@@ -592,7 +597,12 @@ function M.Accept(player, payload)
 	if offer.kind == Kind.ESCORT and npcs() == nil then return answer(player, false, 'no_npcs') end
 	if offer.kind == Kind.RETRIEVE and progressApi() == nil then return answer(player, false, 'no_bar') end
 
-	-- Off the board before anything yields: first come, first served.
+	-- Earlier capacity/account reads can yield: repeat the claim checks.
+	if citizenOf(playerOf(player)) ~= cid then return false, 'no_character' end
+	if #mine(cid) >= built.board.maxActive then return answer(player, false, 'already_working') end
+	local liveOffer, liveIndex = offerAt(board, offer.id)
+	if liveOffer ~= offer then return answer(player, false, 'offer_gone') end
+	index = liveIndex
 	table.remove(board.offers, index)
 	nextId = nextId + 1
 	local now = OPX.Now()
@@ -604,15 +614,18 @@ function M.Accept(player, payload)
 		record = offer.record, from = offer.from, to = destination, serial = serialOf(corp.key),
 		deadlineMs = now + offer.deadlineS * 1000, acceptedAt = now,
 	}
+	-- The character's assignment slot stays claimed during the bag write.
+	assignments[assignment.id] = assignment
 	if offer.kind == Kind.DELIVER then
 		assignment.stage = Stage.CARRY
 		local item = built.items[offer.item]
-		if not giveItem(player, offer.item, {
+		if not giveItem(cid, offer.item, {
 			assignment = assignment.id, serial = assignment.serial, corp = corp.key,
 			stealable = offer.stealable or nil, label = item.label,
 			description = ('%s - %s -> %s'):format(corp.label, offer.label, destination.label),
 		}) then
-			table.insert(board.offers, index, offer)
+			assignments[assignment.id] = nil
+			table.insert(board.offers, math.min(index, #board.offers + 1), offer)
 			return answer(player, false, 'cannot_carry')
 		end
 	elseif offer.kind == Kind.SWEEP then
@@ -620,7 +633,7 @@ function M.Accept(player, payload)
 	else
 		assignment.stage = Stage.GOTO
 	end
-	assignments[assignment.id] = assignment
+	if citizenOf(playerOf(player)) ~= cid then assignment.player = nil; return true, 'accepted' end
 	OPX.Audit.Log({ event = 'corpo.accepted', message = ('player %d took %s for %s (%d)'):format(player,
 		offer.template, corp.key, amount), data = { corp = corp.key, id = assignment.id, template = offer.template,
 		pay = amount }, source = player })
@@ -654,9 +667,9 @@ function M.Deliver(player, payload)
 		if assignment.stage == Stage.CARRY and to ~= nil and to.corp == place.corp and to.list == place.list
 			and to.key == place.key then
 			assignment.player = player
-			local slot = slotOf(player, assignment)
+			local slot, metadata = slotOf(player, assignment)
 			if slot == nil then return answer(player, false, 'no_item') end
-			if not takeSlot(player, slot) then return answer(player, false, 'no_item') end
+			if not takeSlot(cid, slot, itemName(assignment.item), metadata) then return answer(player, false, 'no_item') end
 			complete(assignment, player)
 			return true, 'completed'
 		end
@@ -678,17 +691,19 @@ function M.HandIn(player, loaded, office)
 			and metadata.thief == cid then
 			local hired, why = employee(player, corp)
 			if hired == nil then return answer(player, false, why) end
-			if not takeSlot(player, item.slot) then return answer(player, false, 'no_item') end
+			if not takeSlot(cid, item.slot, item.name, metadata) then return answer(player, false, 'no_item') end
 			local amount = Access.Between(built.espionage.pay[1], built.espionage.pay[2], M.Roll())
-			local paid, refusal = pay(player, corp, amount, ('corpo:spy:%s'):format(tostring(metadata.serial)),
+			local paid, refusal = pay(cid, corp, amount, ('corpo:spy:%s'):format(tostring(metadata.serial)),
 				'corpo:espionage:' .. corp.key)
 			if not paid then
-				giveItem(player, 'datashard', metadata)
+				giveItem(cid, 'datashard', metadata)
+				if citizenOf(playerOf(player)) ~= cid then return false, refusal end
 				return answer(player, false, refusal)
 			end
-			local record = recordOf(player, corp.key)
+			local record = recordOf(cid, corp.key)
 			Access.Move(record, built.espionage.standing, built)
-			saveRecord(player, corp.key, record)
+			saveRecord(cid, corp.key, record)
+			if citizenOf(playerOf(player)) ~= cid then return true, 'intel_sold' end
 			OPX.Audit.Log({ event = 'corpo.intel', message = ('player %d sold %s intel to %s for %d'):format(player,
 				tostring(metadata.from), corp.key, amount), data = { corp = corp.key, from = metadata.from,
 				amount = amount }, source = player })
@@ -739,9 +754,10 @@ onRetrieved = function(player, outcome, id)
 		if outcome.ending ~= 'left' then answer(player, false, 'retrieve_cancelled') end
 		return
 	end
+	if citizenOf(playerOf(player)) ~= assignment.cid then return end
 	if not within(pointOf(player), assignment.from) then return answer(player, false, 'too_far') end
 	local corp = built.corps[assignment.corp]
-	if not giveItem(player, 'datashard', {
+	if not giveItem(assignment.cid, 'datashard', {
 		assignment = assignment.id, serial = assignment.serial, corp = corp.key,
 		stealable = assignment.stealable or nil, label = built.items.datashard.label,
 		description = ('%s - %s -> %s'):format(corp.label, assignment.from.label, assignment.to.label),
@@ -845,9 +861,13 @@ function M.Outsource(player, payload)
 	local target = publishTarget(offer)
 	local reward = math.floor(offer.pay * built.publish.markup + 0.5)
 	local opId = ('corpo:pub:%s:%d'):format(offer.id, board.serial)
-	local via, broke = fund(corp, reward, opId, 'corpo:outsource:' .. corp.key)
-	if via == nil then return answer(player, false, broke) end
+	-- Claim before the account round trip: one offer funds one contract.
 	table.remove(board.offers, index)
+	local via, broke = fund(corp, reward, opId, 'corpo:outsource:' .. corp.key)
+	if via == nil then
+		table.insert(board.offers, math.min(index, #board.offers + 1), offer)
+		return answer(player, false, broke)
+	end
 	local read, posted = pcall(api.Post, {
 		type = target.type, title = OPX.Text.Clean(('%s: %s'):format(corp.label, offer.label), 60) or offer.label,
 		brief = offer.brief, reward = reward, funded = 'external', poster = corp.label,
@@ -962,15 +982,15 @@ onStolen = function(player, outcome)
 	local slot, metadata = slotOf(theft.victim, assignment)
 	if slot == nil then return answer(player, false, 'nothing_to_steal') end
 	if not canCarry(player, 'datashard') then return answer(player, false, 'cannot_carry') end
-	if not takeSlot(theft.victim, slot) then return answer(player, false, 'nothing_to_steal') end
+	if not takeSlot(assignment.cid, slot, itemName(assignment.item), metadata) then return answer(player, false, 'nothing_to_steal') end
 	local victimCorp = built.corps[assignment.corp]
 	local loot = {
 		stolen = true, forCorp = thiefCorp.key, from = victimCorp.key, thief = citizenOf(thief),
 		serial = serialOf(thiefCorp.key), label = built.items.datashard.label,
 		description = ('%s intel - for %s'):format(victimCorp.label, thiefCorp.label),
 	}
-	if not giveItem(player, 'datashard', loot) then
-		giveItem(theft.victim, assignment.item, metadata)
+	if not giveItem(citizenOf(thief), 'datashard', loot) then
+		giveItem(assignment.cid, assignment.item, metadata)
 		return answer(player, false, 'cannot_carry')
 	end
 	assignment.player = theft.victim
@@ -988,6 +1008,10 @@ local function tickOne(assignment, now)
 	if now >= assignment.deadlineMs then return fail(assignment, 'expired') end
 	local player = assignment.player
 	if player == nil then return end
+	if citizenOf(playerOf(player)) ~= assignment.cid then
+		assignment.player, assignment.holdSince = nil, nil
+		return
+	end
 	if assignment.stage == Stage.SWEEP then
 		local at = pointOf(player)
 		if at ~= nil and Access.Inside(at, assignment.from) and not OPX.Life.Down(player) then

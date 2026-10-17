@@ -101,12 +101,20 @@ local function citizenOf(player)
 	return data and type(data.citizenId) == 'string' and data.citizenId or nil
 end
 
+local function participants(job)
+	return loaded(job.medic) == job.medicData and loaded(job.patient) == job.patientData
+end
+
 -- Whether one player may act for a service at a grade, by the shared gate.
 local function member(player, svc, minGrade)
 	local data = loaded(player)
 	if data == nil then return false, 'no_character' end
+	local jobs = Model.Jobs(svc, minGrade)
+	-- A service with no staff definition is unavailable. JobGate treats an
+	-- absent requirement as a public surface, which a medical role never is.
+	if type(jobs) ~= 'table' or next(jobs) == nil then return false, 'job_required' end
 	local now = OPX.Now()
-	return OPX.JobGate.Evaluate({ jobs = Model.Jobs(svc, minGrade), onDuty = svc.onDuty },
+	return OPX.JobGate.Evaluate({ jobs = jobs, onDuty = svc.onDuty },
 		{ job = data.job, jobs = data.jobs, atMs = now }, now,
 		{ maxAgeMs = 0, membership = config().membership })
 end
@@ -489,7 +497,7 @@ local function release(job)
 		end
 		job.bedPlayback = nil
 	end
-	if job.holding then
+	if job.holding and loaded(job.medic) == job.medicData then
 		local held = Open77.heldItems
 		if type(held) == 'table' and type(held.release) == 'function' then pcall(held.release, job.medic) end
 		job.holding = nil
@@ -500,6 +508,7 @@ end
 -- the length of a carry and put back when it ends.
 local function holdWounded(job, carried)
 	if not job.wounded then return end
+	if loaded(job.patient) ~= job.patientData then return end
 	local downed = OPX.Api.Get('downed')
 	if downed ~= nil and type(downed.SetCarried) == 'function' then
 		pcall(downed.SetCarried, job.patient, OWNER, carried)
@@ -525,10 +534,10 @@ local function apply(job)
 end
 
 -- Ends one treatment. Every way it can end comes through here exactly once.
-local function finish(job, completed, ending)
-	if job.done then return end
-	job.done = true
-	release(job)
+local function finishBody(job, completed, ending)
+	-- A bar protects the medic's connection, but its patient can switch
+	-- character independently while it runs. Neither role follows the slot.
+	if not participants(job) then return end
 	-- A carry is not a treatment: however it ended, the patient is on their feet.
 	if job.treat.kind == Kind.CARRY then
 		holdWounded(job, false)
@@ -550,6 +559,7 @@ local function finish(job, completed, ending)
 	if not hasItems(job.medic, job.treat) or not takeItems(job.medic, job.treat) then
 		return answer(job.medic, false, 'no_items')
 	end
+	if not participants(job) then return end
 	local ok, failure = apply(job)
 	if not ok then
 		audit('medical.treat', job.medic, false, ('%s/%s: %s'):format(job.svc.key, job.treat.key, failure))
@@ -574,6 +584,16 @@ local function finish(job, completed, ending)
 	elseif paid > 0 then
 		OPX.NotifyLocale(job.patient, 'medical.patient.billed', { service = job.svc.label, amount = money }, 'info')
 	end
+end
+
+local function finish(job, completed, ending)
+	if job.done then return end
+	job.done = true
+	-- Item reads can yield during completion. Keep both participants reserved
+	-- until the entire treatment settles, including any failure path.
+	local ran, failure = pcall(finishBody, job, completed, ending)
+	release(job)
+	if not ran then error(failure, 0) end
 end
 
 -- A progress bar on the medic's screen, judged by the server's clock.
@@ -681,6 +701,13 @@ local function holdProp(job)
 end
 
 local function begin(job)
+	if not participants(job) then return false, 'interrupted' end
+	if not member(job.medic, job.svc, job.treat.minGrade) then return false, 'not_member' end
+	if not within(positionOf(job.medic), positionOf(job.patient), config().reach) then
+		return false, 'too_far'
+	end
+	local unfitReason = unfit(job.patient, job.treat.kind)
+	if unfitReason ~= nil then return false, unfitReason end
 	busy[job.medic], treating[job.patient] = job, job
 	if job.treat.kind == Kind.CARRY then
 		local carrying, why = startCarry(job)
@@ -737,6 +764,8 @@ local function onTreat(player, payload)
 	end
 	local why = unfit(patient, treat.kind)
 	if why ~= nil then return answer(player, false, why) end
+	local medicData, patientData = loaded(player), loaded(patient)
+	if medicData == nil or patientData == nil then return answer(player, false, 'no_patient') end
 	local stocked, missing = hasItems(player, treat)
 	if not stocked then return answer(player, false, 'no_items', { item = missing }) end
 	local tier, offContract = footing(patient, svc)
@@ -745,7 +774,8 @@ local function onTreat(player, payload)
 		return answer(player, false, 'unpaid')
 	end
 	local job = { medic = player, patient = patient, svc = svc, treat = treat, tier = tier,
-		offContract = offContract, fee = fee }
+		offContract = offContract, fee = fee, medicData = medicData, patientData = patientData }
+	if not participants(job) then return end
 
 	-- CONSENT: a heal or a carry on a body that can still say no asks first. A
 	-- revive never does -- the body cannot answer, and a contract is the consent.
@@ -771,6 +801,8 @@ local function onConsent(player, payload)
 	if job == nil or job.patient ~= player then return end
 	invites[id] = nil
 	release(job)
+	if not participants(job) then return end
+	if OPX.Now() >= job.expiresMs then return answer(job.medic, false, 'consent_expired') end
 	if type(payload) ~= 'table' or payload.accepted ~= true then
 		return answer(job.medic, false, 'consent_declined')
 	end
@@ -1013,7 +1045,11 @@ function M.Start()
 			if player == nil or player <= 0 then return end
 			if cooled(player, kind) then return answer(player, false, 'rate_limited') end
 			-- On a thread: the bag and the account are read, and both may yield.
-			CreateThread(function() handler(player, payload) end)
+			local data = loaded(player)
+			CreateThread(function()
+				if data == nil or loaded(player) ~= data then return end
+				handler(player, payload)
+			end)
 		end)
 	end
 	wire(Event.BOARD, 'board', onBoard)

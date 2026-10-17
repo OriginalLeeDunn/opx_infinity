@@ -24,6 +24,8 @@ local HUD_ID = 'opx.netrunner.hud'
 local accessPoints, brokers = {}, {}
 local state = nil
 local menuHandle = nil
+local menuPending, menuWorking = nil, false
+local menuGeneration, stopped = 0, false
 
 local function title()
 	return locale('netrunner.title')
@@ -42,7 +44,7 @@ end
 --- Opens the run's menu from the last state the server sent.
 -- @author dop42
 -- @return boolean
-function M.OpenRun()
+local function buildRun(state, generation)
 	if state == nil or state.phase ~= 'connected' then return false end
 	local menu = OPX.Api.Get('menu')
 	if menu == nil or type(menu.Open) ~= 'function' then
@@ -67,14 +69,20 @@ function M.OpenRun()
 				close = true,
 			}
 		end
+		if index % 4 == 0 then
+			Wait(0)
+			if stopped or generation ~= menuGeneration then return false end
+		end
 	end
 	items[#items + 1] = { id = 'out', label = locale('netrunner.menu.jackOut'), icon = 'back',
 		data = { verb = 'out' }, close = true }
+	Wait(0)
+	if stopped or generation ~= menuGeneration then return false end
 	closeMenu()
 	local opened = menu.Open({
 		owner = OWNER, id = MENU_ID, steal = true, focus = 'cursor',
 		title = OPX.Text.Clean(tostring(state.label or title()), 60) or title(),
-		items = items,
+		items = items, yield = true,
 		on = function(payload)
 			local data = type(payload) == 'table' and payload.data or nil
 			if type(data) ~= 'table' then return end
@@ -91,6 +99,33 @@ function M.OpenRun()
 		return false
 	end
 	menuHandle = type(opened.value) == 'table' and opened.value.handle or nil
+	if stopped or generation ~= menuGeneration then
+		closeMenu()
+		return false
+	end
+	return true
+end
+
+-- One worker serializes paced menu builds; replies received during a build
+-- replace its pending snapshot instead of opening competing menu instances.
+function M.OpenRun()
+	if stopped or state == nil or state.phase ~= 'connected' then return false end
+	menuGeneration = menuGeneration + 1
+	menuPending = state
+	if menuWorking then return true end
+	menuWorking = true
+	CreateThread(function()
+		while menuPending ~= nil and not stopped do
+			local pending, generation = menuPending, menuGeneration
+			menuPending = nil
+			Wait(0)
+			if not stopped and generation == menuGeneration then
+				local ok, why = pcall(buildRun, pending, generation)
+				if not ok then OPX.Note('netrunner', 'the run menu could not be drawn: ' .. tostring(why)) end
+			end
+		end
+		menuWorking = false
+	end)
 	return true
 end
 
@@ -99,6 +134,8 @@ end
 local function onState(payload)
 	if type(payload) ~= 'table' then return end
 	if payload.phase == 'offline' then
+		menuGeneration = menuGeneration + 1
+		menuPending = nil
 		state = nil
 		closeMenu()
 		OPX.Toast.Dismiss(HUD_ID)
@@ -214,6 +251,8 @@ end
 -- @author dop42
 function M.Init()
 	accessPoints, brokers, state, menuHandle = {}, {}, nil, nil
+	menuPending, menuWorking, stopped = nil, false, false
+	menuGeneration = menuGeneration + 1
 end
 
 --- Publishes the client half: the run as last sent, and the menu.
@@ -241,6 +280,9 @@ end
 --- Hands the menu and the readout back.
 -- @author dop42
 function M.Stop()
+	stopped = true
+	menuGeneration = menuGeneration + 1
+	menuPending = nil
 	closeMenu()
 	pcall(OPX.Toast.Dismiss, HUD_ID)
 	state = nil

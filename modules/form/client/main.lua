@@ -854,7 +854,13 @@ local function onEdit(payload)
 	local seq = finite(payload.seq) and math.floor(payload.seq) or nil
 	-- Never backwards: two edits can cross on the wire, and the older one
 	-- arriving second must not un-answer the newer one.
-	if seq ~= nil and seq > field.ack then field.ack = seq end
+	if seq ~= nil then
+		if seq <= field.ack then
+			draw()
+			return
+		end
+		field.ack = seq
+	end
 
 	local entry = entryOf(record)
 	-- The focused field only. The page blurs every other input, so an edit for

@@ -432,6 +432,12 @@ function M.Bring(source, key, wanted)
 
 	local owned = vehicles.List(data.citizenId)
 	if not owned.ok then return owned end
+	local current = characterOf(source)
+	if current == nil or current.citizenId ~= data.citizenId then
+		return Result.Err('garages.noCharacter')
+	end
+	local checked, stale = resolve(source, point.key)
+	if checked == nil then return stale end
 	local rows = type(owned.value) == 'table' and owned.value or {}
 	local pick, why = choose(rows, built, wanted)
 	if pick == nil then return Result.Err(why or 'garages.nothingHere', built.key) end
@@ -494,9 +500,11 @@ function M.Bring(source, key, wanted)
 	if keys ~= nil then
 		local plate, record = pick.plate, pick.record
 		CreateThread(function()
-			local cut = keys.Ensure(source, plate, record)
+			local cut = keys.Ensure(data.citizenId, plate, record)
 			if type(cut) == 'table' and cut.ok ~= true then
-				if cut.error == 'vehiclekeys.noRoom' then
+				local current = characterOf(source)
+				if cut.error == 'vehiclekeys.noRoom' and current ~= nil
+					and current.citizenId == data.citizenId then
 					OPX.NotifyLocale(source, cut.error, { label = tostring(cut.detail or plate) }, 'error')
 				end
 				Open77.log.warn(('[garages] %s came out for %s with no key cut: %s')
@@ -586,7 +594,33 @@ function M.Use(source, key, wanted)
 		local row = type(vehicles.Get) == 'function' and vehicles.Get(seated.value.plate) or nil
 		local record = type(row) == 'table' and row.ok and type(row.value) == 'table'
 			and row.value.record or nil
-		local put = vehicles.Store(seated.value.plate, built.key)
+		local current = characterOf(source)
+		if current == nil or current.citizenId ~= data.citizenId then
+			return Result.Err('garages.noCharacter')
+		end
+		local checked, stale = resolve(source, point.key)
+		if checked == nil then return stale end
+		if othersAboard(seated.value.id, source) then
+			return Result.Err('garages.passengers', built.label)
+		end
+		local function canRemove()
+			local current = characterOf(source)
+			if current == nil or current.citizenId ~= data.citizenId then
+				return false, 'garages.noCharacter'
+			end
+			local at, stale = resolve(source, point.key)
+			if at == nil then return false, stale.error end
+			local occupied = vehicles.Occupied(source)
+			if occupied == nil or not occupied.ok or occupied.value == nil
+				or tostring(occupied.value.id) ~= tostring(seated.value.id) then
+				return false, 'garages.notYours'
+			end
+			if othersAboard(seated.value.id, source) then
+				return false, 'garages.passengers'
+			end
+			return true
+		end
+		local put = vehicles.Store(seated.value.plate, built.key, canRemove)
 		if not put.ok then return put end
 		return Result.Ok({
 			spot = point.key,

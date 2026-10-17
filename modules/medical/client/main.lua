@@ -26,6 +26,8 @@ local settings
 -- callId -> blip id, for the calls this medic was alerted to.
 local blips = {}
 local menuHandle
+local boardPending, boardWorking = nil, false
+local boardGeneration, stopped = 0, false
 
 local function config()
 	if settings == nil then settings = Model.Settings(M.Settings) end
@@ -60,7 +62,7 @@ local function toast(kind, message, icon)
 	})
 end
 
-local function openMenu(id, title, items, on)
+local function openMenu(id, title, items, on, paced)
 	local menu = OPX.Api.Get('menu')
 	if menu == nil or type(menu.Open) ~= 'function' then
 		toast('error', locale('medical.error.no_menu'))
@@ -68,6 +70,7 @@ local function openMenu(id, title, items, on)
 	end
 	local opened = menu.Open({
 		owner = OWNER, id = id, steal = true, focus = 'cursor', title = title, items = items,
+		yield = paced == true,
 		on = function(payload)
 			local data = type(payload) == 'table' and payload.data or nil
 			if type(data) == 'table' then on(data) end
@@ -79,6 +82,11 @@ local function openMenu(id, title, items, on)
 		return false
 	end
 	menuHandle = type(opened.value) == 'table' and opened.value.handle or nil
+	if stopped then
+		if menuHandle ~= nil then pcall(menu.Close, menuHandle, 'owner_stopped') end
+		menuHandle = nil
+		return false
+	end
 	return true
 end
 
@@ -96,13 +104,13 @@ local function callLabel(call)
 	return table.concat(parts, ' · ')
 end
 
-local function onBoardView(payload)
+local function buildBoard(payload, generation)
 	local calls = type(payload) == 'table' and type(payload.calls) == 'table' and payload.calls or {}
 	local items = {
 		{ id = 'nearest', label = locale('medical.board.nearest'), icon = 'heal',
 			data = { verb = 'nearest' }, close = true },
 	}
-	for _, call in ipairs(calls) do
+	for index, call in ipairs(calls) do
 		local actions = {}
 		if call.mine then
 			actions[#actions + 1] = { id = 'route.' .. call.id, label = locale('medical.board.route'),
@@ -121,10 +129,16 @@ local function onBoardView(payload)
 			description = locale('medical.reason.' .. tostring(call.reason)),
 			items = actions,
 		}
+		if index % 4 == 0 then
+			Wait(0)
+			if stopped or generation ~= boardGeneration then return end
+		end
 	end
 	if #calls == 0 then
 		items[#items + 1] = { id = 'empty', label = locale('medical.board.empty'), icon = 'info', disabled = true }
 	end
+	Wait(0)
+	if stopped or generation ~= boardGeneration then return end
 	openMenu(MENU_BOARD, locale('medical.board.title'), items, function(data)
 		if data.verb == 'take' then
 			TriggerServerEvent(Event.TAKE, { callId = data.id })
@@ -135,8 +149,32 @@ local function onBoardView(payload)
 		elseif data.verb == 'nearest' then
 			TriggerServerEvent(Event.OPTIONS, {})
 		end
+	end, true)
+end
+
+-- Full snapshots coalesce while one is being built. One worker preserves menu
+-- ownership across the yields inside Open; overlapping replies never race two
+-- builders against the same dispatch menu.
+local function onBoardView(payload)
+	if stopped or type(payload) ~= 'table' then return end
+	boardGeneration = boardGeneration + 1
+	boardPending = payload
+	if boardWorking then return end
+	boardWorking = true
+	CreateThread(function()
+		while boardPending ~= nil and not stopped do
+			local pending, generation = boardPending, boardGeneration
+			boardPending = nil
+			Wait(0)
+			if not stopped and generation == boardGeneration then
+				local ok, why = pcall(buildBoard, pending, generation)
+				if not ok then OPX.Note('medical', 'the board could not be drawn: ' .. tostring(why)) end
+			end
+		end
+		boardWorking = false
 	end)
 end
+
 
 -- ── alerts and the map ───────────────────────────────────────────────────────
 
@@ -376,6 +414,8 @@ end
 -- @author dop42
 function M.Init()
 	settings, blips, menuHandle = nil, {}, nil
+	boardPending, boardWorking, stopped = nil, false, false
+	boardGeneration = boardGeneration + 1
 end
 
 --- Wires the answers, the key and the rows.
@@ -401,6 +441,9 @@ end
 --- Hands the menu and the pins back.
 -- @author dop42
 function M.Stop()
+	stopped = true
+	boardGeneration = boardGeneration + 1
+	boardPending = nil
 	for id in pairs(blips) do dropBlip(id) end
 	local menu = OPX.Api.Get('menu')
 	if menuHandle ~= nil and menu ~= nil and type(menu.Close) == 'function' then

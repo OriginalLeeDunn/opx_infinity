@@ -234,11 +234,12 @@ function M.Wear(player, payload)
 	if api == nil then return answer(player, false, 'no_appearance') end
 	if restoring[player] then return answer(player, false, 'too_fast') end
 
-	local civvies = civviesOf(player)
+	local citizenId = ctx.data.citizenId
+	local civvies = civviesOf(citizenId)
 	local base
 	local fresh = civvies == nil
 	if fresh then
-		local read, current = pcall(api.GetClothing, player)
+		local read, current = pcall(api.GetClothing, citizenId)
 		-- nil is "could not be read": nothing is written over a look nobody saw.
 		if not read or type(current) ~= 'table' or current.ok ~= true or current.value == nil then
 			return answer(player, false, 'clothing_unavailable')
@@ -250,10 +251,10 @@ function M.Wear(player, payload)
 		civvies.job, civvies.outfit = station.job, outfit.key
 	end
 	-- Kept first, worn second.
-	if not writeCivvies(player, civvies) then return answer(player, false, 'uniform_failed') end
+	if not writeCivvies(citizenId, civvies) then return answer(player, false, 'uniform_failed') end
 	local record = Access.Uniform(base, outfit, familyOf(ctx.data))
-	if not saveClothing(api, player, record) then
-		if fresh then writeCivvies(player, nil) end
+	if not saveClothing(api, citizenId, record) then
+		if fresh then writeCivvies(citizenId, nil) end
 		return answer(player, false, 'uniform_failed')
 	end
 	OPX.Audit.Log({ event = 'workplace.uniform', message = ('player %d put on %s.%s at %s'):format(player,
@@ -265,17 +266,21 @@ end
 
 --- Puts the civilian look back. `code` is what to tell the player.
 local function restore(player, code, station)
-	local civvies = civviesOf(player)
+	local data = dataOf(player)
+	if data == nil then return false, 'no_character' end
+	local citizenId = data.citizenId
+	local civvies = civviesOf(citizenId)
 	if civvies == nil then return false, 'not_in_uniform' end
 	local api = appearance()
 	if api == nil then return false, 'no_appearance' end
 	if restoring[player] then return false, 'too_fast' end
-	restoring[player] = true
+	local operation = {}
+	restoring[player] = operation
 	local record = type(civvies.clothing) == 'table' and civvies.clothing or Access.EmptyClothing()
-	local saved = saveClothing(api, player, record)
-	restoring[player] = nil
+	local saved = saveClothing(api, citizenId, record)
+	if restoring[player] == operation then restoring[player] = nil end
 	if not saved then return false, 'civvies_failed' end
-	writeCivvies(player, nil)
+	writeCivvies(citizenId, nil)
 	OPX.Audit.Log({ event = 'workplace.civvies', message = ('player %d back in civilian clothes (%s)')
 		:format(player, code), data = { job = civvies.job, reason = code }, source = player })
 	OPX.Publish(M.Event.ON_UNIFORM, player, { job = civvies.job, station = station, outfit = nil })
@@ -541,7 +546,13 @@ local function onJob(player, payload)
 	local civvies = civviesOf(player)
 	if civvies ~= nil and (job.name ~= civvies.job
 		or (built.wardrobe.restoreOffDuty and built.wardrobe.onDuty and not onDuty(job))) then
-		CreateThread(function() restore(player, 'civvies_off_duty') end)
+		local data, session = dataOf(player), OPX.Sessions[player]
+		CreateThread(function()
+			local current = dataOf(player)
+			if data == nil or current == nil or current.citizenId ~= data.citizenId or
+				OPX.Sessions[player] ~= session then return end
+			restore(player, 'civvies_off_duty')
+		end)
 	end
 end
 
@@ -701,7 +712,15 @@ local function wire(name, fn, threaded)
 		local player = math.tointeger(tonumber(source))
 		if player == nil or player <= 0 then return end
 		if threaded then
-			CreateThread(function() fn(player, payload) end)
+			local user, session = OPX.UserIdOf(player), OPX.Sessions[player]
+			local data = dataOf(player)
+			local citizenId = data and data.citizenId
+			CreateThread(function()
+				local current = dataOf(player)
+				if user == nil or citizenId == nil or OPX.UserIdOf(player) ~= user or
+					OPX.Sessions[player] ~= session or current == nil or current.citizenId ~= citizenId then return end
+				fn(player, payload)
+			end)
 		else
 			fn(player, payload)
 		end

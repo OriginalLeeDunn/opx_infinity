@@ -142,6 +142,7 @@ const width = ref(340)
 const down = ref(false)
 
 let timer: ReturnType<typeof setInterval> | undefined
+let disposed = false
 
 function positionOf(value: unknown, fallback: Position): Position {
   const name = text(value)
@@ -195,7 +196,7 @@ function leave(id: string, report: boolean): void {
 
   window.setTimeout(() => {
     toasts.value = toasts.value.filter((entry) => entry.key !== toast.key)
-    if (closing) void playStinger(closing, volume, 'close')
+    if (closing && !disposed) void playStinger(closing, volume, 'close')
   }, EXIT_MS)
 }
 
@@ -277,14 +278,14 @@ function build(payload: Payload, previous: Toast | undefined): Toast {
 }
 
 /** Plays a toast's opening clip and draws the message when it has finished. */
-async function openThenReveal(id: string, stinger: Stinger): Promise<void> {
+async function openThenReveal(key: number, stinger: Stinger): Promise<void> {
   const name = stinger.open
   if (!name) {
-    reveal(id)
+    reveal(key)
     return
   }
   await playStinger(name, stinger.volume, 'open')
-  reveal(id)
+  reveal(key)
 }
 
 /**
@@ -294,8 +295,9 @@ async function openThenReveal(id: string, stinger: Stinger): Promise<void> {
  * while the clip was playing -- all three are ordinary, because dismissing a toast
  * does not stop audio that has already been sent to the device.
  */
-function reveal(id: string): void {
-  const toast = toasts.value.find((entry) => entry.id === id && entry.held && !entry.out)
+function reveal(key: number): void {
+  if (disposed) return
+  const toast = toasts.value.find((entry) => entry.key === key && entry.held && !entry.out)
   if (!toast) return
 
   // The life comes from `durationMs` and not from the bar: a caller asking for no bar
@@ -351,7 +353,7 @@ function put(payload: Payload): void {
   }
 
   toasts.value = [...toasts.value, next]
-  if (held && next.stinger) void openThenReveal(next.id, next.stinger)
+  if (held && next.stinger) void openThenReveal(next.key, next.stinger)
   pump()
 }
 
@@ -426,7 +428,10 @@ onMounted(() => {
   emit('opx:notify:ready', {})
 })
 
-onUnmounted(stop)
+onUnmounted(() => {
+  disposed = true
+  stop()
+})
 </script>
 
 <template>

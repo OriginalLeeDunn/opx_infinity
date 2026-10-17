@@ -103,6 +103,18 @@ local function answer(player, ok, code, extra)
 	return ok
 end
 
+local function recipient(player, command)
+	if player <= 0 then return function() return true end end
+	local userId, session, data = OPX.UserIdOf(player), OPX.Sessions[player], dataOf(player)
+	return function()
+		if userId == nil or OPX.UserIdOf(player) ~= userId or OPX.Sessions[player] ~= session
+			or dataOf(player) ~= data then return false end
+		if command == nil then return true end
+		local read, allowed = pcall(Open77.acl.isAllowed, player, 'command.' .. command)
+		return read and allowed == true
+	end
+end
+
 -- ── the gate ────────────────────────────────────────────────────────────────
 
 local function snapshotOf(data)
@@ -153,7 +165,12 @@ local function locate(doc, patient)
 	local ok, code, grade = gate(clinic, docData)
 	if not ok then return nil, code end
 	return { doc = doc, patient = patient, clinic = clinic, grade = grade,
-		docCid = docData.citizenId, patientCid = patientData.citizenId }
+		docCid = docData.citizenId, patientCid = patientData.citizenId,
+		docData = docData, patientData = patientData }
+end
+
+local function participants(ctx)
+	return dataOf(ctx.doc) == ctx.docData and dataOf(ctx.patient) == ctx.patientData
 end
 
 -- ── the body ────────────────────────────────────────────────────────────────
@@ -243,7 +260,7 @@ local function givePart(op, holder, meta)
 	local clinic = S.clinics[op.clinic]
 	if holder ~= 'stash' then
 		local target = holder == 'doc' and op.docCid or op.patientCid
-		local added = inventory().AddItem(sourceOf(target) or target, chrome.item, 1, meta)
+		local added = inventory().AddItem(target, chrome.item, 1, meta)
 		if ok(added) then return true end
 	end
 	if clinic ~= nil and clinic.chest ~= nil then
@@ -264,7 +281,7 @@ local function takePart(op)
 		if clinic == nil or clinic.chest == nil then return false end
 		return ok(inventory().RemoveFromStash(clinic.chest.name, chrome.item, 1, part.meta))
 	end
-	local holder = part.source == 'doc' and op.doc or op.patient
+	local holder = part.source == 'doc' and op.docCid or op.patientCid
 	local read, stack = pcall(inventory().GetSlot, holder, part.slot)
 	stack = read and ok(stack) and stack.value or nil
 	if type(stack) ~= 'table' or stack.name ~= chrome.item then return false end
@@ -272,7 +289,7 @@ local function takePart(op)
 	for _, field in ipairs({ 'tier', 'origin', 'condition', 'serial' }) do
 		if meta[field] ~= part.meta[field] then return false end
 	end
-	return ok(inventory().RemoveFromSlot(holder, part.slot, 1))
+	return ok(inventory().RemoveFromSlot(holder, part.slot, 1, { name = stack.name, metadata = stack.metadata }))
 end
 
 -- ── the chart ───────────────────────────────────────────────────────────────
@@ -374,6 +391,7 @@ function M.Chart(doc, patient)
 			end
 		end
 	end
+	if not participants(ctx) then return false, 'no_character' end
 	TriggerClientEvent(M.Event.CHART_DATA, doc, chart)
 	return true, chart
 end
@@ -400,7 +418,8 @@ local function plan(doc, payload)
 	local humanity, installed = bodyOf(ctx.patientCid)
 	if humanity == nil then return nil, 'no_patient' end
 	local op = { id = newId(), clinic = clinic.key, doc = doc, patient = ctx.patient,
-		docCid = ctx.docCid, patientCid = ctx.patientCid, grade = ctx.grade, method = clinic.money }
+		docCid = ctx.docCid, patientCid = ctx.patientCid, grade = ctx.grade, method = clinic.money,
+		docData = ctx.docData, patientData = ctx.patientData }
 
 	if payload.action == 'install' then
 		if not clinic.services.install then return nil, 'service_closed' end
@@ -478,6 +497,8 @@ local function plan(doc, payload)
 	else
 		return nil, 'invalid'
 	end
+	if not participants(ctx) then return nil, 'no_character' end
+	if opOf[doc] ~= nil or opOf[ctx.patient] ~= nil then return nil, 'busy' end
 	if balance(ctx.patient, op.method) < op.total then return nil, 'not_enough_money' end
 	return op
 end
@@ -535,13 +556,13 @@ end
 --- Escrow, receipt, bar. On a coroutine.
 local function reserve(op)
 	local ctx, why = locate(op.doc, op.patient)
-	if ctx == nil or ctx.clinic.key ~= op.clinic then
+	if ctx == nil or ctx.clinic.key ~= op.clinic or not participants(op) then
 		drop(op)
 		answer(op.doc, false, why or 'moved')
 		return answer(op.patient, false, why or 'moved')
 	end
 	local reason = 'ripperdoc:' .. op.clinic
-	if not charge(op.patient, op.method, op.total, reason) then
+	if not charge(op.patientCid, op.method, op.total, reason) then
 		drop(op)
 		answer(op.doc, false, 'not_enough_money')
 		return answer(op.patient, false, 'not_enough_money')
@@ -558,6 +579,7 @@ local function reserve(op)
 	op.state = Phase.RESERVED
 	if not Storage.Insert(op) then return release(op, 'storage') end
 	op.receipt = true
+	if not participants(op) then return release(op, 'patient_left') end
 	local code = startBar(op)
 	if code ~= nil then return release(op, code) end
 	answer(op.patient, true, 'operating', { chrome = S.chrome[op.chrome].label })
@@ -576,7 +598,8 @@ function M.Consent(patient, id, accepted)
 		if accepted == true then answer(patient, false, 'expired') end
 		return false
 	end
-	if now() > op.untilMs then
+	if not participants(op) then drop(op); return false end
+	if now() >= op.untilMs then
 		drop(op)
 		answer(op.doc, false, 'expired')
 		return answer(patient, false, 'expired')
@@ -722,6 +745,7 @@ local function submit(op, outcome)
 	op.pendingOutcome = outcome
 	op.state = Phase.SUBMITTED
 	Storage.Phase(op, Phase.SUBMITTED, op.outcome)
+	if not participants(op) then return release(op, 'patient_left') end
 	local options = { expectedRevision = op.revision, operationId = op.nativeOp }
 	local called, result, reason
 	if op.action == 'install' then
@@ -748,6 +772,7 @@ function M.Random() return math.random() end
 --- The bar ran out: the dice, then the knife. On a coroutine.
 operate = function(op)
 	if op.closed then return end
+	if not participants(op) then return release(op, 'patient_left') end
 	local patient = sourceOf(op.patientCid)
 	op.patient = patient
 	local here, there = pointOf(op.doc), patient and pointOf(patient) or nil
@@ -809,12 +834,15 @@ local function replay(row, player)
 	local chrome = S.chrome[op.chrome]
 	local cyberware = Native.Api()
 	local record
+	local original = dataOf(player)
 	for _ = 1, 40 do
+		if original == nil or original.citizenId ~= row.patientCid or dataOf(player) ~= original then break end
 		record = nativeRecord(player)
 		if record ~= nil then break end
 		Wait(500)
 	end
-	if chrome == nil or chrome.native == nil or cyberware == nil or record == nil then
+	if chrome == nil or chrome.native == nil or cyberware == nil or record == nil
+		or dataOf(player) ~= original or original.citizenId ~= row.patientCid then
 		Open77.log.warn(('[ripperdoc] the submitted operation %s could not be replayed yet'):format(op.id))
 		ops[op.id] = nil
 		resume[row.patientCid] = resume[row.patientCid] or {}
@@ -914,7 +942,9 @@ function M.Supply(player, key, index)
 			> OPX.Spots.ServerReach(S.promptRadius) then
 		return answer(player, false, 'not_at_terminal'), 'not_at_terminal'
 	end
-	local allowed, code = gate(clinic, dataOf(player), row.grade)
+	local buyer = dataOf(player)
+	if buyer == nil then return answer(player, false, 'no_character'), 'no_character' end
+	local allowed, code = gate(clinic, buyer, row.grade)
 	if not allowed then return answer(player, false, code), code end
 	local chrome = S.chrome[row.chrome]
 	local reason = 'ripperdoc:supply:' .. clinic.key
@@ -923,7 +953,7 @@ function M.Supply(player, key, index)
 	end
 	local added = inventory().AddToStash(clinic.chest.name, chrome.item, 1, Model.NewPart(row.tier, row.origin))
 	if not ok(added) then
-		pcall(character.AddMoney, player, clinic.money, row.cost, reason .. ':refund')
+		pay(buyer.citizenId, clinic.money, row.cost, reason .. ':refund')
 		return answer(player, false, 'stash_full'), 'stash_full'
 	end
 	OPX.Audit.Log({ event = 'ripperdoc.supply', source = player,
@@ -992,11 +1022,13 @@ local function report(source)
 	OPX.CommandResult(source, true, table.concat(lines, '\n'))
 end
 
-local function humanityCommand(source, args)
+local function humanityCommand(source, args, audience)
+	if not audience() then return end
 	local target = math.tointeger(tonumber(args[1]))
 	local data = target and dataOf(target) or nil
 	if data == nil then return OPX.CommandResult(source, false, 'usage: <player id> [humanity]') end
 	local humanity, installed = bodyOf(data.citizenId)
+	if not audience() then return end
 	local value = OPX.Math.Finite(tonumber(args[2]))
 	if value ~= nil then
 		humanity = math.max(-1000, math.min(1000, value))
@@ -1006,6 +1038,7 @@ local function humanityCommand(source, args)
 	end
 	local names = {}
 	for _, entry in ipairs(installed or {}) do names[#names + 1] = ('%s T%s'):format(entry.chrome, tostring(entry.tier)) end
+	if not audience() then return end
 	OPX.CommandResult(source, true, ('%s: humanity %s, capacity %s/%s, chrome: %s'):format(data.citizenId,
 		tostring(humanity), tostring(Model.CapacityUsed(S, installed or {})), tostring(S.maxCapacity),
 		#names > 0 and table.concat(names, ', ') or 'none'))
@@ -1079,12 +1112,14 @@ function M.Start()
 	RegisterNetEvent(M.Event.CHART, function(patient)
 		local player = tonumber(source) or 0
 		if player <= 0 or type(patient) ~= 'number' then return end
-		CreateThread(function() M.Chart(math.tointeger(player), patient) end)
+		local audience = recipient(player)
+		CreateThread(function() if audience() then M.Chart(math.tointeger(player), patient) end end)
 	end)
 	RegisterNetEvent(M.Event.PROPOSE, function(payload)
 		local player = tonumber(source) or 0
 		if player <= 0 or type(payload) ~= 'table' then return end
-		CreateThread(function() M.Propose(math.tointeger(player), payload) end)
+		local audience = recipient(player)
+		CreateThread(function() if audience() then M.Propose(math.tointeger(player), payload) end end)
 	end)
 	RegisterNetEvent(M.Event.CONSENT, function(id, accepted)
 		local player = tonumber(source) or 0
@@ -1094,12 +1129,14 @@ function M.Start()
 	RegisterNetEvent(M.Event.STASH, function(key)
 		local player = tonumber(source) or 0
 		if player <= 0 or type(key) ~= 'string' or #key > 48 then return end
-		CreateThread(function() M.OpenStash(math.tointeger(player), key) end)
+		local audience = recipient(player)
+		CreateThread(function() if audience() then M.OpenStash(math.tointeger(player), key) end end)
 	end)
 	RegisterNetEvent(M.Event.SUPPLY, function(key, index)
 		local player = tonumber(source) or 0
 		if player <= 0 or type(key) ~= 'string' or #key > 48 then return end
-		CreateThread(function() M.Supply(math.tointeger(player), key, index) end)
+		local audience = recipient(player)
+		CreateThread(function() if audience() then M.Supply(math.tointeger(player), key, index) end end)
 	end)
 	AddEventHandler(M.NATIVE_COMPLETED, function(player, ticket, encoded)
 		M.NativeCompleted(player, ticket, encoded)
@@ -1114,7 +1151,10 @@ function M.Start()
 			{ name = 'player', help = locale('ripperdoc.help.player') },
 			{ name = 'value', optional = true, help = locale('ripperdoc.help.value') },
 		} },
-		function(source, args) CreateThread(function() humanityCommand(source, args) end) end)
+		function(source, args)
+			local audience = recipient(source, M.Command.HUMANITY)
+			CreateThread(function() humanityCommand(source, args, audience) end)
+		end)
 
 	sweepJob = OPX.Scheduler.Every('ripperdoc:sweep', 1000, sweep)
 	CreateThread(recover)

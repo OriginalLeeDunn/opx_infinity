@@ -513,6 +513,10 @@ end
 -- announced top that is not ours releases ours, and ours re-acquires.
 local function onFocus(payload)
 	if type(payload) ~= 'table' then return end
+	if record == nil or not record.shown or pick ~= nil then
+		OPX.UI.ReleaseFocus(OWNER)
+		return
+	end
 	local held = (payload.focus == true and payload.owner == OWNER)
 	if held then OPX.UI.AcquireFocus(OWNER, FOCUS) else OPX.UI.ReleaseFocus(OWNER) end
 end

@@ -272,9 +272,6 @@ end
 -- update. A caller is answered as though it had arrived after the change.
 local PACE_ROWS = 6
 
--- Set while a paced check runs, nil otherwise: called once per row.
-local pacing = nil
-
 -- Checks a spec's rows, paced when the caller asked and can yield. Answers the
 -- rows, the node count and whether it yielded, or nil and the refusal.
 local function checkRows(spec, memo)
@@ -286,7 +283,9 @@ local function checkRows(spec, memo)
 		return { items = items, nodes = budget.nodes, yielded = false, memo = budget.keep }
 	end
 	local count, yielded = 0, false
-	pacing = function()
+	-- Scoped to this traversal. Two paced callers may interleave at Wait; a
+	-- shared closure let the shorter traversal clear the longer one's pacing.
+	budget.pacing = function()
 		count = count + 1
 		if count % PACE_ROWS == 0 then
 			yielded = true
@@ -294,7 +293,6 @@ local function checkRows(spec, memo)
 		end
 	end
 	local ran, items, reason = pcall(normalizeItems, spec.items, 1, budget)
-	pacing = nil
 	if not ran then error(items, 0) end
 	if items == nil then return nil, reason end
 	return { items = items, nodes = budget.nodes, yielded = yielded, memo = budget.keep }
@@ -467,7 +465,7 @@ normalizeItems = function(items, depth, budget)
 	local list = {}
 	local used, remembered, keep = budget.used, budget.memo, budget.keep
 	for index = 1, total do
-		if pacing ~= nil then pacing() end
+		if budget.pacing ~= nil then budget.pacing() end
 		local item = items[index]
 		-- `false` is a row seen once and not yet worth a copy.
 		local memo = remembered[item]
