@@ -17,6 +17,7 @@ local Event = M.Event
 
 local OWNER = M.OWNER
 local MENU_BOARD, MENU_LOT = 'mechanic.board', 'mechanic.lot'
+local MENU_DIAGNOSTIC = 'mechanic.diagnostic'
 
 local settings
 -- callId -> blip id, for the calls this mechanic was alerted to.
@@ -197,6 +198,37 @@ end
 
 
 
+-- Fixed-size report: every value is a server reading, never a local health estimate.
+local function buildDiagnostic(payload, generation)
+	local items = {}
+	local function value(field, label, percent)
+		local number = math.tointeger(payload[field])
+		items[#items + 1] = { id = field, label = locale('mechanic.diagnostic.' .. label),
+			value = number ~= nil and (tostring(number) .. (percent and '%' or ''))
+				or locale('mechanic.diagnostic.unknown'), disabled = true }
+	end
+	value('health', 'health', true)
+	value('missing', 'missing', true)
+	value('tires', 'tires')
+	value('glass', 'glass')
+	Wait(0)
+	if stopped or generation ~= boardGeneration then return end
+	value('lights', 'lights')
+	value('detached', 'detached')
+	value('doors', 'doors')
+	value('windows', 'windows')
+	local quote = type(payload.quote) == 'table' and payload.quote or {}
+	items[#items + 1] = { id = 'quote', label = locale('mechanic.diagnostic.quote'),
+		value = money(quote.fee or 0, payload.moneyType), disabled = true,
+		description = locale('mechanic.diagnostic.parts', { count = math.tointeger(quote.parts) or 0,
+			seconds = math.ceil((tonumber(quote.durationMs) or 0) / 1000) }) }
+	items[#items + 1] = { id = 'bay', label = locale(payload.inBay == true
+		and 'mechanic.diagnostic.in_bay' or 'mechanic.diagnostic.workshop'), disabled = true }
+	Wait(0)
+	if stopped or generation ~= boardGeneration then return end
+	openMenu(MENU_DIAGNOSTIC, locale('mechanic.diagnostic.title'), items, function() end, true)
+end
+
 -- ── alerts and the map ───────────────────────────────────────────────────────
 
 local function dropBlip(id)
@@ -321,7 +353,11 @@ local function vehicleRow(id, label, icon, order, shown, mode)
 		onSelect = function(context)
 			local vehicleId = vehicleOf(context)
 			if vehicleId == nil then return false end
-			if mode == 'impound' then
+			if mode == 'diagnose' then
+				TriggerServerEvent(Event.DIAGNOSE, { vehicleId = vehicleId })
+			elseif mode == 'hood_open' or mode == 'hood_close' then
+				TriggerServerEvent(Event.HOOD, { vehicleId = vehicleId, opened = mode == 'hood_open' })
+			elseif mode == 'impound' then
 				TriggerServerEvent(Event.IMPOUND, { vehicleId = vehicleId })
 			else
 				TriggerServerEvent(Event.REPAIR, { vehicleId = vehicleId, mode = mode })
@@ -338,13 +374,38 @@ local function registerRows()
 		return
 	end
 	local rows = {
+		vehicleRow('mechanic.diagnose', 'mechanic.row.diagnose', 'tool', 23, function()
+			local job = jobData()
+			return job ~= nil and job.onDuty == true and isMechanic()
+		end, 'diagnose'),
 		vehicleRow('mechanic.repair', 'mechanic.row.repair', 'tool', 24, isMechanic, M.Mode.SHOP),
 		vehicleRow('mechanic.impound', 'mechanic.row.impound', 'lock', 26, mayTow, 'impound'),
 	}
 	if config().kit.enabled then
 		rows[#rows + 1] = vehicleRow('mechanic.kit', 'mechanic.row.kit', 'box', 25, holdsKit, M.Mode.KIT)
 	end
-	rowFailed('vehicle', target.RegisterVehicles(OWNER, rows))
+	-- Each target registration validates and copies its row. Keep each in its
+	-- own resume; a diagnostic is a fourth row, not a larger single batch.
+	for _, row in ipairs(rows) do
+		Wait(0)
+		if stopped then return end
+		rowFailed('vehicle', target.RegisterVehicles(OWNER, { row }))
+	end
+	for _, action in ipairs({
+		{ mode = 'open', label = 'mechanic.row.hood_open' },
+		{ mode = 'close', label = 'mechanic.row.hood_close' },
+	}) do
+		Wait(0)
+		if stopped then return end
+		local row = vehicleRow('mechanic.hood.' .. action.mode, action.label,
+			'tool', 27, function()
+				local job = jobData()
+				return job ~= nil and job.onDuty == true and isMechanic()
+			end, 'hood_' .. action.mode)
+		Wait(0)
+		if stopped then return end
+		rowFailed('hood', target.RegisterVehicles(OWNER, { row }))
+	end
 	-- One sphere a row: a shop has one stash and one lot, and a handful of shops
 	-- is a handful of rows, each its own resume.
 	for _, key in ipairs(config().shopOrder) do
@@ -390,6 +451,7 @@ end
 --- Wires the answers and the rows.
 -- @author dop42
 function M.Start()
+	RegisterNetEvent(Event.DIAGNOSTIC_VIEW, function(payload) queueView(payload, buildDiagnostic) end)
 	RegisterNetEvent(Event.BOARD_VIEW, function(payload) queueView(payload, buildBoard) end)
 	RegisterNetEvent(Event.ALERT, onAlert)
 	RegisterNetEvent(Event.CLOSED, onClosed)

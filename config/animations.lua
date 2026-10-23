@@ -101,12 +101,10 @@ OPX.Config.MODULES.animations = {
 
 	-- THE PACES A PLAYER CYCLES, and what they are NOT.
 	--
-	-- There are no walk STYLES on this platform. `SetPedMovementClipset` -- the
-	-- FiveM native that gives a body a swagger or a limp -- has no Open77
-	-- equivalent at all: the devkit's alias table has no row for it, and the
-	-- whole of `Open77.movement` is `setWalkMode`, `getWalkMode`, `lock` and
-	-- `unlock`. What exists is a bounded SPEED, so these are paces and they are
-	-- named as paces rather than pretending to be gaits.
+	-- These entries configure bounded SPEED leases, not animation styles.
+	-- Open77 also supports authored locomotion packages since op77.145, but
+	-- those need matching client/server builds, a registered graph and compiled
+	-- native assets. Naming a style here does not install an animation bank.
 	--
 	-- `SPEED` is metres per second and the platform accepts 0.5 to 2.5; anything
 	-- outside is refused by `Walk.Request` before the native ever sees it. The

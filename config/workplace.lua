@@ -161,6 +161,16 @@ OPX.Config.MODULES.workplace = {
 	--     GARAGE = { X, Y, Z, RADIUS = 2.0, PAD = { X, Y, Z, HEADING }, VEHICLES = { ... } },
 	--   }
 	STATIONS = {
+		-- These public shift clocks reuse the mechanic pickup and sale surveyed
+		-- in config/hauling.lua. No new interior, fleet or uniform is assumed.
+		courier_dispatch = {
+			JOB = 'courier', LABEL = 'Night City shard dispatch', BUCKET = 0,
+			DUTY = { X = -2456.16, Y = -909.03, Z = 9.26, RADIUS = 1.5, MIN_GRADE = 0 },
+		},
+		technician_workshop = {
+			JOB = 'technician', LABEL = 'Night City relay maintenance', BUCKET = 0,
+			DUTY = { X = -2043.13, Y = -602.83, Z = 2.84, RADIUS = 1.5, MIN_GRADE = 0 },
+		},
 		ncpd_kabuki = {
 			JOB = 'ncpd', LABEL = 'NCPD precinct, Kabuki', BUCKET = 0,
 			DUTY = { X = 0.0, Y = 0.0, Z = 0.0, RADIUS = 1.5, MIN_GRADE = 0 },

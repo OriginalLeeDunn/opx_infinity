@@ -109,7 +109,7 @@ end
 -- @author dop42
 -- @param source Source a connected player
 -- @param owner string the caller's own name, carried back in the outcome
--- @param spec table { label, durationMs, cancelable, animation = { name, variant } }
+-- @param spec table { label, durationMs, cancelable, animation = { name, variant, fallback } }
 -- @param on fun(source: Source, outcome: table)|nil
 -- @return Result { id, durationMs }
 local function start(source, owner, spec, on)
@@ -139,7 +139,10 @@ local function start(source, owner, spec, on)
 		if type(named) ~= 'string' or #named < 1 or #named > 32 or not named:match('^[%w_]+$') then
 			return Result.Err('invalid_spec')
 		end
-		animation = { name = named, variant = math.tointeger(spec.animation.variant) }
+		local fallback = spec.animation.fallback
+		if fallback ~= nil and (type(fallback) ~= 'string' or #fallback < 1 or #fallback > 32
+			or not fallback:match('^[%w_]+$')) then return Result.Err('invalid_spec') end
+		animation = { name = named, variant = math.tointeger(spec.animation.variant), fallback = fallback }
 	end
 
 	nextId = nextId % 2147483646 + 1

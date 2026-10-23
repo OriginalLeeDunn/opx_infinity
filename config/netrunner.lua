@@ -85,7 +85,7 @@ OPX.Config.MODULES.netrunner = {
 		MAX_CHANCE = 0.97,
 		FAIL_TRACE = 0.20,
 		-- The progress module's animation name ('' plays none).
-		ANIMATION = '',
+		ANIMATION = 'tablet2',
 	},
 
 	-- ── the daemons ────────────────────────────────────────────────────────
@@ -133,6 +133,7 @@ OPX.Config.MODULES.netrunner = {
 	--   key = {
 	--     LABEL, BUCKET = 0,
 	--     MIN_GRADE = 0,            -- netrunner grade needed to jack in
+	--     GANGS = { voodooboys = 0 }, -- additional faction gate; never replaces deck/job skill
 	--     JOBS = { ... },           -- optional: replaces the job gate entirely
 	--     BLACKWALL = false,        -- feeds NetWatch heat on every connect
 	--     COOLDOWN_S = 1800,        -- locked down this long after a trace
@@ -210,6 +211,7 @@ OPX.Config.MODULES.netrunner = {
 		-- The Voodoo Boys' relay under the Grand Imperial Mall, Pacifica: past
 		-- the Blackwall. Blackwall Divers only, and NetWatch is listening.
 		voodoo_blackwall_relay = {
+			GANGS = { voodooboys = 0 },
 			LABEL = 'Pacifica Old Net relay',
 			BUCKET = 0,
 			MIN_GRADE = 2,

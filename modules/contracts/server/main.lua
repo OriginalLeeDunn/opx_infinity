@@ -58,6 +58,9 @@ local sequence = 0
 local loaded = false
 local sweepJob, fixerJob = nil, nil
 local generating = false
+-- Shared by API posts and district fixers, set before their first storage await.
+local mintPosting = false
+local postingTypes = {}
 
 local REQUESTS, WINDOW_MS = 8, 2000
 local RETRY_MS = 30000
@@ -116,19 +119,34 @@ end
 local function passes(data, block)
 	if type(data) ~= 'table' then return false, 'no_character' end
 	local now = OPX.Now()
-	return OPX.JobGate.Evaluate({ jobs = block.JOBS, onDuty = block.ON_DUTY },
-		{ job = data.job, jobs = data.jobs, atMs = now }, now,
+	if #OPX.JobGate.GangProblems(block.GANGS, 'groups') > 0 then return false, 'gang_required' end
+	return OPX.JobGate.EvaluateGroups({ jobs = block.JOBS, gangs = block.GANGS, onDuty = block.ON_DUTY },
+		{ job = data.job, jobs = data.jobs, gang = data.gang, gangs = data.gangs, atMs = now }, now,
 		{ maxAgeMs = 0, membership = Access.MEMBERSHIP })
 end
 
---- The grade a character holds in the first job of a block they hold.
+--- The highest authorised grade, respecting the same membership and duty gate.
 local function gradeIn(data, block)
-	local jobs = type(block.JOBS) == 'table' and block.JOBS or {}
-	local job = type(data) == 'table' and data.job or nil
-	if type(job) == 'table' and jobs[job.name] ~= nil then
-		return type(job.grade) == 'table' and math.tointeger(tonumber(job.grade.level)) or 0
+	local highest = 0
+	for _, group in ipairs({ { block.JOBS, data and data.job, data and data.jobs, false },
+		{ block.GANGS, data and data.gang, data and data.gangs, true } }) do
+		for name, minimum in pairs(type(group[1]) == 'table' and group[1] or {}) do
+			local requirement = group[4] and { gangs = { [name] = minimum } }
+				or { jobs = { [name] = minimum }, onDuty = block.ON_DUTY }
+			local now = OPX.Now()
+			local ok = OPX.JobGate.EvaluateGroups(requirement,
+				{ job = data.job, jobs = data.jobs, gang = data.gang, gangs = data.gangs, atMs = now },
+				now, { maxAgeMs = 0, membership = Access.MEMBERSHIP })
+			if ok then
+				local primary = group[2]
+				local grade = type(primary) == 'table' and primary.name == name
+					and type(primary.grade) == 'table' and tonumber(primary.grade.level)
+					or (type(group[3]) == 'table' and tonumber(group[3][name]))
+				highest = math.max(highest, math.tointeger(grade) or 0)
+			end
+		end
 	end
-	return 0
+	return highest
 end
 
 --- The position and bucket of a connection, or nil.
@@ -551,6 +569,21 @@ local function openBy(citizenId, name)
 	return count
 end
 
+--- Public objective types admit freelancers; their own server gate still applies.
+local function mayTake(contract, player, data, checkStart)
+	if type(data) ~= 'table' then return false, 'no_character' end
+	local handlers = types[contract.type]
+	if handlers == nil or handlers.public ~= true then
+		local ok, why = passes(data, Access.TAKERS)
+		if not ok then return false, why end
+	end
+	if checkStart and handlers ~= nil and type(handlers.canStart) == 'function' then
+		local called, ok, why = pcall(handlers.canStart, contract, player)
+		if not called or not ok then return false, called and (why or 'cannot_start') or 'cannot_start' end
+	end
+	return true
+end
+
 --- Files a validated spec, takes the escrow, and puts it on the board.
 -- `who` = { posterKind, posterCid?, posterName, payerCid?, funded, player? }.
 -- @return boolean
@@ -604,7 +637,7 @@ local function create(spec, who)
 	if api ~= nil and type(api.GetPlayers) == 'function' then
 		for _, loaded in ipairs(api.GetPlayers()) do
 			local data = loaded.PlayerData
-			if data ~= nil and data.citizenId ~= record.posterCid and passes(data, Access.TAKERS)
+			if data ~= nil and data.citizenId ~= record.posterCid and mayTake(record, data.source, data, true)
 				and credOf(data.source).cred >= record.minCred then
 				tell(data.source, 'contracts.incoming', { fixer = record.posterKind == M.Poster.PLAYER
 					and record.posterCid or (record.posterName or '?'),
@@ -614,6 +647,31 @@ local function create(spec, who)
 		end
 	end
 	return true, record.id
+end
+
+--- Reserves the shared mint budget before any read or insert can yield.
+-- Count commitments BEFORE the ledger read: a payout during that read may remove
+-- its gig, but cannot then disappear from both our commitment snapshot and SQL.
+local function createMint(spec, who)
+	if mintPosting then return false, 'mint_busy' end
+	mintPosting = true
+	local called, ok, value = pcall(function()
+		local committed = 0
+		for _, contract in pairs(contracts) do
+			if contract.funded == M.Funded.MINT then committed = committed + contract.reward end
+		end
+		local minted = M.Storage.MintedLastHour()
+		if not minted.ok then return false, 'storage' end
+		local cap = OPX.Tune.Number('CONTRACT_MINT_PER_HOUR', Access.MINT_PER_HOUR)
+		if minted.value + committed + spec.reward > cap then return false, 'mint_cap' end
+		return create(spec, who)
+	end)
+	mintPosting = false
+	if not called then
+		Open77.log.error('[contracts] a mint post raised: ' .. safe(ok))
+		return false, 'storage'
+	end
+	return ok, value
 end
 
 --- The form a player sent, into a spec, and posted.
@@ -670,7 +728,7 @@ local function accept(player, id)
 	if contract == nil or contract.state ~= State.POSTED then return false, 'not_available' end
 	local data = dataOf(player)
 	if data == nil then return false, 'no_character' end
-	local gated, why = passes(data, Access.TAKERS)
+	local gated, why = mayTake(contract, player, data, false)
 	if not gated then return false, why end
 	-- FROZEN HERE, before any yield.
 	local citizenId = data.citizenId
@@ -862,7 +920,9 @@ local function boardFor(player)
 	local viewer = { citizenId = citizenId, cred = cred.cred }
 	for _, id in ipairs(sortedIds()) do
 		local contract = contracts[id]
-		if isTaker and #board.rows < Access.BOARD_LIMIT and Access.Visible(contract, viewer) then
+		if #board.rows < Access.BOARD_LIMIT and Access.Visible(contract, viewer)
+			and mayTake(contract, player, data, true) then
+			board.isTaker = true
 			board.rows[#board.rows + 1] = publicOf(contract)
 		end
 		if contract.posterCid == citizenId and #board.posted < 6 then
@@ -1084,7 +1144,6 @@ local function generate()
 	generating = true
 	local ok, failure = pcall(function()
 		local nowMs = OPX.Now()
-		local cap = OPX.Tune.Number('CONTRACT_MINT_PER_HOUR', Access.MINT_PER_HOUR)
 		local busyFixers = nil
 		for _, key in ipairs(Access.Keys('FIXERS')) do
 			local fixer = Access.Fixer(key)
@@ -1108,22 +1167,15 @@ local function generate()
 					if #usable > 0 and Access.TypeEnabled(kind) then
 						local target = usable[Access.Pick(sequence * 7 + 3, #usable)]
 						local reward = Access.RewardIn(template.REWARD, sequence)
-						local committed = 0
-						for _, contract in pairs(contracts) do
-							if contract.funded == M.Funded.MINT then committed = committed + contract.reward end
-						end
-						local minted = M.Storage.MintedLastHour()
-						if minted.ok and minted.value + committed + reward <= cap then
-							local spec = Access.NormalizeSpec({
-								type = kind, title = template.TITLE, brief = template.BRIEF,
-								reward = reward, cutPct = fixer.cutPct, deadlineS = fixer.deadlineS,
-								minCred = math.tointeger(tonumber(template.MIN_CRED)) or 0,
-								objective = kind == 'reach_zone' and { zone = target } or { dropoff = target },
-							}, { cutLow = fixer.cutPct, cutHigh = fixer.cutPct, objective = objectiveOf })
-							if spec ~= nil then
-								create(spec, { posterKind = M.Poster.NPC, posterName = fixer.name,
-									funded = M.Funded.MINT })
-							end
+						local spec = Access.NormalizeSpec({
+							type = kind, title = template.TITLE, brief = template.BRIEF,
+							reward = reward, cutPct = fixer.cutPct, deadlineS = fixer.deadlineS,
+							minCred = math.tointeger(tonumber(template.MIN_CRED)) or 0,
+							objective = kind == 'reach_zone' and { zone = target } or { dropoff = target },
+						}, { cutLow = fixer.cutPct, cutHigh = fixer.cutPct, objective = objectiveOf })
+						if spec ~= nil then
+							createMint(spec, { posterKind = M.Poster.NPC, posterName = fixer.name,
+								funded = M.Funded.MINT })
 						end
 					end
 				end
@@ -1285,7 +1337,7 @@ end
 -- ── the contract ────────────────────────────────────────────────────────────
 
 --- Posts a gig from another module. Coroutine only (it writes).
--- spec { type, title, brief?, reward, funded = 'player'|'external', payer? (a
+-- spec { type, title, brief?, reward, funded = 'player'|'external'|'mint', payer? (a
 -- connection, for 'player'), poster? (a name), cutPct?, minCred?, deadlineS?,
 -- objective, validate? }
 local function apiPost(spec)
@@ -1303,7 +1355,17 @@ local function apiPost(spec)
 		who.funded, who.player, who.payerCid, who.posterCid = M.Funded.PLAYER, player,
 			data.citizenId, data.citizenId
 	end
-	local ok, value = create(normalized, who)
+	if spec.funded == 'mint' then who.funded = M.Funded.MINT end
+	postingTypes[normalized.type] = (postingTypes[normalized.type] or 0) + 1
+	local called, ok, value = pcall(function()
+		if who.funded == M.Funded.MINT then return createMint(normalized, who) end
+		return create(normalized, who)
+	end)
+	postingTypes[normalized.type] = postingTypes[normalized.type] - 1
+	if not called then
+		Open77.log.error('[contracts] an API post raised: ' .. safe(ok))
+		return Result.Err('storage')
+	end
 	if not ok then return Result.Err(value) end
 	return Result.Ok(value)
 end
@@ -1353,8 +1415,21 @@ local function apiRegister(name, handlers)
 	types[name] = {
 		validate = handlers.validate, describe = handlers.describe, waypoint = handlers.waypoint,
 		canStart = handlers.canStart, start = handlers.start, stop = handlers.stop,
-		tick = handlers.tick,
+		tick = handlers.tick, public = handlers.public == true,
 	}
+	return Result.Ok(name)
+end
+
+--- A type cannot disappear while its durable gigs still need its callbacks.
+local function apiUnregister(name)
+	local handlers = types[name]
+	if handlers == nil then return Result.Err('unknown_type') end
+	if handlers.config then return Result.Err('type_taken') end
+	if mintPosting or (postingTypes[name] or 0) > 0 then return Result.Err('type_in_use') end
+	for _, contract in pairs(contracts) do
+		if contract.type == name then return Result.Err('type_in_use') end
+	end
+	types[name] = nil
 	return Result.Ok(name)
 end
 
@@ -1400,6 +1475,11 @@ function M.Api()
 			return ok and Result.Ok(id) or Result.Err(why)
 		end,
 		RegisterObjectiveType = apiRegister,
+		UnregisterObjectiveType = apiUnregister,
+		Accept = function(player, id)
+			local ok, why = accept(player, math.tointeger(tonumber(id)) or -1)
+			return ok and Result.Ok(id) or Result.Err(why)
+		end,
 		Cred = function(player) return credOf(player) end,
 	})
 end

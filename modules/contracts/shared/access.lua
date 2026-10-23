@@ -487,8 +487,11 @@ function Access.Problems()
 	local lines = {}
 	OPX.JobGate.Problems(Access.POSTERS.JOBS, 'POSTERS', lines)
 	OPX.JobGate.Problems(Access.TAKERS.JOBS, 'TAKERS', lines)
-	if type(Access.POSTERS.JOBS) ~= 'table' or next(Access.POSTERS.JOBS) == nil then
-		lines[#lines + 1] = 'POSTERS.JOBS is empty: ANYBODY may post a gig'
+	OPX.JobGate.GangProblems(Access.POSTERS.GANGS, 'POSTERS', lines)
+	OPX.JobGate.GangProblems(Access.TAKERS.GANGS, 'TAKERS', lines)
+	if (type(Access.POSTERS.JOBS) ~= 'table' or next(Access.POSTERS.JOBS) == nil)
+		and (type(Access.POSTERS.GANGS) ~= 'table' or next(Access.POSTERS.GANGS) == nil) then
+		lines[#lines + 1] = 'POSTERS.JOBS and POSTERS.GANGS are empty: ANYBODY may post a gig'
 	end
 	if Access.REWARD_MAX < Access.REWARD_MIN then
 		lines[#lines + 1] = 'REWARD.MAX is below REWARD.MIN: every post is refused'

@@ -50,6 +50,9 @@ OPX.Config.MODULES.contracts = {
 	-- a lieutenant post bounties through the same board, say.
 	POSTERS = { JOBS = { fixer = 0 }, ON_DUTY = false },
 
+	-- POSTERS / TAKERS may also name GANGS = { valentinos = 1 }. Either
+	-- the job or the gang grants access; ON_DUTY applies only to jobs. Gang
+	-- ranks also govern the posting cut and VALIDATE_GRADE when authorised.
 	-- Who may TAKE a gig. A poster can never take their own gig.
 	TAKERS = { JOBS = { merc = 0 }, ON_DUTY = false },
 

@@ -212,7 +212,17 @@ end
 -- @return string|nil
 function Weapons.Use(source, bag, slot, item)
 	if not available() then return false, 'weapons_unavailable' end
+	-- All bag weapons share one engine slot. A different serial must not
+	-- overwrite that slot while the previous weapon's readback is pending.
+	for _, step in pairs(pending) do
+		if step.source == source and (step.kind == 'holster' or step.kind == 'redraw') then
+			return false, 'holstering'
+		end
+	end
 	local entry = bag.items[slot]
+	if type(entry.metadata) == 'table' and reading[entry.metadata.serial] then
+		return false, 'holstering'
+	end
 
 	local held = armed[source]
 	if held and Weapons.InHand(source) then
@@ -220,15 +230,25 @@ function Weapons.Use(source, bag, slot, item)
 		Weapons.Holster(source, true)
 		-- Using the weapon already in hand is how a player puts it away.
 		if heldSlot == slot then return true, nil end
+		-- Assigning a replacement before the reading lands destroys the old
+		-- engine count. Retry once its ammunition has been saved to the item.
+		if reading[held.serial] then return false, 'holstering' end
 	elseif held then
-		-- IT IS NOT IN THEIR HAND, WHATEVER THIS TABLE SAYS. The game holsters a
-		-- weapon on its own -- a vehicle, a scripted beat, a knockdown -- and
-		-- nothing tells us. Pressing Use then put away something already away,
-		-- and the player pressed it again to get the same nothing. Forgotten
-		-- here rather than holstered: `Holster` would ask the client to remove a
-		-- slot the engine has already emptied, and then this Use would fall
-		-- through to an assign anyway. So the bookkeeping is corrected and the
-		-- press does what the player meant, which is draw.
+		-- A game holster leaves the last inventory count stale. Read the old
+		-- weapon BEFORE assigning another one: assign can refill its magazine.
+		-- Keep the serial held until the reply so moving or reusing it cannot
+		-- race the reading. A refused relay leaves it available for a retry.
+		if held.ammoItem and held.state == 'armed' then
+			if held.loading or reading[held.serial] then return false, 'holstering' end
+			local requestId = Open77.weapons.requestSnapshot(source)
+			if not requestId then return false, 'weapon_refused' end
+			reading[held.serial] = true
+			held.loading = true
+			remember(requestId, { source = source, kind = 'redraw', held = held,
+				bag = bag, slot = slot, item = item, name = entry.name,
+				serial = entry.metadata and entry.metadata.serial })
+			return true, nil
+		end
 		armed[source] = nil
 		Weapons.Announce(source, nil)
 	end
@@ -386,7 +406,7 @@ function Weapons.Forget(source, connected)
 	end
 	for key, step in pairs(pending) do
 		if step.source == source then
-			if step.kind == 'holster' and step.held then reading[step.held.serial] = nil end
+			if (step.kind == 'holster' or step.kind == 'redraw') and step.held then reading[step.held.serial] = nil end
 			pending[key] = nil
 		end
 	end
@@ -397,6 +417,7 @@ end
 -- its id, so a held weapon with no id yet counts as backed.
 local function backed(source, row)
 	local held = armed[source]
+
 	if not held then return false end
 	if Common.Integer(row.slot, 1, 3) ~= Options.WEAPON_SLOT then return false end
 	if held.state ~= 'armed' or held.tweakDbId == nil then return true end
@@ -412,6 +433,32 @@ local function completed(playerId, requestId, _operation, accepted, reason, resu
 	local source = step.source
 	if tonumber(playerId) ~= source then return end
 	local held = armed[source]
+
+	if step.kind == 'redraw' then
+		reading[step.held.serial] = nil
+		step.held.loading = false
+		if held ~= step.held then return end
+		if Players.Citizen(source) ~= step.bag.owner then return end
+		local row = rowOf(result, Options.WEAPON_SLOT)
+		if accepted ~= true or row == nil or type(row.ammo) ~= 'table'
+			or held.tweakDbId == nil or row.tweakDbId ~= held.tweakDbId
+			or Common.Integer(row.ammo.total, 0, 1000000) == nil then
+			OPX.NotifyLocale(source, 'inventory.error.weapon_refused', nil, 'error')
+			return
+		end
+		lower(source, held, row.ammo.total)
+		local entry = step.bag.items[step.slot]
+		if Players.Citizen(source) ~= step.bag.owner or entry == nil
+			or entry.name ~= step.name
+			or (entry.metadata and entry.metadata.serial) ~= step.serial then return end
+		armed[source] = nil
+		Weapons.Announce(source, nil)
+		if not Players.MayAct(source) then return end
+		local hauling = OPX.Api.Get('hauling')
+		if hauling and type(hauling.IsCarrying) == 'function' and hauling.IsCarrying(source) then return end
+		Weapons.Use(source, step.bag, step.slot, step.item)
+		return
+	end
 
 	if step.kind == 'assign' then
 		if held ~= step.held then return end
@@ -560,7 +607,7 @@ function Weapons.SweepPending()
 		if now - (step.atMs or now) > PENDING_MS then
 			pending[key] = nil
 			if step.held then step.held.loading = false end
-			if step.kind == 'holster' and step.held then reading[step.held.serial] = nil end
+			if (step.kind == 'holster' or step.kind == 'redraw') and step.held then reading[step.held.serial] = nil end
 		end
 	end
 end

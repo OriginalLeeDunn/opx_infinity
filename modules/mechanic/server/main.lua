@@ -124,10 +124,13 @@ local function memberOf(player, shop, minGrade)
 end
 
 -- Whether a player works at any shop at a grade. Answers the closest refusal.
-local function isMechanic(player, minGrade)
+local function isMechanic(player, minGrade, requireDuty)
 	local worst = 'not_mechanic'
 	for _, key in ipairs(config().shopOrder) do
-		local ok, why = memberOf(player, config().shops[key], minGrade)
+		local shop = config().shops[key]
+		local ok, why
+		if requireDuty then ok, why = gate(player, shop.jobs, true, minGrade)
+		else ok, why = memberOf(player, shop, minGrade) end
 		if ok then return true end
 		if why == 'off_duty' or (why == 'grade_too_low' and worst ~= 'off_duty') then worst = why end
 	end
@@ -155,6 +158,21 @@ local function pay(player, moneyType, amount, reason)
 	if api == nil or type(api.AddMoney) ~= 'function' then return false end
 	local read, ok = pcall(api.AddMoney, player, moneyType, amount, reason)
 	return read and ok == true
+end
+
+--- Pays the character who earned or advanced the money, even after a slot change.
+local function payCharacter(citizenId, moneyType, amount, reason)
+	if amount <= 0 then return true end
+	local api = character()
+	if api ~= nil and type(api.GetPlayerByCitizenId) == 'function' then
+		local read, player = pcall(api.GetPlayerByCitizenId, citizenId)
+		if read and player ~= nil then return pay(citizenId, moneyType, amount, reason) end
+	end
+	if api ~= nil and type(api.AddMoneyOffline) == 'function' then
+		local read, receipt = pcall(api.AddMoneyOffline, citizenId, moneyType, amount, reason)
+		return read and type(receipt) == 'table' and receipt.ok == true
+	end
+	return pay(citizenId, moneyType, amount, reason)
 end
 
 -- ── vehicles ─────────────────────────────────────────────────────────────────
@@ -398,7 +416,7 @@ local function startBar(job, label, durationMs, animationName)
 		label = locale(label),
 		durationMs = math.min(durationMs, maxBarMs()),
 		cancelable = true,
-		animation = animationName and { name = animationName } or nil,
+		animation = animationName and { name = animationName, fallback = 'examine' } or nil,
 	}, function(_, outcome)
 		finish(job, type(outcome) == 'table' and outcome.completed == true,
 			type(outcome) == 'table' and outcome.ending or nil)
@@ -488,7 +506,7 @@ local function distribute(job, paid)
 	else
 		cut = cut + share
 	end
-	pay(job.player, moneyType, cut, reason .. ':cut')
+	payCharacter(job.playerData.citizenId, moneyType, cut, reason .. ':cut')
 	return cut
 end
 
@@ -499,9 +517,17 @@ local function commitShop(job)
 	local snapshot, why = stillThere(job)
 	if snapshot == nil then return answer(job.player, false, why) end
 	local count = job.quote.parts
-	local source = partsSource(job.player, job.shop, count)
-	if source == nil or not takeParts(job.player, job.shop, source, count) then
+	local worker = job.playerData.citizenId
+	local source = partsSource(worker, job.shop, count)
+	if source == nil or not takeParts(worker, job.shop, source, count) then
 		return answer(job.player, false, 'no_parts', { count = count })
+	end
+	-- Bag and stash calls may resume after the worker changed character or moved.
+	snapshot, why = stillThere(job)
+	if snapshot == nil or OPX.Life.Down(job.player) or seated(job.player)
+		or not memberOf(job.player, job.shop, config().repair.minGrade) then
+		giveParts(worker, job.shop, source, count)
+		return answer(job.player, false, why or 'interrupted')
 	end
 	local fee, billed = job.quote.fee, 'none'
 	local customer = job.customer
@@ -514,15 +540,28 @@ local function commitShop(job)
 	-- the whole bar to empty their account, and a fix already done cannot be taken
 	-- back.
 	if customer ~= nil and fee > 0 and (invoices == nil or type(invoices.Issue) ~= 'function') then
-		if not charge(customer, config().billing.moneyType, fee, ('mechanic:%s:repair'):format(job.shop.key)) then
-			giveParts(job.player, job.shop, source, count)
+		if not charge(job.customerData.citizenId, config().billing.moneyType, fee, ('mechanic:%s:repair'):format(job.shop.key)) then
+			giveParts(worker, job.shop, source, count)
 			return answer(job.player, false, 'customer_cannot_pay')
 		end
 		billed = 'paid'
 	end
+	-- Money hooks can yield too. Refund the original payer, never the reused slot.
+	snapshot, why = stillThere(job)
+	if snapshot == nil or OPX.Life.Down(job.player) or seated(job.player)
+		or not memberOf(job.player, job.shop, config().repair.minGrade)
+		or (customer ~= nil and loaded(customer) ~= job.customerData) then
+		giveParts(worker, job.shop, source, count)
+		if billed == 'paid' then
+			payCharacter(job.customerData.citizenId, config().billing.moneyType, fee, 'mechanic:refund')
+		end
+		return answer(job.player, false, why or 'interrupted')
+	end
 	if not fixFull(job.vehicleId) then
-		giveParts(job.player, job.shop, source, count)
-		if billed == 'paid' then pay(customer, config().billing.moneyType, fee, 'mechanic:refund') end
+		giveParts(worker, job.shop, source, count)
+		if billed == 'paid' then
+			payCharacter(job.customerData.citizenId, config().billing.moneyType, fee, 'mechanic:refund')
+		end
 		audit('mechanic.repair', job.player, false, 'the platform refused the repair of ' .. job.vehicleKey)
 		return answer(job.player, false, 'not_ours')
 	end
@@ -551,18 +590,76 @@ local function commitKit(job)
 	if snapshot == nil then return answer(job.player, false, why) end
 	local api = inventory()
 	local name = config().kitItem.name
-	if api == nil or carried(job.player, name) < 1 then return answer(job.player, false, 'no_kit') end
-	local read, removed = pcall(api.RemoveItem, job.player, name, 1)
+	local worker = job.playerData.citizenId
+	if api == nil or carried(worker, name) < 1 then return answer(job.player, false, 'no_kit') end
+	local read, removed = pcall(api.RemoveItem, worker, name, 1)
 	if not read or type(removed) ~= 'table' or not removed.ok then return answer(job.player, false, 'no_kit') end
+	snapshot, why = stillThere(job)
+	if snapshot == nil or OPX.Life.Down(job.player) or seated(job.player) then
+		pcall(api.AddItem, worker, name, 1)
+		return answer(job.player, false, why or 'interrupted')
+	end
 	local target = Model.KitHealth(config(), healthOf(snapshot), job.mechanic)
 	if not fixKit(job.vehicleId, target, config().kit.scopes) then
-		pcall(api.AddItem, job.player, name, 1)
+		pcall(api.AddItem, worker, name, 1)
 		return answer(job.player, false, 'not_ours')
 	end
 	audit('mechanic.kit', job.player, true, ('%s patched to %.2f'):format(job.vehicleKey, target))
 	OPX.Publish(Event.ON_REPAIRED, job.player, { mode = Mode.KIT, vehicleId = job.vehicleKey,
 		missing = job.missing, health = target, mechanic = citizenOf(job.player) })
 	answer(job.player, true, 'patched', { percent = math.floor(target * 100 + 0.5) })
+end
+
+--- Reads one nearby car for an on-duty mechanic; no owner or bag leaves the server.
+local function onDiagnose(player, payload)
+	local at, why = ready(player)
+	if at == nil then return answer(player, false, why) end
+	local permitted = false
+	for _, key in ipairs(config().shopOrder) do
+		if gate(player, config().shops[key].jobs, true, config().repair.minGrade) then
+			permitted = true
+			break
+		end
+	end
+	if not permitted then return answer(player, false, 'not_mechanic') end
+	local id = type(payload) == 'table' and hintOf(payload.vehicleId) or nil
+	if id == nil then return answer(player, false, 'vehicle_far') end
+	local vehicleId = math.tointeger(tonumber(id))
+	if vehicleId == nil or vehicleId < 1 then return answer(player, false, 'vehicle_far') end
+	local snapshot = snapshotOf(vehicleId)
+	local place = snapshot and placeOf(snapshot) or nil
+	if place == nil or not within(at, place, config().reach) then return answer(player, false, 'vehicle_far') end
+	local report = Model.Diagnostic(healthOf(snapshot), damageOf(snapshot), snapshot)
+	local quote = Model.Quote(config(), report.missing, maxBarMs())
+	report.quote = report.missing > 0 and quote or { fee = 0, parts = 0, durationMs = 0 }
+	report.moneyType = config().billing.moneyType
+	report.inBay = bayOf(player, place) ~= nil
+	TriggerClientEvent(Event.DIAGNOSTIC_VIEW, player, report)
+end
+
+-- Explicit state rather than a toggle: retries cannot reverse the request.
+local function onHood(player, payload)
+	local at, why = ready(player)
+	if at == nil then return answer(player, false, why) end
+	local permitted, refusal = isMechanic(player, config().repair.minGrade, true)
+	if not permitted then return answer(player, false, refusal) end
+	if type(payload) ~= 'table' or type(payload.opened) ~= 'boolean' then
+		return answer(player, false, 'unavailable')
+	end
+	local id = hintOf(payload.vehicleId)
+	local vehicleId = id and math.tointeger(tonumber(id))
+	local snapshot = vehicleId and vehicleId > 0 and snapshotOf(vehicleId) or nil
+	local place = snapshot and placeOf(snapshot)
+	if not place or not within(at, place, config().reach) then return answer(player, false, 'vehicle_far') end
+	if bayOf(player, place) == nil then return answer(player, false, 'not_in_bay') end
+	if working[tostring(vehicleId)] then return answer(player, false, 'vehicle_busy') end
+	if occupied(snapshot) then return answer(player, false, 'occupied') end
+	local native = Open77.vehicles
+	if type(native.setDoorOpen) ~= 'function' then return answer(player, false, 'unavailable') end
+	-- Only the hood (documented index 5), never a client-selected door or mask.
+	local ran, ok = pcall(native.setDoorOpen, vehicleId, 5, payload.opened)
+	if not ran or ok ~= true then return answer(player, false, 'not_ours') end
+	answer(player, true, payload.opened and 'hood_opened' or 'hood_closed')
 end
 
 local function onRepair(player, payload)
@@ -655,7 +752,7 @@ local function commitImpound(job)
 		return answer(job.player, false, code)
 	end
 	local earned = 0
-	if config().impound.pay > 0 and pay(job.player, config().impound.payMoneyType, config().impound.pay,
+	if config().impound.pay > 0 and payCharacter(job.playerData.citizenId, config().impound.payMoneyType, config().impound.pay,
 		'mechanic:tow') then
 		earned = config().impound.pay
 	end
@@ -1070,6 +1167,8 @@ function M.Start()
 			end)
 		end)
 	end
+	wire(Event.DIAGNOSE, 'diagnose', onDiagnose)
+	wire(Event.HOOD, 'hood', onHood)
 	wire(Event.REPAIR, 'repair', onRepair)
 	wire(Event.IMPOUND, 'impound', onImpound)
 	wire(Event.STASH, 'stash', onStash)
@@ -1111,7 +1210,8 @@ end
 
 -- Exposed for the tests: the handlers, by name.
 M.Server = {
-	OnRepair = onRepair, OnImpound = onImpound, OnStash = onStash, OnLot = onLot, OnRelease = onRelease,
+	OnHood = onHood,
+	OnDiagnose = onDiagnose, OnRepair = onRepair, OnImpound = onImpound, OnStash = onStash, OnLot = onLot, OnRelease = onRelease,
 	OnBoard = onBoard, OnTake = onTake, OnDrop = onDrop, OnClose = onClose, Sweep = sweep,
 	Departed = departed,
 }

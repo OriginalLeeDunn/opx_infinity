@@ -137,11 +137,11 @@ VALUES (@defendant, NULLIF(@defendantName, ''), @judge, NULLIF(@judgeName, ''), 
   'open', @at)
 ]],
 	CASES = [[
-SELECT id, defendant, defendant_name, judge, judge_name, code, summary, state, verdict, created_at
+SELECT id, defendant, defendant_name, judge, judge_name, code, summary, state, verdict, record_id, created_at
 FROM opx77_justice_cases WHERE state = 'open' ORDER BY id DESC LIMIT 200
 ]],
 	CASE_GET = [[
-SELECT id, defendant, defendant_name, judge, judge_name, code, summary, state, verdict, created_at
+SELECT id, defendant, defendant_name, judge, judge_name, code, summary, state, verdict, record_id, created_at
 FROM opx77_justice_cases WHERE id = @id
 ]],
 	CASE_CLOSE = [[
@@ -330,7 +330,7 @@ local function caseOf(row)
 	if type(row) ~= 'table' or row.id == nil then return nil end
 	return { id = int(row.id), defendant = str(row.defendant), defendantName = str(row.defendant_name),
 		judge = str(row.judge), judgeName = str(row.judge_name), code = str(row.code), summary = str(row.summary),
-		state = str(row.state), verdict = str(row.verdict), at = int(row.created_at) }
+		state = str(row.state), verdict = str(row.verdict), recordId = int(row.record_id), at = int(row.created_at) }
 end
 
 --- Opens a case. Yields.
@@ -362,4 +362,28 @@ end
 function Storage.CloseCase(id, verdict, recordId, atS)
 	return changed(logged(OPX.Storage.Execute(SQL.CASE_CLOSE, { id = id, verdict = verdict,
 		recordId = recordId ~= nil and tostring(recordId) or '', at = math.floor(atS) }), 'a verdict'))
+end
+
+--- Creates a conviction and closes its case in the same database transaction.
+-- A failed insert or close rolls both statements back, leaving the case retryable.
+-- @return integer|nil the conviction id
+function Storage.Convict(id, citizenId, entry, atS)
+	local at = math.floor(atS)
+	local written = logged(OPX.Storage.Transaction({
+		{ query = "SELECT id FROM opx77_justice_cases WHERE id = ? AND state = 'open' FOR UPDATE",
+			values = { id } },
+		{ query = [[INSERT INTO opx77_justice_records
+(citizen, kind, code, label, fine, jail, bail, officer, officer_name, notes, source, felony, paid, active, created_at)
+SELECT ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?
+FROM opx77_justice_cases WHERE id = ? AND state = 'open']],
+			values = { citizenId, entry.kind, entry.code, entry.label, entry.fine, entry.jail, entry.bail or 0,
+				entry.officer or '', entry.officerName or '', entry.notes or '', entry.source,
+				entry.felony and 1 or 0, entry.paid and 1 or 0, entry.active and 1 or 0, at, id } },
+		{ query = [[UPDATE opx77_justice_cases SET state = 'closed', verdict = 'guilty',
+record_id = LAST_INSERT_ID(), closed_at = ? WHERE id = ? AND state = 'open']], values = { at, id } },
+	}), 'a conviction')
+	if not written.ok then return nil end
+	local case = Storage.Case(id)
+	if case == nil or case.state ~= 'closed' or case.verdict ~= 'guilty' or case.recordId <= 0 then return nil end
+	return case.recordId
 end

@@ -92,6 +92,7 @@ local function useOf(name, use, where)
 	if type(use.ANIMATION) == 'table' and Common.Word(use.ANIMATION.NAME, 32, '^[%w_]+$') then
 		out.animation = {
 			name = use.ANIMATION.NAME,
+			fallback = Common.Word(use.ANIMATION.FALLBACK, 32, '^[%w_]+$'),
 			variant = Common.Integer(use.ANIMATION.VARIANT, 1, 64),
 			durationMs = Common.Integer(use.ANIMATION.DURATION_MS, 1000, 600000),
 		}
@@ -380,13 +381,14 @@ local function runtimeRow(raw)
 		if use.ANIMATION ~= nil then
 			local animation = use.ANIMATION
 			if type(animation) ~= 'table' or Common.Word(animation.name, 32, '^[%w_]+$') == nil
+				or (animation.fallback ~= nil and Common.Word(animation.fallback, 32, '^[%w_]+$') == nil)
 				or (animation.variant ~= nil and Common.Integer(animation.variant, 1, 64) == nil)
 				or (animation.durationMs ~= nil
 					and Common.Integer(animation.durationMs, 1000, 600000) == nil) then
 				return 'use.animation'
 			end
 			use.ANIMATION = { NAME = animation.name, VARIANT = animation.variant,
-				DURATION_MS = animation.durationMs }
+				DURATION_MS = animation.durationMs, FALLBACK = animation.fallback }
 		end
 		row.USE = use
 	end

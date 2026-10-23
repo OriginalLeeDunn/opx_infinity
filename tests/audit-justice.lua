@@ -77,4 +77,27 @@ now = 30000
 local accepted, reason = M.Consent(9, id, true)
 assert(not accepted and reason == 'expired' and represented == 0,
 	'an expired lawyer invitation was accepted')
+-- A transaction failure must leave the court case open and retryable.
+players[7].PlayerData.job.name = 'judge'
+OPX.Audit = { Log = function() end }
+env.TriggerEvent = function() end
+local courtCase = { id = 1, state = 'open', defendant = 'client-id', code = 'theft' }
+local attempts, rollback = 0, true
+M.Storage.Case = function() return courtCase end
+OPX.Storage.Transaction = function(statements)
+ attempts = attempts + 1
+ assert(#statements == 3 and statements[2].query:find('INSERT INTO opx77_justice_records', 1, true)
+  and statements[3].query:find('LAST_INSERT_ID()', 1, true), 'conviction is not atomic with case closure')
+ if rollback then return { ok = false, error = 'transaction-failed' } end
+ courtCase.state, courtCase.verdict, courtCase.recordId = 'closed', 'guilty', 42
+ return { ok = true }
+end
+local convicted, refusal = M.Verdict(7, { caseId = 1, verdict = 'guilty', fine = 0, jail = 0 })
+assert(not convicted and refusal == 'unavailable' and courtCase.state == 'open',
+ 'a failed conviction permanently closed its court case')
+rollback = false
+local retried, receipt = M.Verdict(7, { caseId = 1, verdict = 'guilty', fine = 0, jail = 0 })
+assert(retried and receipt.record == 42 and attempts == 2, 'failed verdict was not retryable')
+local replayed = M.Verdict(7, { caseId = 1, verdict = 'guilty', fine = 0, jail = 0 })
+assert(not replayed and attempts == 2, 'closed verdict was committed twice')
 print('justice audit regressions passed')

@@ -193,10 +193,52 @@ end,100)
 state=env.OPX.Api.Get('menu').State().value
 check('a large impound lot opens without exceeding the resume budget',state.open and state.menu=='mechanic.lot' and state.total==120 and lotWorst<4500,lotWorst)
 print('MECHANIC_LOT_WORST',lotWorst)
+local diagnosticWorst=resumeCost(env,control,function()
+ control.netEvents[mechanic.Event.DIAGNOSTIC_VIEW]({health=60,missing=40,tires=2,glass=1,lights=0,
+  detached=1,doors=1,windows=0,quote={fee=250,parts=3,durationMs=20000},moneyType='BANK'})
+end,60)
+state=env.OPX.Api.Get('menu').State().value
+check('the vehicle diagnostic opens with all readings',state.open and state.menu=='mechanic.diagnostic' and state.total==10)
+check('diagnostic drawing stays inside the client instruction budget',diagnosticWorst<4500,diagnosticWorst)
+print('MECHANIC_DIAGNOSTIC_WORST',diagnosticWorst)
 control.netEvents[mechanic.Event.BOARD_VIEW]({calls=calls})
 control.Pump(2)
 mechanic.Stop()
 control.Pump(60)
 check('stopping during a build cannot reopen the menu', env.OPX.Api.Get('menu').State().value.open == false)
 print('MECHANIC_BOARD_CALLBACK', callbackCost, 'WORST_RESUME', worst)
+-- Exercise row registration itself, with every workshop surveyed, not just menu replies.
+local bootEnv,bootControl=Host.Environment('client')
+for _,file in ipairs(Host.LoadOrder('open77.lua','client')) do
+ assert(loadfile(file,'t',bootEnv))()
+ if file=='config/mechanic.lua' then
+  local index=0
+  for _,shop in pairs(bootEnv.OPX.Config.MODULES.mechanic.SHOPS) do
+   index=index+1
+   shop.STASH.X,shop.STASH.Y,shop.STASH.Z=100+index,0,0
+   shop.LOT.X,shop.LOT.Y,shop.LOT.Z=200+index,0,0
+  end
+ end
+end
+local registrationWorst=resumeCost(bootEnv,bootControl,function()
+ bootControl.Fire('onClientResourceStart','opx_infinity')
+end,240)
+check('surveyed workshop target registration stays inside the resume budget',registrationWorst<4500,registrationWorst)
+print('MECHANIC_REGISTRATION_WORST',registrationWorst)
+local registry = bootEnv.OPX.Modules.Get('target').Registry
+local hoodRows = {}
+for _, row in ipairs(registry.List('mechanic')) do
+ if row.id == 'mechanic.hood.open' or row.id == 'mechanic.hood.close' then
+  hoodRows[row.id] = registry.Get(row.token)
+ end
+end
+check('both explicit hood controls registered',hoodRows['mechanic.hood.open']~=nil and hoodRows['mechanic.hood.close']~=nil)
+local hoodEvent = bootEnv.OPX.Modules.Get('mechanic').Event.HOOD
+for _, action in ipairs({'open','close'}) do
+ local row = hoodRows['mechanic.hood.'..action]
+ assert(row and row.onSelect({target={vehicleId=101}}))
+ local packet = bootControl.serverEvents[#bootControl.serverEvents]
+ check('hood '..action..' sends the targeted vehicle and explicit state',packet.name==hoodEvent
+  and packet[1].vehicleId=='101' and packet[1].opened==(action=='open') and packet[1].door==nil)
+end
 assert(failures == 0, tostring(failures) .. ' checks failed')

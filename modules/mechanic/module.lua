@@ -44,6 +44,8 @@ local NET, LOCAL = OPX.Channel.NET, OPX.Channel.LOCAL
 --- Every event name this module raises, built once so both halves agree.
 M.Event = {
 	-- Client to server. `source` is the connection's; every field is re-read.
+	DIAGNOSE = OPX.Event(NET, 'mechanic', 'diagnose'),   -- { vehicleId } roadside read only
+	HOOD = OPX.Event(NET, 'mechanic', 'hood'),           -- { vehicleId, opened } workshop only
 	REPAIR = OPX.Event(NET, 'mechanic', 'repair'),       -- { vehicleId, mode = 'shop'|'kit' }
 	IMPOUND = OPX.Event(NET, 'mechanic', 'impound'),     -- { vehicleId }
 	STASH = OPX.Event(NET, 'mechanic', 'stash'),         -- { shop }
@@ -55,6 +57,7 @@ M.Event = {
 	CLOSE = OPX.Event(NET, 'mechanic', 'close'),         -- { callId } the job is done
 
 	-- Server to client.
+	DIAGNOSTIC_VIEW = OPX.Event(NET, 'mechanic', 'diagnosticView'),
 	ALERT = OPX.Event(NET, 'mechanic', 'alert'),         -- a call opened that this mechanic may take
 	CLOSED = OPX.Event(NET, 'mechanic', 'closed'),       -- { id, why } gone from the board
 	BOARD_VIEW = OPX.Event(NET, 'mechanic', 'boardView'),

@@ -851,10 +851,24 @@ local function onFine(officer, payload)
 	local fines = config().fines
 	local api = character()
 	if api == nil or type(api.RemoveMoney) ~= 'function' then return answer(officer, false, 'unavailable') end
+	local officerData, suspectData = loaded(officer), loaded(suspect)
+	if officerData == nil or suspectData == nil then return answer(officer, false, 'no_suspect') end
+	local suspectCid, officerCid = suspectData.citizenId, officerData.citizenId
 	local paid, owed, cut = Access.SplitFine(amount, balanceOf(suspect, fines.moneyType), fines.cutPercent)
 	local tag = ('police:fine:%s:%s'):format(svc.key, code)
 	if paid > 0 then
-		local read, ok = pcall(api.RemoveMoney, suspect, fines.moneyType, paid, tag)
+		local read, ok = pcall(api.RemoveMoney, suspectCid, fines.moneyType, paid, tag)
+		-- Money hooks may yield while either connection selects another character.
+		if loaded(officer) ~= officerData or loaded(suspect) ~= suspectData then
+			if read and ok == true then
+				if type(api.AddMoneyOffline) == 'function' then
+					pcall(api.AddMoneyOffline, suspectCid, fines.moneyType, paid, tag .. ':refund')
+				elseif type(api.AddMoney) == 'function' then
+					pcall(api.AddMoney, suspectCid, fines.moneyType, paid, tag .. ':refund')
+				end
+			end
+			return
+		end
 		if not read or ok ~= true then paid, owed, cut = 0, amount, 0 end
 	end
 	if owed > 0 then
@@ -863,16 +877,16 @@ local function onFine(officer, payload)
 		writeRecord(suspect, record)
 	end
 	if cut > 0 and type(api.AddMoney) == 'function' then
-		local read, ok = pcall(api.AddMoney, officer, fines.cutMoneyType, cut, tag .. ':cut')
+		local read, ok = pcall(api.AddMoney, officerCid, fines.cutMoneyType, cut, tag .. ':cut')
 		if not read or ok ~= true then cut = 0 end
 	end
 	deposit(svc, paid - cut, tag, nil)
-	local suspectCid, officerCid = citizenOf(suspect), citizenOf(officer)
 	OPX.Audit.Log({ event = 'police.fine', source = officer, message = ('%s fined %s %d for %s: paid %d owed %d cut %d')
 		:format(svc.key, tostring(suspectCid), amount, code, paid, owed, cut),
 		data = { reason = reason, service = svc.key, code = code } })
 	OPX.Publish(Event.ON_FINED, suspect, { citizenId = suspectCid, officer = officerCid, service = svc.key,
 		code = code, amount = amount, paid = paid, owed = owed })
+	if loaded(officer) ~= officerData or loaded(suspect) ~= suspectData then return end
 	local money = OPX.Locale.Money(amount, fines.moneyType)
 	OPX.NotifyLocale(suspect, owed > 0 and 'police.suspect.finedDebt' or 'police.suspect.fined',
 		{ service = svc.short, amount = money, crime = crimeOf(code).label,

@@ -235,6 +235,15 @@ function Runtime.Start(owner, spec)
 			Open77.log.debug('[progress] no animations contract: the bar has no gesture')
 			live.animation = nil
 		else
+			-- Job poses may be newer than the installed animation catalogue.
+			-- Use only profiles offered to this player, including DISABLED rules.
+			local wanted = live.animation
+			if type(wanted.fallback) == 'string' and type(animations.Get) == 'function' then
+				local known = animations.Get(wanted.name)
+				if type(known) ~= 'table' or known.ok ~= true then
+					live.animation = { name = wanted.fallback }
+				end
+			end
 			local played = animations.Play(live.animation.name, {
 				variant = live.animation.variant,
 				loop = true,

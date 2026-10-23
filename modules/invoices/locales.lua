@@ -6,6 +6,7 @@
 -- operator's own word and is never translated. Log lines and codes stay English.
 
 local EN = {
+	['invoices.person'] = 'Citizen',
 	['invoices.row.bill'] = 'Send a bill',
 	['invoices.noScreen'] = 'No screen to draw that on right now.',
 
@@ -82,6 +83,7 @@ local EN = {
 }
 
 local FR = {
+	['invoices.person'] = 'Citoyen',
 	['invoices.row.bill'] = 'Envoyer une facture',
 	['invoices.noScreen'] = 'Aucun écran pour afficher ça maintenant.',
 

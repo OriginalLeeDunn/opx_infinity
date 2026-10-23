@@ -279,6 +279,18 @@ local function networkOf(name, raw, context)
 		local wrong = OPX.JobGate.Problems(raw.JOBS, name)
 		if #wrong > 0 then return nil, wrong[1] end
 	end
+	if raw.GANGS ~= nil then
+		local wrong = OPX.JobGate.GangProblems(raw.GANGS, name)
+		if #wrong > 0 then return nil, wrong[1] end
+		local definitions = OPX.Config.MODULES.character and OPX.Config.MODULES.character.GANGS or {}
+		for gang, minimum in pairs(raw.GANGS) do
+			local definition = definitions[gang]
+			if type(definition) ~= 'table' or type(definition.grades) ~= 'table'
+				or integer(minimum, 0, 100) == nil or definition.grades[minimum] == nil then
+				return nil, 'GANGS names an unknown gang or grade: ' .. tostring(gang)
+			end
+		end
+	end
 	local nodes, accessPoints, surveyed = {}, {}, 0
 	if type(raw.NODES) ~= 'table' then return nil, 'NODES is required' end
 	local count = 0
@@ -344,7 +356,7 @@ local function networkOf(name, raw, context)
 		key = name, label = label,
 		bucket = integer(raw.BUCKET, 0, 2147483647) or 0,
 		minGrade = integer(raw.MIN_GRADE, 0, 100) or 0,
-		jobs = raw.JOBS,
+		jobs = raw.JOBS, gangs = raw.GANGS,
 		blackwall = raw.BLACKWALL == true,
 		cooldownMs = (integer(raw.COOLDOWN_S, 0, 604800) or 1800) * 1000,
 		ice = {

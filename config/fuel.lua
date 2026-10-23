@@ -153,7 +153,7 @@ OPX.Config.MODULES.fuel = {
 
 	-- The progress bar's own animation, a name the progress module's caller may
 	-- pass (`modules/progress`): '' plays none. ox plays a gardener filling a
-	-- can; this platform has no fuelling clip, so it ships none.
+	-- can; no pump-specific profile has been validated for these stations yet.
 	ANIMATION = '',
 
 	-- How often the client looks for the nearest pump, in milliseconds.

@@ -93,6 +93,8 @@ local function snapshotOf(loaded)
 	return {
 		job = type(data.job) == 'table' and data.job or nil,
 		jobs = type(data.jobs) == 'table' and data.jobs or nil,
+		gang = type(data.gang) == 'table' and data.gang or nil,
+		gangs = type(data.gangs) == 'table' and data.gangs or nil,
 		atMs = OPX.Now(),
 	}
 end
@@ -376,6 +378,19 @@ local function raiseTrace(player, session, amount)
 	return true
 end
 
+--- Faction access is additional to the network's trade requirement and the deck.
+local function networkAccess(network, loaded)
+	local now, snapshot = OPX.Now(), snapshotOf(loaded)
+	local requirement = Access.Requirement(network, built)
+	if requirement ~= nil then
+		local ok, why = OPX.JobGate.Evaluate(requirement, snapshot, now,
+			{ maxAgeMs = 5000, membership = 'any' })
+		if not ok then return false, why or 'job_required' end
+	end
+	return OPX.JobGate.EvaluateGroups({ gangs = network.gangs }, snapshot, now,
+		{ maxAgeMs = 5000, membership = 'any' })
+end
+
 --- Why a run must stop now, or nil.
 local function interrupted(player, session)
 	local loaded = playerOf(player)
@@ -384,6 +399,8 @@ local function interrupted(player, session)
 	local at = pointOf(player)
 	if at == nil then return 'no_position' end
 	local network = built.networks[session.network]
+	local allowed, refusal = networkAccess(network, loaded)
+	if not allowed then return refusal end
 	local node = network.nodes[session.node]
 	if at.bucket ~= network.bucket or distance(at, node.x, node.y, node.z) > OPX.Spots.ServerReach(node.radius) then
 		return 'link_lost'
@@ -403,7 +420,7 @@ local function runStep(player, session)
 		label = locale('netrunner.bar.breach', { step = session.step, total = #session.steps }),
 		durationMs = step.durationMs,
 		cancelable = true,
-		animation = built.breach.animation and { name = built.breach.animation } or nil,
+		animation = built.breach.animation and { name = built.breach.animation, fallback = 'phone' } or nil,
 	}, function(who, outcome) onStep(who, outcome) end)
 	if type(started) ~= 'table' or not started.ok then return false end
 	session.barId = started.value.id
@@ -483,12 +500,8 @@ function M.JackIn(player, payload)
 		return answer(player, false, 'network_locked',
 			{ minutes = math.ceil((lockdowns[network.key] - now) / 60000) })
 	end
-	local requirement = Access.Requirement(network, built)
-	if requirement ~= nil then
-		local ok, why = OPX.JobGate.Evaluate(requirement, snapshotOf(loaded), now,
-			{ maxAgeMs = 5000, membership = 'any' })
-		if not ok then return answer(player, false, why or 'job_required') end
-	end
+	local allowed, refusal = networkAccess(network, loaded)
+	if not allowed then return answer(player, false, refusal) end
 	if progressApi() == nil then return answer(player, false, 'no_bar') end
 	local held, why = deckOf(player, loaded)
 	if held == nil then return answer(player, false, why) end
@@ -604,7 +617,7 @@ function M.Daemon(player, payload)
 		local started = api.Start(player, OWNER, {
 			label = locale('netrunner.bar.datamine', { node = node.label }),
 			durationMs = daemon.durationMs, cancelable = true,
-			animation = built.breach.animation and { name = built.breach.animation } or nil,
+			animation = built.breach.animation and { name = built.breach.animation, fallback = 'phone' } or nil,
 		}, function(who, outcome) onMined(who, outcome) end)
 		if type(started) ~= 'table' or not started.ok then
 			spendRam(player, session, -daemon.ram)

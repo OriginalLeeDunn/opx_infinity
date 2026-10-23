@@ -101,7 +101,7 @@ OPX.Config.MODULES.mechanic = {
 		BASE_MS = 8000,
 		PER_PERCENT_MS = 150,
 		-- An emote from `config/animations.lua` played under the bar, '' for none.
-		ANIMATION = 'examine',
+		ANIMATION = 'mechanic',
 	},
 
 	-- THE ROADSIDE KIT: anybody holding one, anywhere. Lifts health to HEALTH
@@ -114,7 +114,7 @@ OPX.Config.MODULES.mechanic = {
 		HEALTH = 0.45,
 		MECHANIC_HEALTH = 0.7,
 		SCOPES = { 'tires' },
-		ANIMATION = 'examine',
+		ANIMATION = 'repair',
 	},
 
 	-- THE BILL for a workshop repair. Through the `invoices` contract when it
@@ -142,7 +142,7 @@ OPX.Config.MODULES.mechanic = {
 		JOBS = { mechanic = 1, ncpd = 0, maxtac = 0 },
 		ON_DUTY = true,
 		DURATION_MS = 15000,
-		ANIMATION = 'examine',
+		ANIMATION = 'tablet2',
 		TOW_RECORDS = {},
 		TOW_REACH = 15.0,
 		PAY = 0,

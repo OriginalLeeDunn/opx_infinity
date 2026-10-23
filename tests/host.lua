@@ -567,6 +567,9 @@ function Host.Environment(side, database)
 		})
 	end
 
+	-- Typed resource-local KVP, including atomic claims. The backing table is
+	-- exposed on control for integration assertions after the host is created.
+	local kvp = {}
 	local Open77 = {
 		log = {
 			debug = function(line) log.debug[#log.debug + 1] = tostring(line) end,
@@ -574,7 +577,20 @@ function Host.Environment(side, database)
 			warn = function(line) log.warn[#log.warn + 1] = tostring(line) end,
 			error = function(line) log.error[#log.error + 1] = tostring(line) end,
 		},
-		time = { monotonic = function() return clock / 1000 end },
+		time = { monotonic = function() return clock / 1000 end,
+			unix = function() return math.floor(clock / 1000) end },
+		kvp = {
+			get = function(key, fallback) if kvp[key] == nil then return fallback end; return kvp[key] end,
+			set = function(key, value) kvp[key] = value; return true end,
+			setIfAbsent = function(key, value) if kvp[key] ~= nil then return false end; kvp[key] = value; return true end,
+			compareAndSet = function(key, expected, replacement)
+				local held = kvp[key]
+				if type(held) ~= type(expected) or held ~= expected then return false end
+				if type(held) == 'number' and math.type(held) ~= math.type(expected) then return false end
+				kvp[key] = replacement
+				return true
+			end,
+		},
 		exports = { call = function() return nil, 'no_host' end },
 
 		-- `Open77.state` holds two unrelated things and the platform says so: the
@@ -2347,6 +2363,7 @@ function Host.Environment(side, database)
 
 	-- What the harness hands back to a test.
 	control = {
+		kvp = kvp,
 		log = log,
 		commands = commands,
 		netEvents = netEvents,

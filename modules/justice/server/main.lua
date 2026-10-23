@@ -750,16 +750,21 @@ function M.Verdict(player, payload)
 	local ok, result, extra = pcall(function()
 		local case = Storage().Case(caseId)
 		if case == nil or case.state ~= 'open' then return 'invalid' end
-		if not Storage().CloseCase(caseId, verdict, nil, wall()) then return 'invalid' end
+		if not still(player, data, 'judge') then return 'no_character' end
+		if verdict == 'acquitted' and not Storage().CloseCase(caseId, verdict, nil, wall()) then return 'invalid' end
 		OPX.Audit.Log({ event = 'justice.verdict', source = player, citizenId = case.defendant,
 			message = ('case %d %s fine %d jail %d'):format(caseId, verdict, fine, jail) })
 		if verdict == 'acquitted' then return nil, { verdict = verdict } end
 		local crime = S.crimes[case.code]
-		local written = addRecord(case.defendant, { kind = M.Kind.VERDICT, code = case.code,
+		local entry, entryError = Access.Entry(S, { kind = M.Kind.VERDICT, code = case.code,
 			label = crime and crime.label or case.code, fine = fine, jail = jail, officer = data.citizenId,
 			officerName = nameOf(data), notes = OPX.Text.Clean(payload.notes, 255), source = 'court' })
-		if not okResult(written) then return 'unavailable' end
-		local billed = billFine(player, case.defendant, fine, written.value.id,
+		if entry == nil then return entryError end
+		local recordId = Storage().Convict(caseId, case.defendant, entry, wall())
+		if recordId == nil then return 'unavailable' end
+		TriggerEvent(M.Event.ON_RECORD, case.defendant, { id = recordId, kind = entry.kind, code = entry.code,
+			label = entry.label, fine = entry.fine, jail = entry.jail, source = entry.source })
+		local billed = billFine(player, case.defendant, fine, recordId,
 			crime and crime.label or case.code)
 		local jailed = false
 		local target = sourceOf(case.defendant)
@@ -769,7 +774,7 @@ function M.Verdict(player, payload)
 				by = data.citizenId, source = 'justice' })
 			jailed = read and (sent == true or okResult(sent))
 		end
-		return nil, { verdict = verdict, billed = billed, jailed = jailed, record = written.value.id }
+		return nil, { verdict = verdict, billed = billed, jailed = jailed, record = recordId }
 	end)
 	busyCases[caseId] = nil
 	if not ok then

@@ -52,6 +52,71 @@ that walks a list every frame.
 The server having no `require` is why `lib/shared/` exists and will keep existing.
 See **The library** below.
 
+The October 2026 capability review queried all 101 Devkit namespaces for
+`2.31.21+op77.147`: 1,753 client/server catalogue entries, including aliases and
+the same function on both sides; 158 are marked unavailable by the catalogue.
+Catalogue presence alone is not runtime availability. In particular the cards
+for `remoteCamera`, `media` and `consumables` are currently marked unpublished.
+The devblog nevertheless describes shipped camera-driven surfaces and shared
+screens: this is a catalogue/announcement discrepancy, not proof that the engine
+cannot render screens. Resolve exact API/build support before integrating it. Ordinary
+`camera` views, server-owned NPCs and tasks, vehicle AI, props, animations,
+cyberware and player-to-player hacking provide the available building blocks.
+`hacking.start` does not hack arbitrary world devices. Client raycasts and
+nearby-world observations cannot alone authorise inventory or money rewards.
+Check the deployed build and test navigation, streaming and authored assets in
+game before enabling new mission content.
+
+For future Night City activities, prioritise sealed shard delivery, maintenance
+of registered relays, salvage of corporate components, and contact extractions.
+Use inventory/progress/contracts for proof and payout rather than client-reported
+completion. NPC tasks and vehicle AI can support escorts and convoys, subject to
+an explicit per-module entity cap. Keep faction rank (permissions), street cred,
+corporate reputation and any future fixer trust separate. Existing gang HR and
+treasuries already live in business; extend their contracts instead of creating
+a second membership registry. Survey the existing underworld labs, fences,
+fronts and robbery sites before adding another set of unplaced activities.
+
+### Current job interaction review (op77.147 catalogue)
+
+Prefer actions that represent what the worker actually does. The first implemented
+pass uses the existing synchronized animation contract and its installed catalogue:
+
+| Activity | Current implementation | Next useful improvement / prerequisite |
+| --- | --- | --- |
+| Mechanic | `mechanic` workshop pose, `repair` roadside pose; canonical diagnosis; explicit replicated hood controls in a bay | Check tool placement and hood support on each vehicle body in game |
+| Netrunner | `tablet2` during breach and daemon work, `phone` fallback; server-authorized node effects | Place real access points before adding terminal-specific anchored poses |
+| Courier | `give` at the validated delivery point, tagged inventory proof | Survey contacts before attaching a two-player handover to the route |
+| Relay technician | `repair` while replacing a module, server-timed consumption and reward | Survey actual terminal height before introducing welding or keyboard workspots |
+| Bartender / street food | Existing consented serving and stash recipes; food uses `takeout` with `drink` fallback | Place counters; measure cooking/shaker profiles against that surface rather than kneeling at a bar |
+| Medical / Trauma | Existing consented heal/carry, bed placement and held medical tools | Validate bed anchors and injector grips; preserve patient consent and current health checks |
+| Ripperdoc | Existing operations, native cyberware requests and durable receipts | Survey operating stations and validate patient presentation before adding a surgical sequence |
+| Hauling / Nomad | Existing synchronized crate poses and prop ownership; jump restriction during carry | Verify pickup/putdown offsets, then introduce bounded convoy NPCs on surveyed routes |
+| Gunsmith | Existing gated crafting benches and material escrow | Survey bench heights before adding anchored assembly; crafting orders can continue while the player leaves |
+| Taxi | Existing server-metered trips and billing | Add surveyed passenger routes only after NPC boarding/navigation validation |
+| Fuel | Existing server-timed pouring and billing | Measure jerrycan/nozzle attachment and hose reach; no guessed pump animation |
+| NCPD / MaxTac | Existing cuff/escort and vehicle interactions | Validate paired arrest placement and vehicle seats; never replace consent rules with a cosmetic pose |
+| Corpo / Fixer | Existing assignments, reputation and bounded job/gang gig gates | Survey contacts, terminals and VIP routes; do not create a second reward ledger |
+| Media | Existing reporting/publishing module | Reconcile unpublished MCP camera/media cards with the deployed build before adding camera-driven screens |
+
+A progress gesture may now specify `{ name = 'repair', fallback = 'examine' }`.
+The client asks `animations.Get` against its offered catalogue before starting a
+preferred pose; a missing/disabled preferred profile uses the fallback with no
+inherited variant number. A refusal leaves the timed action usable. Only the
+progress owner stops the gesture, on completion or cancellation. The server
+validates both profile identifiers (1..32 word characters) before forwarding.
+Inventory definitions accept the same `use.animation.fallback` field, or
+`USE.ANIMATION.FALLBACK` in static item data. Food and bar recipes choose the
+documented `takeout` meal profile rather than pretending the drink pose is the
+only hand-to-mouth animation. Presentation still needs an in-game body/asset check.
+
+Authored walking/running styles are a separate opportunity: Open77's locomotion
+guide requires matching client/server op77.145+ plus a resource-authored graph
+and compiled native assets; expanded collections require Stable 147 / protocol
+1.48. The existing `WALK_PACES` only requests speed leases. It cannot install a
+limp or a corporate swagger by adding a style name. Build and visually validate
+a locomotion package before assigning medical or faction-specific movement.
+
 ---
 
 ## Layout
@@ -618,6 +683,68 @@ desk, and a subscribers-only service treating a stranger charges
 in it. Contract `medical` (server): `Subscription(id, service)`, `Calls(service?)`,
 `Services()`; bus `opx:on:medical:call`, `treated`, `subscribed`.
 
+### Public recovery and recycling
+
+`modules/salvage` + `config/salvage.lua` is open to any loaded character. ALT on
+a collection point starts an eight-second server-timed recovery; one
+`electronic_waste` item is available per site every five minutes, shared by all
+players. The typed KVP compare-and-set reserves depletion before delivery and
+persists it across reconnects and restarts. A crash or failed grant after that
+reservation can lose one collection; it cannot grant the same stock twice.
+The module refuses collection when persistent KVP support is unavailable.
+
+At the sorting bench, ALT opens the existing crafting menu: one discarded
+electronic unit becomes either one `electronics` or two `scrap_metal` after
+30 seconds. Orders and input consumption use crafting's existing persistence;
+no cash reward is created. The first pickup and bench reuse the surveyed mechanic
+pickup and sale coordinates from `config/hauling.lua`. Their placement and
+interactions still need an in-game check. Additional `SITES` require finite,
+nonzero `pickup` and `bench` coordinates with an explicit bucket.
+
+Settings: `DURATION_MS` (1000..60000), `COOLDOWN_SECONDS` (60..86400), `REACH`
+(greater than zero, at most five metres), up to sixteen `SITES`. Client request:
+`opx:net:salvage:collect(siteKey)`; answers use `opx:net:salvage:notice` with
+`done`, `busy` or `refused`. Depends on character, inventory, progress and crafting.
+
+### Service careers: couriers and relay technicians
+
+`modules/citywork` + `config/citywork.lua`. `/citywork` or ALT at the service
+desk opens enrolment, freelance orders and professional orders. Enrolment adds
+only grade zero in `courier` or `technician`, preserves any existing grade, and
+activates the trade as primary. Clock in through workplace: the courier duty point
+is at dispatch; the technician duty point is at the workshop. `SELF_ENROL=false`
+leaves recruitment to the existing business/staff tools. Each trade has three
+grades; promotions and treasury rights remain subject to the existing HR rules.
+
+The desk issues a sealed, tagged module. A courier takes its shard to the assigned
+point and completes a four-second handover. A technician delivers and fits a
+replacement module with a twelve-second service action. These are registered
+resource service points, not arbitrary vanilla devices being repaired or hacked.
+Both require a fresh server position in the correct bucket, at least thirty
+seconds of travel, the original character/session and the module for that exact
+order. A cancelled action retains the module. Completion consumes the module and
+submits proof to contracts; the existing durable ledger handles payout/recovery.
+
+Freelance completion pays 160 eddies for delivery or 180 for service. The on-duty
+primary trade instead pays 220 + 20 per courier grade or 250 + 25 per technician
+grade. Grade-zero/one/two salaries are 65/100/150 for couriers and 75/120/170 for
+technicians under the existing duty-gated paycheck policy. Salaries do not
+replace completion rewards. No automatic promotion grants boss permissions.
+
+Dispatch and the three destinations reuse surveyed hauling points; check their
+presentation in game before release. The configurable routes must be at least
+100 metres from dispatch, finite and nonzero. Up to twelve routes and six open
+service orders are allowed. `PAY`, `MIN_TRAVEL_S`, `HANDOVER_MS`, `SERVICE_MS`,
+`REACH` and `COMMAND` control the loop. Orders share contracts' persistent global
+mint budget; a worker cannot reserve multiple simultaneous orders. `/gigs` also
+shows their public-type orders, without opening ordinary merc-only gigs to everyone.
+
+Client request `opx:net:citywork:request` takes `{ action = view|start|complete|enrol,
+job = courier|technician, professional? }`; reward, route, grade and duration
+never come from the payload. `opx:net:citywork:view` returns the requesting
+character's current order or desk choices. Target points and `/citywork` remain
+available after reconnect; the custom objective tick rebuilds the route index.
+
 ### Underworld
 
 `modules/underworld` + `config/underworld.lua`. Dirty money is the `dirty_eddies` item
@@ -679,6 +806,12 @@ throws the runner out, locks the network for `COOLDOWN_S`, sends an `ALERT` (toa
 waypoint) to on-duty members and adds NetWatch heat (`netwatch_heat` metadata; a
 Blackwall connect adds more; `FLAG_AT` locks the runner out for `LOCKOUT_H`).
 **Brokers** buy every shard in the bag: value x `BUY[kind]` x `HOT_PENALTY` while hot.
+
+A network may declare `GANGS = { voodooboys = 0 }`. This is an additional faction
+requirement: the runner must still satisfy its job/skill requirement and carry a
+suitable cyberdeck. Unknown gangs and grades disable the network. The Pacifica
+Blackwall relay declares this gate. Membership is checked again during a session,
+so leaving the gang revokes access without waiting for a reconnect.
 
 Contract `netrunner` v1 (server): `CamerasBlind(network)`, `Objectives()`,
 `ValidateShard(player, slot, want)`, `Verify(contract, proof)`, `Session`, `Heat`,
@@ -796,6 +929,8 @@ entry and bills the fine through `invoices.Issue` (`source = 'justice'`, no cut,
 toward the city account; paid on `opx:on:invoices:paid`), else straight from a
 present defendant's bank, else unpaid on the record; jail minutes are asked of
 `police.Jail(player, { minutes, reason, by, source })` when that function exists.
+The conviction entry and case closure commit in one database transaction; an
+insert failure leaves the case open so the judge can retry.
 
 Contract `justice` v1 (server; the database calls yield): `AddRecord(citizenId,
 { code, label?, kind?, fine?, jail?, bail?, officer?, officerName?, notes?, source?,
@@ -921,6 +1056,25 @@ pin), `/mechboard` lists, takes (waypoint), drops and closes. **Tow**: `IMPOUND.
 `vehicles.SetState(plate, 'impounded')`; the owner pays `RELEASE_FEE` at a shop's lot to
 get it back (`SetState 'stored'`, fee to the shop account). Contract `mechanic` v1
 (server): `Call`, `Calls`, `Shops`; bus `opx:on:mechanic:call|repaired|impounded|released`.
+
+**Roadside diagnosis**: an on-duty mechanic ALTs a vehicle to read its canonical
+health pool, body damage, tyres, glass, lights, detached panels and openings.
+The report includes the workshop quote (parts, fee and duration) without charging
+or repairing. `opx:net:mechanic:diagnose { vehicleId }` is checked for job, grade,
+distance, bucket and request cooldown; `opx:net:mechanic:diagnosticView` returns
+only the report and quote, never owner identity. Cyberpunk has one vehicle health
+pool; the report does not invent a separate engine health system. Detached panels
+alone count as repairable damage even if the health pool is full.
+
+**Workshop hood**: ALT offers explicit open/close actions. Request
+`opx:net:mechanic:hood { vehicleId, opened = boolean }` requires a matching job
+and grade, active duty, the worker on foot, the same bucket, a nearby vehicle
+inside one of that worker's configured workshop bays, no occupants and no active
+work reservation. It calls server `Open77.vehicles.setDoorOpen(id, 5, opened)`
+(`world.vehicles`, available since op77.45); the client cannot choose a door or
+replace a mask. The native replicates the opening. Failure leaves the car alone
+and reports `unavailable` or `not_ours`; success reports `hood_opened` or
+`hood_closed`. Vehicles without a visible hood still need a model-specific live check.
 
 ### Emotes
 
@@ -1175,6 +1329,12 @@ for `HOLD_MS`, or a fixer's sign-off for a `manual` gig — and the settlement p
 merc the reward minus the fixer's cut (handed back to the fixer), moves street cred
 (character metadata `contracts`), and refunds the escrow on cancel, expiry or failure.
 
+`POSTERS` and `TAKERS` accept optional `GANGS = { gangName = minimumGrade }`
+alongside `JOBS`. Either an authorised job or an authorised gang may pass;
+`ON_DUTY` applies to jobs only. The highest authorised group grade determines
+grade-based commission and validation rights. Existing job-only settings retain
+their behaviour.
+
 Every eddie moves through one rule: a ledger row keyed `contracts:<id>:<phase>`
 (`opx77_contract_ledger`) is reserved, the money moves, the row is committed. A replay
 finds the receipt and moves nothing; a row a crash left `reserved` is marked
@@ -1191,7 +1351,16 @@ fixer is on duty — post gigs from `TEMPLATES` paid in new money, capped by
 Other modules post and measure through `OPX.Api.Get('contracts')`: `Post(spec)`,
 `Cancel`, `Get`, `List`, `ReportProof(id, proof)`, `Resolve(id, outcome)`,
 `RegisterObjectiveType(name, { validate, describe?, waypoint?, canStart?, start?,
-stop?, tick? })`. The bus is `opx:on:contracts:posted`, `accepted`, `paid`,
+stop?, tick?, public? })`, `Accept(player, id)` and `UnregisterObjectiveType(name)`.
+Only explicitly public types bypass the ordinary `TAKERS` gate; `canStart` still
+filters listing, notifications and acceptance and must be free of side effects.
+Custom types do not become player-postable through the existing form.
+`Post{ funded = 'mint', ... }` shares the fixers' persistent hourly budget and
+in-flight commitment reservation. `mint_cap` means exhausted budget and
+`mint_busy` means another publication is awaiting storage. Other funding modes
+retain their behaviour. An objective type in use or being posted cannot be
+unregistered (`type_in_use`); built-in types cannot be removed (`type_taken`).
+The bus is `opx:on:contracts:posted`, `accepted`, `paid`,
 `failed`, `expired`, `cancelled` — ids, type, citizen ids and reward, never a position.
 Every drop-off, zone and fixer ships at `0,0,0` and is disabled, by name, until surveyed.
 
@@ -1248,6 +1417,10 @@ through `accounts.Deposit(..., opId)` -- or to the employee when `ACCOUNT = fals
 A bill accepted but not covered stays on the tab (`/opx.bills`, `opx77_invoices`,
 survives restarts, lapses after `UNPAID_TTL_S`, at most `MAX_UNPAID`); the employee
 withdraws an unpaid bill from the same list.
+
+Prompts, tabs and notifications identify people by their current connection id,
+or an anonymous citizen label when offline. Stored character names are never sent
+as an introduction through billing.
 
 Money moves like contracts: the bill is written `settling` first, each movement is a row
 `invoices:<id>:charge|cut|rest` in `opx77_invoice_ledger` (reserved, moved, committed),

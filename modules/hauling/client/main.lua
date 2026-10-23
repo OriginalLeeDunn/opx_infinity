@@ -278,7 +278,10 @@ local handsBlocked = false
 -- game's own no-weapons restriction, and aim and shoot go with it. Released one
 -- by one with `true` and NEVER with `resetControls`, which would hand back every
 -- control block this resource holds -- the eye's, the downed screen's.
-local CONTROLS = { 'allowWeapons', 'allowShoot', 'allowAim' }
+-- Jump is a player restriction, unlike the unsupported curated input action
+-- named Jump. Keeping it leased for the carry prevents the jump transition
+-- interrupting the two-handed pose; releasing it leaves other owners intact.
+local CONTROLS = { 'allowWeapons', 'allowShoot', 'allowAim', 'allowJump' }
 
 --- Applies or releases the player controls, logging a refusal once.
 local controlsNoted = false

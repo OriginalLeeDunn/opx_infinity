@@ -4,11 +4,12 @@
 local function load(path, env)
 	assert(loadfile(path, 't', setmetatable(env, { __index = _G })))()
 end
-local capabilities = { CUFF = 'cuff', FRISK = 'frisk', IMPOUND = 'impound' }
+local capabilities = { CUFF = 'cuff', FRISK = 'frisk', IMPOUND = 'impound', FINE = 'fine' }
 local M = { Capability = capabilities, Action = { cuff = 'cuff', frisk = 'frisk' },
 	Event = setmetatable({}, { __index = function(_, key) return key end }) }
-local raw = { SERVICES = { ncpd = { JOBS = { ncpd = 0 }, CAPABILITIES = { cuff = 0, frisk = 0, impound = 0 } } },
+local raw = { SERVICES = { ncpd = { JOBS = { ncpd = 0 }, CAPABILITIES = { cuff = 0, frisk = 0, impound = 0, fine = 0 } } },
 	CUFFS = { ITEM = 'cuffs', CONSUME = false, DURATION_MS = 1000 } }
+raw.CRIMES = { theft = { FINE = 100 } }
 local players = { [7] = { PlayerData = { citizenId = 'officer', job = { name = 'ncpd' } } },
 	[8] = { PlayerData = { citizenId = 'suspect', job = { name = 'unemployed' } } } }
 local writes, callback, down = 0, nil, false
@@ -71,4 +72,26 @@ config = M.Access.Settings(raw)
 assert(M.Access.InJurisdiction(config.services.ncpd, { x = 1, y = 1, z = 1 }))
 assert(M.Access.Jobs({ jobs = { ncpd = true } }, 0).ncpd == false,
 	'a malformed police grade became grade zero')
+-- A debit refused after a character switch must never become the new one's debt.
+M.Init()
+players[7] = { PlayerData = { citizenId = 'officer', job = { name = 'ncpd' } } }
+players[8] = { PlayerData = { citizenId = 'suspect', job = { name = 'unemployed' } } }
+local debtOn, refundTo, debitTarget
+character.GetMoney = function() return 50 end
+character.RemoveMoney = function(target) debitTarget = target; coroutine.yield(); return false end
+character.SetMetadata = function(id) debtOn = id; return true end
+local fineTask = coroutine.create(function() M.Server.OnFine(7, { target = 8, code = 'theft', amount = 100 }) end)
+assert(coroutine.resume(fineTask))
+players[8] = { PlayerData = { citizenId = 'innocent-replacement', job = { name = 'unemployed' } } }
+assert(coroutine.resume(fineTask))
+assert(debitTarget == 'suspect' and debtOn == nil, 'an interrupted fine became the replacement character debt')
+-- Even a debit that completed before its hook resumed refunds the original citizen.
+players[8] = { PlayerData = { citizenId = 'suspect', job = { name = 'unemployed' } } }
+character.RemoveMoney = function() coroutine.yield(); return true end
+character.AddMoneyOffline = function(cid, _, amount) refundTo = cid; assert(amount == 50); return { ok = true } end
+fineTask = coroutine.create(function() M.Server.OnFine(7, { target = 8, code = 'theft', amount = 100 }) end)
+assert(coroutine.resume(fineTask))
+players[8] = { PlayerData = { citizenId = 'another-innocent', job = { name = 'unemployed' } } }
+assert(coroutine.resume(fineTask))
+assert(refundTo == 'suspect' and debtOn == nil, 'interrupted fine refunded a reused player slot')
 print('police audit regressions passed')

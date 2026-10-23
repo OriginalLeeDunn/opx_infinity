@@ -38,18 +38,18 @@ M.Data.ITEMS = {
 		WEIGHT = 300, CATEGORY = 'drink', MODEL = 'food.drink_packaged',
 		USE = { STATUS = { thirst = 15 }, ANIMATION = { NAME = 'drink', DURATION_MS = 3000 } },
 	},
-	-- Open77 ships no eating profile: food plays the drink profile's first hand-to-mouth clip.
+	-- The platform's takeaway meal pose; older catalogues retain a hand-to-mouth fallback.
 	burrito = {
 		WEIGHT = 350, CATEGORY = 'food', MODEL = 'food.street_food',
-		USE = { STATUS = { hunger = 35 }, ANIMATION = { NAME = 'drink', VARIANT = 1, DURATION_MS = 3000 } },
+		USE = { STATUS = { hunger = 35 }, ANIMATION = { NAME = 'takeout', FALLBACK = 'drink', DURATION_MS = 3000 } },
 	},
 	chips = {
 		WEIGHT = 150, CATEGORY = 'food', MODEL = 'food.snack',
-		USE = { STATUS = { hunger = 12 }, ANIMATION = { NAME = 'drink', VARIANT = 1, DURATION_MS = 3000 } },
+		USE = { STATUS = { hunger = 12 }, ANIMATION = { NAME = 'takeout', FALLBACK = 'drink', DURATION_MS = 3000 } },
 	},
 	kibble = {
 		WEIGHT = 250, CATEGORY = 'food', MODEL = 'food.snack',
-		USE = { STATUS = { hunger = 20 }, ANIMATION = { NAME = 'drink', VARIANT = 1, DURATION_MS = 3000 } },
+		USE = { STATUS = { hunger = 20 }, ANIMATION = { NAME = 'takeout', FALLBACK = 'drink', DURATION_MS = 3000 } },
 	},
 
 	bandage = { WEIGHT = 60, CATEGORY = 'medical', MODEL = 'medical.container', USE = { CONSUME = 1 } },

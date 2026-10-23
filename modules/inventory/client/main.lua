@@ -739,7 +739,7 @@ local function registerEvents()
 				local shown = progress.Start(FOCUS_OWNER, {
 					label = payload.label or payload.name or '',
 					durationMs = animation.durationMs,
-					animation = { name = animation.name, variant = animation.variant },
+					animation = { name = animation.name, variant = animation.variant, fallback = animation.fallback },
 					-- Eating is the case this was written for, and the owner's words
 					-- were that the player must not be able to stop it.
 					cancelable = false,

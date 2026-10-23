@@ -111,6 +111,8 @@ shared_script "config/teleports.lua"
 -- Shared: the client reads the refusal windows and the handover bar's length
 -- here, and the server re-derives every bound the client thinks it knows.
 shared_script "config/crafting.lua"
+shared_script "config/salvage.lua"
+shared_script "config/citywork.lua"
 -- Shared like the crafting config above it: the client draws the two spheres of
 -- every armoury and reads their positions here, and both halves must refuse the
 -- same rows.
@@ -789,6 +791,20 @@ shared_script "modules/crafting/shared/recipes.lua"
 server_script "modules/crafting/server/storage.lua"
 server_script "modules/crafting/server/main.lua"
 client_script "modules/crafting/client/main.lua"
+
+-- Public recovery feeds the existing crafting and trade material economy.
+shared_script "modules/salvage/module.lua"
+shared_script "modules/salvage/locales.lua"
+shared_script "modules/salvage/shared/model.lua"
+server_script "modules/salvage/server/main.lua"
+client_script "modules/salvage/client/main.lua"
+
+-- Public service careers use the existing gig ledger for payouts and budgets.
+shared_script "modules/citywork/module.lua"
+shared_script "modules/citywork/locales.lua"
+shared_script "modules/citywork/shared/model.lua"
+server_script "modules/citywork/server/main.lua"
+client_script "modules/citywork/client/main.lua"
 
 -- The gunsmith, which is the crafting service's first consumer. AFTER
 -- `crafting`, whose benches it registers, and after `target`, whose eye carries

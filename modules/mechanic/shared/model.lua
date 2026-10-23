@@ -263,10 +263,10 @@ end
 
 --- How broken a vehicle is, in whole percent 0..100: the worse of its lost
 --- health and its average crushed body cell, with a floor of 5 when only glass,
---- lights or tyres are broken (a flat costs something to fix).
+--- lights, tyres or detached panels are broken (a flat costs something to fix).
 -- @author dop42
 -- @param health number|nil the normalised pool 0..1
--- @param damage table|nil `Open77.vehicles.getDamage` { body = {30 x 0..1}, glass, lights, tires }
+-- @param damage table|nil `Open77.vehicles.getDamage` { body = {30 x 0..1}, glass, lights, tires, detachedParts }
 -- @return integer
 function Model.Missing(health, damage)
 	local lost = 0
@@ -283,7 +283,7 @@ function Model.Missing(health, damage)
 			end
 		end
 		if cells > 0 then crushed = sum / cells end
-		for _, field in ipairs({ 'glass', 'lights', 'tires' }) do
+		for _, field in ipairs({ 'glass', 'lights', 'tires', 'detachedParts' }) do
 			local mask = math.tointeger(finiteNumber(damage[field]))
 			if mask ~= nil and mask ~= 0 then masks = true end
 		end
@@ -291,6 +291,29 @@ function Model.Missing(health, damage)
 	local percent = math.floor(math.max(lost, crushed) * 100 + 0.5)
 	if percent < 5 and masks then percent = 5 end
 	return math.min(100, math.max(0, percent))
+end
+
+--- A bounded readout of canonical damage and openings, without vehicle ownership.
+function Model.Diagnostic(health, damage, snapshot)
+	local function bits(value, width)
+		local mask = math.tointeger(finiteNumber(value))
+		if mask == nil then return nil end
+		local count = 0
+		for bit = 0, width - 1 do
+			if mask & (1 << bit) ~= 0 then count = count + 1 end
+		end
+		return count
+	end
+	damage = type(damage) == 'table' and damage or {}
+	snapshot = type(snapshot) == 'table' and snapshot or {}
+	local pool = finiteNumber(health)
+	return {
+		health = pool ~= nil and math.floor(math.min(1, math.max(0, pool)) * 100 + 0.5) or nil,
+		missing = Model.Missing(health, damage),
+		tires = bits(damage.tires, 4), glass = bits(damage.glass, 32),
+		lights = bits(damage.lights, 32), detached = bits(damage.detachedParts, 32),
+		doors = bits(snapshot.doors, 6), windows = bits(snapshot.windows, 4),
+	}
 end
 
 --- What a workshop repair of `missing` percent costs: fee, parts and length.

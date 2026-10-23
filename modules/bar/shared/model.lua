@@ -147,9 +147,8 @@ function Model.Definition(item)
 		if item.hunger > 0 then status.hunger = item.hunger end
 		definition.use = {
 			consume = 1, close = true,
-			-- Open77 ships no eating profile: food plays the drink profile's
-			-- first hand-to-mouth clip, the way modules/inventory/data/items.lua does.
-			animation = item.kind == 'food' and { name = 'drink', variant = 1, durationMs = 3000 }
+			-- Use the authored eating pose where offered; keep older catalogues usable.
+			animation = item.kind == 'food' and { name = 'takeout', fallback = 'drink', durationMs = 3000 }
 				or { name = 'drink', durationMs = 3000 },
 		}
 		if next(status) ~= nil then definition.use.status = status end

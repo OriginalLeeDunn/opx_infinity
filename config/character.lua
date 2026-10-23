@@ -345,6 +345,31 @@ OPX.Config.MODULES.character = {
 			},
 		},
 
+		-- Shard couriers and relay maintenance share the public citywork board.
+		-- Their paychecks require a shift; freelancing never grants a job salary.
+		courier = {
+			label = 'Shard Courier',
+			type = 'transport',
+			defaultDuty = false,
+			offDutyPay = false,
+			grades = {
+				[0] = { name = 'Street Courier', payment = 65 },
+				[1] = { name = 'Secure Courier', payment = 100 },
+				[2] = { name = 'Dispatch Lead', payment = 150, isBoss = true, bankAuth = true },
+			},
+		},
+		technician = {
+			label = 'Network Maintenance Technician',
+			type = 'tech',
+			defaultDuty = false,
+			offDutyPay = false,
+			grades = {
+				[0] = { name = 'Relay Apprentice', payment = 75 },
+				[1] = { name = 'Network Technician', payment = 120 },
+				[2] = { name = 'Maintenance Lead', payment = 170, isBoss = true, bankAuth = true },
+			},
+		},
+
 		-- The garages, the tow and the impound lot: see config/mechanic.lua.
 		mechanic = {
 			label = 'Mechanic',

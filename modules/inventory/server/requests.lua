@@ -175,8 +175,8 @@ handlers.move = function(source, payload)
 	-- weapon being holstered on the way out: the page draws no reason of its own,
 	-- so a move refused without a toast was a drag that snapped back in silence.
 	if not from or not to then return refused(source, false, 'not_found', M.Operation.MOVE) end
-	return refused(source, Containers.Move(from, fromSlot, to, slotOf(payload.toSlot), count),
-		M.Operation.MOVE)
+	local ok, code = Containers.Move(from, fromSlot, to, slotOf(payload.toSlot), count)
+	return refused(source, ok, code, M.Operation.MOVE)
 end
 
 --- Splits part of a stack into the first free slot.
@@ -189,7 +189,8 @@ handlers.split = function(source, payload)
 	if not may then return false, refusal end
 	local container = resolve(source, payload.container)
 	if not container then return refused(source, false, 'not_found', M.Operation.MOVE) end
-	return refused(source, Containers.Split(container, slot, count), M.Operation.MOVE)
+	local ok, code = Containers.Split(container, slot, count)
+	return refused(source, ok, code, M.Operation.MOVE)
 end
 
 --- Packs a container the player may reach, by weight or by name.
@@ -199,7 +200,8 @@ handlers.sort = function(source, payload)
 	if not may then return false, refusal end
 	local container = resolve(source, payload.container)
 	if not container then return refused(source, false, 'not_found', M.Operation.MOVE) end
-	return refused(source, Containers.Sort(container, payload.mode), M.Operation.MOVE)
+	local ok, code = Containers.Sort(container, payload.mode)
+	return refused(source, ok, code, M.Operation.MOVE)
 end
 
 --- Uses a bag slot, toasting any refusal except the cooldown.

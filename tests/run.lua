@@ -4274,9 +4274,11 @@ do
 		check('a library reader answers a plain value, never a Result',
 			Lib.Input.IsDown('UP') == false and Lib.Input.IsCaptured() == false)
 
-		-- Writers. No `Open77.kvp` on this host either, so `Set` takes the
+		-- Writers. Explicitly remove `Open77.kvp`, so `Set` takes the
 		-- native-absent path -- the one `modules/admin/client/tags.lua` relies on
 		-- to warn once instead of raising.
+		local realKvp = env.Open77.kvp
+		env.Open77.kvp = nil
 		local wrote = Lib.Store.Set('opx.tests.shape', true)
 		check('a library writer answers a Result, refusal and all',
 			type(wrote) == 'table' and wrote.ok == false and type(wrote.error) == 'string')
@@ -4287,6 +4289,7 @@ do
 		-- early and the configured `TAGS.OWN` was silently dropped.
 		check('and its reader answers the fallback when the store is not there',
 			Lib.Store.Get('opx.tests.shape', 'fallback') == 'fallback')
+		env.Open77.kvp = realKvp
 
 		-- `Native.Reach` is the capability probe the client hand-rolled as a
 		-- two-level `type()` dance in five places. It answers the function or
@@ -46130,7 +46133,8 @@ do
 		check('a drink is a usable item that moves thirst through the inventory\'s use', drink.use ~= nil
 			and drink.use.consume == 1 and drink.use.status.thirst == 20 and drink.use.animation.name == 'drink')
 		check('food moves hunger and plays the hand-to-mouth clip', food.use.status.hunger == 45
-			and food.use.status.thirst == 10 and food.use.animation.variant == 1)
+			and food.use.status.thirst == 10 and food.use.animation.name == 'takeout'
+			and food.use.animation.fallback == 'drink')
 		check('an ingredient is stock, not a use', stock.use == nil and stock.category == 'ingredient')
 		local inventory = OPX.Api.Get('inventory')
 		check('every item is registered in the catalogue at boot', inventory.GetItem('johnny_silverhand') ~= nil
@@ -47140,6 +47144,16 @@ do
 				return out
 			end,
 			Case = function(id) return db.cases[id] and copy(db.cases[id]) or nil end,
+			Convict = function(id, cid, entry, at)
+				local case = db.cases[id]
+				if case == nil or case.state ~= 'open' then return nil end
+				db.n = db.n + 1
+				local row = copy(entry)
+				row.id, row.citizen, row.at, row.expunged = db.n, cid, at, false
+				db.records[db.n] = row
+				case.state, case.verdict, case.recordId = 'closed', 'guilty', db.n
+				return db.n
+			end,
 			CloseCase = function(id, verdict)
 				local case = db.cases[id]
 				if case == nil or case.state ~= 'open' then return false end
@@ -47509,7 +47523,11 @@ do
 		local jobs = OPX.Config.MODULES.character.JOBS
 		local shipped = Access.Build(OPX.Config.MODULES.workplace, jobs)
 		check('the shipped config has no problem', #shipped.problems == 0, table.concat(shipped.problems, ' | '))
-		check('and every station waits to be surveyed', next(shipped.stations) == nil and #shipped.placeholders >= 20,
+		local stationCount = 0
+		for _ in pairs(shipped.stations) do stationCount = stationCount + 1 end
+		check('the two surveyed public trades are open; older stations still await survey',
+			stationCount == 2 and shipped.stations.courier_dispatch ~= nil
+				and shipped.stations.technician_workshop ~= nil and #shipped.placeholders >= 20,
 			#shipped.placeholders)
 		check('the uniforms and fleets are read per job', shipped.outfits.ncpd.patrol ~= nil
 			and shipped.outfits.trauma.response.wear.Outfit == 'Items.Trauma_Team_Outfit'
@@ -48478,6 +48496,11 @@ end
 		check('the customer is asked, with the amount, the reason and the clock',
 			type(ask) == 'table' and ask.id == id and ask.amount == 500 and ask.ttlS == 45
 				and ask.reason == 'Ride Japantown -> Watson')
+		check('billing does not introduce the employee by their character name',
+			ask and ask.issuer == '#' .. D)
+		local publicBill = Server.Owed(customer.PlayerData.citizenId)[1]
+		check('the tab carries connection ids instead of the stored character names',
+			publicBill and publicBill.issuer == '#' .. D and publicBill.target == '#' .. C)
 		check('the bus hears it issued', lastHeard('ON_ISSUED') and lastHeard('ON_ISSUED').id == id)
 
 		ok, why = run(function() return Server.PlayerIssue(D, C, 100, 'Again') end)
@@ -50173,17 +50196,25 @@ do
 			bag = {}, stash = {}, opened = {}, plates = {}, rows = {}, states = {}, invoices = {},
 			deposits = {}, refuseState = nil, invoicesOn = false, accountsOn = false,
 		}
+		local function sourceOf(target)
+			if type(target) ~= 'string' then return target end
+			local player = OPX.Modules.Get('character').GetPlayerByCitizenId(target)
+			return player and player.PlayerData.source or target
+		end
 		local inventory = {
 			GetItemCount = function(player, item)
+				player = sourceOf(player)
 				return { ok = true, value = (world.bag[player] or {})[item] or 0 }
 			end,
 			RemoveItem = function(player, item, count)
+				player = sourceOf(player)
 				local held = world.bag[player] or {}
 				if (held[item] or 0) < count then return { ok = false, error = 'not_enough' } end
 				held[item] = held[item] - count
 				return { ok = true }
 			end,
 			AddItem = function(player, item, count)
+				player = sourceOf(player)
 				world.bag[player] = world.bag[player] or {}
 				world.bag[player][item] = (world.bag[player][item] or 0) + (count or 1)
 				return { ok = true }
@@ -50362,11 +50393,11 @@ do
 			local Event = mechanic.Event
 			local world = fakes(env)
 			local MECH, CUST, STRANGER = 81, 82, 83
-			local mech = medicalCharacter(env, control, MECH, 'MECH0001', 'mechanic', 1, { EDDIES = 0, BANK = 0 })
-			local cust = medicalCharacter(env, control, CUST, 'CUST0001', 'unemployed', 0, { EDDIES = 0, BANK = 5000 })
-			medicalCharacter(env, control, STRANGER, 'STRA0002', 'unemployed', 0, { EDDIES = 0, BANK = 0 })
+			local mech = medicalCharacter(env, control, MECH, '79A-CDET', 'mechanic', 1, { EDDIES = 0, BANK = 0 })
+			local cust = medicalCharacter(env, control, CUST, '9AC-DEFM', 'unemployed', 0, { EDDIES = 0, BANK = 5000 })
+			medicalCharacter(env, control, STRANGER, 'ACD-EFGG', 'unemployed', 0, { EDDIES = 0, BANK = 0 })
 			local vehicle = car(env, control, 501.0, 0.4)
-			world.plates[tostring(vehicle)] = { plate = 'PLATE001', citizenId = 'CUST0001' }
+			world.plates[tostring(vehicle)] = { plate = 'PLATE001', citizenId = '9AC-DEFM' }
 			control.Stand(MECH, 502.0, 0.0, 0.0)
 			control.Stand(CUST, 506.0, 0.0, 0.0)
 			control.Stand(STRANGER, 503.0, 1.0, 0.0)

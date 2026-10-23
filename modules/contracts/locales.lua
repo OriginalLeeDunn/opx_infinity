@@ -91,6 +91,8 @@ local EN = {
 
 	['contracts.refused.generic'] = 'That did not go through.',
 	['contracts.refused.no_character'] = 'You need to be in the city for that.',
+	['contracts.refused.gang_required'] = 'Your gang has no access here.',
+	['contracts.refused.gang_grade_too_low'] = 'Your gang rank is too low for this.',
 	['contracts.refused.job_required'] = 'Only fixers and mercs work the gig board.',
 	['contracts.refused.grade_too_low'] = 'You are not high enough in the trade for that.',
 	['contracts.refused.off_duty'] = 'Go on duty first.',
@@ -234,6 +236,8 @@ local FR = {
 
 	['contracts.refused.generic'] = 'Ça n\'est pas passé.',
 	['contracts.refused.no_character'] = 'Il faut être en ville pour ça.',
+	['contracts.refused.gang_required'] = 'Votre gang n’a pas accès ici.',
+	['contracts.refused.gang_grade_too_low'] = 'Votre rang dans le gang est insuffisant.',
 	['contracts.refused.job_required'] = 'Seuls les fixers et les mercenaires utilisent le tableau des contrats.',
 	['contracts.refused.grade_too_low'] = 'Tu n\'es pas assez haut dans le milieu pour ça.',
 	['contracts.refused.off_duty'] = 'Prends ton service d\'abord.',

@@ -111,6 +111,13 @@ local function sourceOf(citizenId)
 	return playerId(value.PlayerData.source)
 end
 
+-- A bill is not an introduction. Names stay in the private stored record;
+-- clients receive only a current connection id or an anonymous label.
+local function publicPerson(citizenId)
+	local player = sourceOf(citizenId)
+	return player and ('#%d'):format(player) or locale('invoices.person')
+end
+
 local function nameOf(data)
 	local info = type(data) == 'table' and type(data.charInfo) == 'table' and data.charInfo or {}
 	local name = OPX.String.Trim(('%s %s'):format(tostring(info.firstName or ''), tostring(info.lastName or '')))
@@ -328,7 +335,7 @@ local function finish(inv)
 	publish(Event.ON_PAID, inv)
 	-- What the employee pockets: the cut, plus the rest when no company took it.
 	local earned = cut + ((inv.restTo == 'issuer' or inv.account == nil) and rest or 0)
-	tellCitizen(inv.issuerCid, 'invoices.issuer.paid', { amount = money(inv.amount), name = inv.targetName,
+	tellCitizen(inv.issuerCid, 'invoices.issuer.paid', { amount = money(inv.amount), name = publicPerson(inv.targetCid),
 		cut = money(earned) }, 'success')
 	return true
 end
@@ -372,7 +379,7 @@ local function charge(inv, player)
 	-- The customer HAS paid from here on, whatever the payouts do: a payout that
 	-- fails is the sweep's to finish, never the customer's to pay again.
 	tellCitizen(inv.targetCid, 'invoices.target.paid', { amount = money(inv.amount, used),
-		company = inv.company or inv.issuerName }, 'success')
+		company = inv.company or publicPerson(inv.issuerCid) }, 'success')
 	local finished, failure = finish(inv)
 	if not finished and failure == 'payout_pending' then return true end
 	return finished, failure
@@ -399,8 +406,8 @@ local function close(inv, to, event, issuerKey, targetKey)
 	if not moved then return false, why end
 	audit(inv, to, 'info', to)
 	publish(event, inv)
-	local params = { amount = money(inv.amount), name = inv.targetName,
-		company = inv.company or inv.issuerName, id = inv.id }
+	local params = { amount = money(inv.amount), name = publicPerson(inv.targetCid),
+		company = inv.company or publicPerson(inv.issuerCid), id = inv.id }
 	if issuerKey then tellCitizen(inv.issuerCid, issuerKey, params, 'warning') end
 	if targetKey then tellCitizen(inv.targetCid, targetKey, params, 'info') end
 	return true
@@ -417,7 +424,7 @@ end
 -- ── issuing ─────────────────────────────────────────────────────────────────
 
 local function askView(inv)
-	return { id = inv.id, company = inv.company, issuer = inv.issuerName, amount = inv.amount,
+	return { id = inv.id, company = inv.company, issuer = publicPerson(inv.issuerCid), amount = inv.amount,
 		reason = inv.reason, moneyType = config().moneyType, fallbackType = config().fallbackType,
 		ttlS = config().answerTtlS }
 end
@@ -508,7 +515,7 @@ local function playerIssue(player, rawTarget, rawAmount, rawReason)
 	if not issued.ok then return false, issued.error end
 	lastIssue[cid] = OPX.Now()
 	tell(player, 'invoices.issuer.sent', { amount = money(invoices[issued.value.id]
-		and invoices[issued.value.id].amount or 0), name = nameOf(dataOf(target)) }, 'success')
+		and invoices[issued.value.id].amount or 0), name = publicPerson(citizenOf(target)) }, 'success')
 	return true
 end
 
@@ -541,14 +548,14 @@ local function respond(player, id, choice)
 			if not moved then return false, why end
 			audit(inv, 'unpaid', 'info', 'put on the tab')
 			tell(player, 'invoices.target.filed', { amount = money(inv.amount) })
-			tellCitizen(inv.issuerCid, 'invoices.issuer.filed', { amount = money(inv.amount), name = inv.targetName })
+			tellCitizen(inv.issuerCid, 'invoices.issuer.filed', { amount = money(inv.amount), name = publicPerson(inv.targetCid) })
 			return true
 		end)
 	elseif choice == 'pay' then
 		return withClaim(id, function()
 			local ok, why = charge(inv, player)
 			if not ok and why == 'not_enough_money' and inv.state == State.UNPAID then
-				tellCitizen(inv.issuerCid, 'invoices.issuer.filed', { amount = money(inv.amount), name = inv.targetName })
+				tellCitizen(inv.issuerCid, 'invoices.issuer.filed', { amount = money(inv.amount), name = publicPerson(inv.targetCid) })
 			end
 			return ok, why
 		end)
@@ -583,7 +590,7 @@ end
 
 local function row(inv)
 	return { id = inv.id, state = inv.state, amount = inv.amount, reason = inv.reason,
-		company = inv.company, issuer = inv.issuerName, target = inv.targetName, source = inv.source,
+		company = inv.company, issuer = publicPerson(inv.issuerCid), target = publicPerson(inv.targetCid), source = inv.source,
 		account = inv.account and { kind = inv.account.kind, key = inv.account.key } or nil,
 		expiresAt = inv.expiresAt }
 end
