@@ -951,7 +951,8 @@ Contract `bar` v1 (server): `Venues()`, `Items()`, `DrunkLevel(player)`. Bus:
 cue ball and fifteen distinct vanilla object balls, arranged in a five-row triangle.
 The object balls use the game’s `ball_c_billiard.mesh` through `ball_q_billiard.mesh`
 models through fifteen cooked hosts in `opx_pool_assets` **0.3.0 or later**. Infinity
-registers each mesh/visual-host pair using the resource-owned model registry on
+registers each mesh/visual-host pair with the separate `props.register` permission
+using the resource-owned model registry on
 **op77.152 or later**, then renders the opaque model ID returned by the native.
 Raw mesh names alone displayed fallback cylinders on the deployed client. Missing
 or refused registration now leaves the table unavailable with a friendly notice,
