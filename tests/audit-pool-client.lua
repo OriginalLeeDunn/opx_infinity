@@ -137,6 +137,30 @@ for index=beforeSelect+1,#control.serverEvents do
  assert(not(message.name==M.Event.REQUEST and message[1]=='shoot'),'menu selection click charged or fired the cue')
 end
 M.Stop()
+-- Exercise the actual OPX menu page, rather than injecting a chosen mode.
+M.Init(); M.Start(); M.Client.Watch()
+local idle=packet(1,0,0); idle.epoch=12;idle.game=M.Match.New('practice')
+M.Client.Receive(idle);M.Client.Frame();control.ReadyPages();M.Client.OpenTable();control.Pump(5)
+local menu=O.Api.Get('menu').State();assert(menu.ok)
+local page
+for _,candidate in ipairs(control.pages) do
+ for _,message in ipairs(candidate.sent) do if message.channel=='opx:menu:open' then page=candidate end end
+end
+assert(page,'table menu page missing')
+local start=#control.serverEvents
+worst=math.max(worst,measured(function()
+ control.PageEmit(page,'opx:menu:choose',{handle=menu.value.handle,index=1})
+end))
+local choice
+for index=start+1,#control.serverEvents do
+ local e=control.serverEvents[index]
+ if e.name==M.Event.REQUEST and e[1]=='create' then choice=e[2] end
+end
+assert(choice and choice.mode=='practice','actual menu did not send create')
+local accepted=packet(2,50);accepted.epoch=13;accepted.game=M.Match.New(choice.mode,7)
+M.Client.Receive(accepted);M.Client.Frame();M.Client.Frame()
+assert(cameraHeld,'real menu selection failed to arm camera')
+M.Stop()
 -- A just-created native entity may not be transformable until streaming ends.
 M.Render.Reset(); failed=false
 local geometry={x=100,y=10,z=1,yaw=0}

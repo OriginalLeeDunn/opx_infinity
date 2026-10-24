@@ -11,7 +11,10 @@ assert(T.Open(state,{label='Pool'},function(action,data,stamp)sent={action=actio
 assert(#opened.items==3 and opened.items[1].data.mode=='practice' and opened.items[2].data.mode=='challenge' and opened.items[3].data.mode=='duel')
 for _,row in ipairs(opened.items) do assert(glyphEnv.OPX.Glyphs[row.icon],'mode row has no supported icon') end
 state.revision=10
-opened.on({data=opened.items[3].data})
+opened.on({action='open',data=opened.items[3].data})
+assert(sent==nil,'submenu navigation dispatched a command')
+assert(opened.closeOnSelect==true and opened.items[3].close==nil,'mode row became a close-only item')
+opened.on({action='select',data=opened.items[3].data})
 assert(sent.action=='create' and sent.data.mode=='duel' and sent.stamp.revision==9,'menu action replaced viewed revision')
 state.game=G.New('duel',8);local rows=T.Rows(state,7);assert(#rows==1 and rows[1].data.action=='join')
 G.Join(state.game,7);state.game.resetBy=1

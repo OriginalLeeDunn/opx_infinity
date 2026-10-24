@@ -20,7 +20,7 @@ function T.Rows(state, me)
 		for k,v in pairs(extra or {}) do data[k] = v end
 		rows[#rows+1] = { id = action .. (data.mode or ''), label = locale('pool.' .. key), icon = icons[key] or 'info',
 			description = locale('pool.' .. key .. 'Info', { shots = game.limit, target = game.target }),
-			data = data, close = true, confirm = confirm, disabled = disabled }
+			data = data, confirm = confirm, disabled = disabled }
 	end
 	if game.status == 'idle' then
 		row('create', 'practice', { mode = 'practice' })
@@ -46,10 +46,11 @@ function T.Open(state, spec, send)
 	if not menu then OPX.Toast.Locale('pool.menuUnavailable', nil, 'error');return false end
 	T.Close()
 	local snapshot = { epoch = state.epoch, revision = state.revision }
-	local opened = menu.Open({ owner = 'pool', id = 'pool.table', title = spec.label,
+	local opened = menu.Open({ owner = 'pool', id = 'pool.table', title = spec.label, closeOnSelect = true,
 		items = T.Rows(state, Open77.players.localId()),
 		on = function(message)
-			local data = type(message) == 'table' and message.data
+			if type(message) ~= 'table' or message.action ~= 'select' then return end
+			local data = message.data
 			if type(data) ~= 'table' then return end
 			handle = nil
 			send(data.action, { mode = data.mode }, snapshot)

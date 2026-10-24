@@ -1088,14 +1088,16 @@ onUnmounted(() => {
                 @keydown.enter.prevent="applyPath(path.slice(0, col.depth).concat([entry.name]), false)"
                 @keydown.space.prevent="applyPath(path.slice(0, col.depth).concat([entry.name]), false)"
               >
-                <span class="glyph" aria-hidden="true">
-                  <svg viewBox="0 0 24 24">
-                    <path v-for="(d, index) in glyphPaths('folder')" :key="index" :d="d" />
-                  </svg>
-                </span>
-                <span class="label op-label op-truncate">{{ entry.name }}</span>
-                <span class="value op-value op-truncate">{{ entry.count }}</span>
-                <span class="mark">&gt;</span>
+                <div class="row-heading">
+                  <span class="glyph" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path v-for="(d, index) in glyphPaths('folder')" :key="index" :d="d" />
+                    </svg>
+                  </span>
+                  <span class="label op-label op-truncate">{{ entry.name }}</span>
+                  <span class="value op-value op-truncate">{{ entry.count }}</span>
+                  <span class="mark">&gt;</span>
+                </div>
               </div>
 
               <!-- AN ACTION. Pointing at it closes whatever is deeper than the
@@ -1118,24 +1120,26 @@ onUnmounted(() => {
                 @keydown.enter.prevent="choose(entry.row)"
                 @keydown.space.prevent="choose(entry.row)"
               >
-                <span class="glyph" aria-hidden="true">
-                  <span v-if="entry.row.token === pendingToken" class="spin" />
-                  <svg v-else viewBox="0 0 24 24">
-                    <path v-for="(d, index) in glyphPaths(entry.row.icon)" :key="index" :d="d" />
-                  </svg>
-                </span>
-                <span class="label op-label op-truncate">{{ entry.row.label }}</span>
-                <span
-                  v-if="entry.row.checked !== undefined"
-                  class="check"
-                  :class="{ ticked: entry.row.checked }"
-                  role="checkbox"
-                  :aria-checked="entry.row.checked"
-                >
-                  <!-- The tick draws in after the frame lands and wipes instantly:
-                       a stroke-dashoffset transition with a delay. -->
-                  <svg viewBox="0 0 13 13" aria-hidden="true"><path d="M2.6 6.8 5 9.2 10 3.6" /></svg>
-                </span>
+                <div class="row-heading">
+                  <span class="glyph" aria-hidden="true">
+                    <span v-if="entry.row.token === pendingToken" class="spin" />
+                    <svg v-else viewBox="0 0 24 24">
+                      <path v-for="(d, index) in glyphPaths(entry.row.icon)" :key="index" :d="d" />
+                    </svg>
+                  </span>
+                  <span class="label op-label op-truncate">{{ entry.row.label }}</span>
+                  <span
+                    v-if="entry.row.checked !== undefined"
+                    class="check"
+                    :class="{ ticked: entry.row.checked }"
+                    role="checkbox"
+                    :aria-checked="entry.row.checked"
+                  >
+                    <!-- The tick draws in after the frame lands and wipes instantly:
+                         a stroke-dashoffset transition with a delay. -->
+                    <svg viewBox="0 0 13 13" aria-hidden="true"><path d="M2.6 6.8 5 9.2 10 3.6" /></svg>
+                  </span>
+                </div>
                 <span v-if="entry.row.description" class="hint">{{ entry.row.description }}</span>
               </div>
             </div>
@@ -1342,9 +1346,9 @@ onUnmounted(() => {
 .row {
   position: relative;
   display: flex;
-  align-items: center;
   gap: var(--op-space-2);
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
   min-width: 0;
   padding: var(--op-space-1) var(--op-space-2) calc(var(--op-space-1) + 1px);
   color: var(--op-red-text);
@@ -1376,6 +1380,16 @@ onUnmounted(() => {
   transition:
     color var(--op-dur-fast) linear,
     transform 80ms var(--op-ease);
+}
+
+/* Keep the glyph, label and affordance on one flex line. Wrapping the row
+   itself moved a long label below its icon before flex could shrink it. Only
+   the optional description gets a separate line. */
+.row-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--op-space-2);
+  min-width: 0;
 }
 
 .row:focus {
@@ -1415,7 +1429,7 @@ onUnmounted(() => {
    height as the ray moves is a list that cannot be read, because the row the
    pointer is over is no longer the row it was aimed at. */
 .label {
-  flex: 0 1 auto;
+  flex: 1 1 0;
 }
 
 .value {
@@ -1433,7 +1447,7 @@ onUnmounted(() => {
 
 .hint {
   /* The one place a row wraps. A description is a sentence, not a label. */
-  flex: 1 0 100%;
+  overflow-wrap: anywhere;
   font: 400 var(--op-fs-meta) / 1.35 var(--op-font-body);
   color: var(--op-text-dim);
   white-space: normal;

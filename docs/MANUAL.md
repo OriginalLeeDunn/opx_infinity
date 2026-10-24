@@ -949,7 +949,10 @@ Contract `bar` v1 (server): `Venues()`, `Items()`, `DrunkLevel(player)`. Bus:
 
 `modules/pool` + `config/pool.lua` offers three original modes using one white
 cue ball and two yellow object balls. Cooked models, recorded audio and cleanup
-patches live in the separate `opx_pool_assets` resource. The modes have no wagers,
+patches live in the separate `opx_pool_assets` resource. Table actions use menu-wide
+`closeOnSelect`, so selecting a mode dispatches its command before releasing
+focus. Confirmation submenus dispatch only their confirmed selection. The modes
+have no wagers,
 XP or money rewards, spin, numbered-ball families or persisted match records.
 
 `TABLE.enabled` ships false. Survey a real, unobstructed table before enabling it:
@@ -1977,6 +1980,10 @@ registry and checks both ordering and cancellation; the main suite measures the
 page callback and its worker resumes. Appearance warnings about missing looks
 require an actually nearby player, so joining an empty server is not reported as
 failed replication.
+
+Target action and folder labels stay on one line with an ellipsis when space runs
+out; their icons and checkbox/count stay aligned in the same heading. Optional
+descriptions wrap below that heading.
 
 ## Tests
 
