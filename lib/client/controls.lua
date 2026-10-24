@@ -4,7 +4,7 @@
 OPX.Controls = {}
 local claims = {}
 local known = { allowAim = true, allowShoot = true, allowInteraction = true,
-	allowWeapons = true, allowDodge = true, allowJump = true, freezeRotation = true }
+	allowWeapons = true, allowDodge = true, allowJump = true, freezeRotation = true, freezePosition = true }
 local function held(name, except)
 	for owner, names in pairs(claims) do if owner ~= except and names[name] then return true end end
 	return false
@@ -19,7 +19,8 @@ function OPX.Controls.Set(owner, names, take)
 	end
 	local previous, changed = claims[owner] or {}, {}
 	local function apply(name, on)
-		local value = name == 'freezeRotation' and on or name ~= 'freezeRotation' and not on
+		local freeze = name == 'freezeRotation' or name == 'freezePosition'
+		local value = freeze and on or not freeze and not on
 		local ran, ok = pcall(players[name], value)
 		return ran and ok == true
 	end

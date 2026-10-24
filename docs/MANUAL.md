@@ -970,11 +970,31 @@ another resource's props or world nodes.
 
 The eye offers **Practise pool** at the configured table. One loaded character
 holds the practice seat; nearby loaded characters in the same bucket receive
-spectator frames. Right-click arms/cancels aim, mouse movement adjusts direction,
-holding/releasing left-click charges/fires, **R** resets the balls while unarmed,
-and **Backspace** leaves. Walking remains free. Aiming temporarily holds camera
-rotation; opening a keyboard-owning UI cancels charge without shooting. The
-existing prompts strip shows controls and power without taking WebUI focus.
+spectator frames. Entering automatically frames the white ball from behind the
+cue. Move the mouse to aim; hold **Shift** for fine adjustments. Holding left-click
+charges the shot and releasing fires; the dedicated, unfocused overlay shows a
+smooth power gauge. The direction becomes finer while charging. **V** toggles an
+overhead view for planning; the mouse wheel adjusts the cue-view height. A dashed
+straight guide stops at the first ball or cushion, with a cue-ball contact ring;
+it does not predict rebounds or results. Set `AIM_GUIDE = false` to hide it.
+`SENSITIVITY` defaults to `0.0018`, `CHARGE_SECONDS` to `1.8`.
+
+After a shot the camera moves to the table view until authoritative playback has
+settled, then returns behind the white ball. Right-click cancels/resumes aiming;
+while cancelled the player can walk around and **R** resets the practice balls.
+**Backspace** leaves, including while balls move. Position, rotation, jump, dodge
+and ordinary interaction are held only during the camera view, through the same
+module-owned control leases used by target/police/hauling. UI capture, loss of the
+seat, character unload, leaving and stop remove the camera, guide and gauge and
+release those claims. Capturing input cancels a charge without firing and does
+not automatically resume it when the UI closes. A camera refusal leaves practice
+with a friendly notice and records the native reason in operator diagnostics.
+
+The camera needs `camera.script`; the bounded aiming guide uses `world.debug`.
+Its camera/prop work runs per frame; guide geometry is capped at 20 lines and
+refreshed every 100 ms with a 200 ms native expiry. The power overlay consumes no
+pointer or keyboard and expires stale readings after 500 ms. These are client
+presentation features, not new permissions to decide shots or outcomes.
 
 The server owns all ball coordinates, collisions, pockets and scratch recovery.
 Its fixed 120 Hz solver advances to swept ball/rail/pocket contacts, with a bounded

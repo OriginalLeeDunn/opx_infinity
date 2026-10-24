@@ -1,7 +1,7 @@
 --- The three existing control owners and pool must compose in one resource VM.
 local state, refusals, OPX = {}, {}, {}
 local env = { OPX=OPX, Open77={players={}}, type=type, pairs=pairs, ipairs=ipairs, table=table, pcall=pcall }
-for _,name in ipairs({'allowShoot','allowAim','allowInteraction','freezeRotation','allowWeapons','allowJump','allowDodge'}) do
+for _,name in ipairs({'allowShoot','allowAim','allowInteraction','freezeRotation','freezePosition','allowWeapons','allowJump','allowDodge'}) do
 	env.Open77.players[name]=function(value)
 		if refusals[name] then return false end
 		state[name]=value; return true
@@ -29,4 +29,8 @@ assert(C.Set('police',{'allowShoot'},true))
 refusals.freezeRotation=true
 assert(not C.Set('pool',{'allowShoot','freezeRotation'},true))
 assert(state.allowShoot==false, 'failed claim released another owner')
+assert(C.Set('cinema',{'freezePosition'},true))
+assert(C.Set('pool',{'freezePosition'},true))
+assert(C.Set('pool',{'freezePosition'},false) and state.freezePosition==true,'pool released another module freeze')
+assert(C.Set('cinema',{'freezePosition'},false) and state.freezePosition==false)
 print('control leases: target/pool/cuffs/carry ownership, partial refusal and rollback passed')

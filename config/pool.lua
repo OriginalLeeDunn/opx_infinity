@@ -19,8 +19,9 @@ OPX.Config.MODULES.pool = {
 		north_oak_casino_main = { label = 'North Oak Casino', x = 1003.637, y = 1494.385, z = 246.863, yaw = -178.49, bucket = 0, halfLength = 1.4, halfWidth = 0.68 },
 		westbrook_luxury_apartment = { label = 'Luxury Apartment', x = 16.227, y = -0.07, z = 135.687, yaw = -31.88, bucket = 0, halfLength = 1.4, halfWidth = 0.68 },
 	},
-	SENSITIVITY = 0.0025, -- radians per physical mouse count
-	CHARGE_SECONDS = 2.4,
+	SENSITIVITY = 0.0018, -- radians per physical mouse count
+	CHARGE_SECONDS = 1.8,
+	AIM_GUIDE = true, -- straight line to the first ball/cushion; no bounce prediction
 	-- opx_pool_assets reserves these three native recreation aliases globally.
 	-- Do not use them as tents, sleeping bags or gym equipment on this world.
 	MODELS = {

@@ -3,7 +3,7 @@ local Host = dofile('tests/host.lua')
 local env, control = Host.Environment('client')
 local props, nextId, creates, moves, mouse, state = {}, 0, 0, 0, 0, {}
 local failed, refused = false, nil
-for _,name in ipairs({'allowShoot','allowAim','allowInteraction','freezeRotation','allowWeapons','allowJump','allowDodge'}) do
+for _,name in ipairs({'allowShoot','allowAim','allowInteraction','freezeRotation','freezePosition','allowWeapons','allowJump','allowDodge'}) do
 	env.Open77.players[name] = function(value) state[name]=value; return true end
 end
 env.Open77.players.localId = function() return 7 end
@@ -24,6 +24,16 @@ env.Open77.props = {
 		return rows
 	end,
 }
+local camId, cameraHeld, cameraCreated, cameraDestroyed, cameraRefused = nil, false, 0, 0, false
+env.Open77.camera = env.Open77.camera or {}
+env.Open77.camera.create = function(options) cameraCreated=cameraCreated+1; camId=cameraCreated; return camId end
+env.Open77.camera.activate = function(id) if cameraRefused then return false,'camera_held_by:test' end; cameraHeld=true; return true end
+env.Open77.camera.destroy = function(id) cameraDestroyed=cameraDestroyed+1; cameraHeld=false; camId=nil; return true end
+env.Open77.camera.setTransform = function() return true end
+env.Open77.camera.lookAt = function() return true end
+env.Open77.camera.cameras = function() return {held=cameraHeld,activeCamera=camId} end
+local guideShown=false
+env.Open77.debugDraw={set=function() guideShown=true; return true end,clear=function() guideShown=false; return true end}
 for _,file in ipairs(Host.LoadOrder('open77.lua','client')) do
 	assert(loadfile(file,'t',env))()
 	if file=='config/pool.lua' then env.OPX.Config.MODULES.pool.TABLE={enabled=true,x=100,y=10,z=1,yaw=0,bucket=0,halfLength=1.27,halfWidth=0.635,label='Audit pool'} end
@@ -42,6 +52,8 @@ end
 M.Client.Receive(packet(1,0))
 M.Client.Draw(); M.Client.Input()
 assert(creates==3 and state.allowShoot==false and state.allowAim==false,'practice did not render/hold weapons')
+M.Client.Frame(); M.Client.Guide(); M.Client.Strip()
+assert(cameraHeld and state.freezePosition==true and guideShown,'entry did not arm a camera/guide')
 local function measured(fn)
 	local cost=0
 	debug.sethook(function() cost=cost+100 end,'',100)
@@ -57,18 +69,22 @@ for sample=0,6 do burst.frames[#burst.frames+1]={time=sample*1000/120,balls={{-0
 worst=math.max(worst,measured(function() M.Client.Receive(burst) end))
 local reset=packet(1,0); reset.epoch=3; M.Client.Receive(reset)
 for _=1,100 do worst=math.max(worst,measured(M.Client.Frame)) end
-assert(creates==3 and moves>=300,'movement respawned props')
-control.input.down.mouse2=true; M.Client.Input()
-assert(state.freezeRotation==true and creates==3,'aim failed to freeze camera')
-M.Client.Draw(); assert(creates==4,'cue missing')
+assert(creates==4 and moves>=300 and cameraCreated==2,'movement respawned props or camera')
+-- Right click cancels the automatically armed view; another press arms it.
+control.input.down.mouse2=true; M.Client.Frame()
+assert(not cameraHeld and state.freezePosition==false,'cancel kept camera/body frozen')
+control.input.down.mouse2=false; M.Client.Frame()
+control.input.down.mouse2=true; M.Client.Frame()
+assert(state.freezeRotation==true and state.freezePosition==true and cameraHeld,'aim failed to acquire camera/position')
+M.Client.Draw(); assert(creates>=4,'cue missing')
 control.input.down.mouse2=false; control.input.down.mouse1=true; M.Client.Input()
 control.Advance(1200); control.input.captured=true; M.Client.Input(); M.Client.Draw()
-assert(state.freezeRotation==false,'chat capture kept camera frozen')
+assert(state.freezeRotation==false and state.freezePosition==false and not cameraHeld and not guideShown,'chat capture kept view/guide/body frozen')
 for _,message in ipairs(control.serverEvents) do assert(not(message.name==M.Event.REQUEST and message[1]=='shoot'),'captured release fired shot') end
 control.input.captured=false; control.input.down.mouse1=false; M.Client.Input()
 -- A server scope revocation immediately drops local props, input and seat.
 M.Client.Receive({closed=true})
-assert(next(props)==nil and state.allowShoot==true and state.freezeRotation==false,'scope revoke leaked projection')
+assert(next(props)==nil and state.allowShoot==true and state.freezeRotation==false and not cameraHeld and not guideShown,'scope revoke leaked projection/view')
 M.Client.Watch()
 local resumed=packet(1,0); resumed.epoch=4; M.Client.Receive(resumed); M.Client.Frame()
 assert(state.allowShoot==false,'practice did not recover after scope resubscribe')
@@ -77,7 +93,28 @@ failed=true; M.Client.Watch()
 assert(next(props)==nil and M.Render.Failed() and state.allowShoot==true,'failed model kept objects or controls')
 local before=creates
 M.Client.Draw(); M.Client.Watch(); assert(creates==before,'failed model retry loop')
-M.Stop(); assert(next(props)==nil and state.freezeRotation==false,'stop leaked props/controls')
+M.Stop(); assert(next(props)==nil and state.freezeRotation==false and state.freezePosition==false and not cameraHeld,'stop leaked props/controls/camera')
+-- Refusing a camera must release the seat and every view/control claim.
+failed=false; cameraRefused=true
+M.Init(); M.Start(); M.Client.Watch()
+local denied=packet(1,0); denied.epoch=9; M.Client.Receive(denied)
+M.Client.Frame(); M.Client.Frame()
+assert(not cameraHeld and state.freezePosition==false and state.allowShoot==true and next(props)==nil,'camera refusal left a practice seat/view')
+M.Stop(); cameraRefused=false
+-- An accepted shot changes to table view and rearms only after playback settles.
+M.Init(); M.Start(); M.Client.Watch()
+local ready=packet(1,0); ready.epoch=10; M.Client.Receive(ready)
+M.Client.Frame(); M.Client.Frame()
+control.input.down.mouse1=true; M.Client.Input(); control.Advance(400)
+control.input.down.mouse1=false; M.Client.Frame()
+assert(cameraHeld and state.freezePosition==true,'shot dropped the table camera')
+local moving=packet(2,50); moving.epoch=10; moving.phase='rolling'; M.Client.Receive(moving); M.Client.Frame()
+local settled=packet(3,100); settled.epoch=10;settled.revision=2;settled.readyAt=100
+M.Client.Receive(settled); M.Client.Frame(); control.Advance(200);M.Client.Frame();M.Client.Frame()
+assert(cameraHeld and state.freezePosition==true,'settled shot did not rearm the aiming view')
+control.input.down.BACKSPACE=true; M.Client.Frame();control.input.down.BACKSPACE=false
+assert(not cameraHeld and state.freezePosition==false and not guideShown,'leave failed to release the table view')
+M.Stop()
 -- A just-created native entity may not be transformable until streaming ends.
 M.Render.Reset(); failed=false
 local geometry={x=100,y=10,z=1,yaw=0}
