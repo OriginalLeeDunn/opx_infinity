@@ -89,7 +89,8 @@ the [docs site](https://opx77-framework.github.io/opx77_doc/docs/opx_infinity).
 You need an **Open77 dedicated server**, a **MySQL** database, and the OPX repositories:
 [`opx_lib`](https://github.com/opx77-framework/opx_lib) (the client library) and this
 one, plus [`opx_pool_assets`](https://github.com/opx77-framework/opx_pool_assets)
-for the cooked billiards assets and the official Open77 `archivexl` loader. The full guide is [Install](https://opx77-framework.github.io/opx77_doc/docs/getting-started/install).
+for the cooked billiards assets. Require the official indexed `archivexl` package
+in `requiredMods.packages` (see the asset repository configuration example). The full guide is [Install](https://opx77-framework.github.io/opx77_doc/docs/getting-started/install).
 
 1. **Copy the resources** into the server's resource root. The folder name must
    equal the resource name. The server only needs
@@ -97,24 +98,23 @@ for the cooked billiards assets and the official Open77 `archivexl` loader. The 
 
    ```text
    resources/
-     archivexl/           # official Open77 loader
      opx_lib/
      opx_pool_assets/
      opx_infinity/
    ```
 
-2. **Load dependencies first**: `archivexl`, `opx_pool_assets` and `opx_lib` before
+2. **Load dependencies first**: `opx_pool_assets` and `opx_lib` before
    `opx_infinity`. The framework will not start without its declared dependencies.
    Restart the dedicated server; players must fully quit the game and reconnect
    through the launcher to mount the asset package. Keep the server’s configured
-   mod review/consent policy.
+   mod review/consent policy. On a secured world, use the signed-index ArchiveXL
+   package; do not add the DLL-preloading `archivexl` resource to the load list.
 
    ```jsonc
    // server.jsonc
    "resources": {
      "load": [
        // ... the platform's own resources ...
-       "archivexl",
        "opx_pool_assets",
        "opx_lib",
        "opx_infinity"
