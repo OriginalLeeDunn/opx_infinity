@@ -2106,21 +2106,35 @@ with your own key. Credits are retained in
 
 ## Deploying
 
-Over SSH to the test server, then restart, then read the journal back — in the same
-change, not later. A green suite says nothing about the running server.
+Use the [installation guide](https://opx77-framework.github.io/opx77_doc/docs/getting-started/install)
+for a new server and [Upgrade safely](https://opx77-framework.github.io/opx77_doc/docs/getting-started/upgrade)
+for an existing one. Stage files from the target **commit**, not an uncommitted
+working tree, and read the restarted process's journal in the same change.
 
-```bash
-git archive --format=tar HEAD open77.lua config core lib locales modules web \
-  | gzip | ssh root@<host> 'cd /opt/open77-server/resources/opx_infinity && tar xzf - \
-  && chown -R open77:open77 . && systemctl restart open77.service'
-```
+1. Record deployed commits and take protected, on-host backups of the database,
+   resource directories, host configuration, ACL and service environment. Verify
+   restoration against a separate database before relying on a backup.
+2. Prepare matching `opx_lib`, `opx_pool_assets` (at least 0.3.1) and Infinity in a
+   staging directory outside the active resource tree. Infinity's runtime paths
+   are `open77.lua config core lib locales modules web`; the UI is already built.
+3. Compare configuration changes and merge your operator values into the new
+   files: preserve keys, surveyed locations, enabled flags and economy settings,
+   while retaining newly added settings. Never extract an archive containing
+   `config/` directly over the live installation.
+4. Stop the dedicated server, install the staged resource set with the correct
+   ownership, validate the existing host configuration and start the service.
+5. Read SQL/schema/module logs and verify character load, reconnect persistence,
+   balances, inventory and staff ACL with a test client before reopening.
 
-Archive from the **commit**, not the working tree, so what is deployed is what is
-recorded. When upgrading the base game, review `simulation.expectedGameBuild`
-in the preserved host configuration as well: Cyberpunk 2077 2.5 uses `25000`;
-leaving `23100` rejects verified 2.5 clients even with an updated server binary. `opx_lib` must be installed and listed in the server's `resources.load`
-before `opx_infinity`, or the platform refuses to start this resource.
+Keep `opx_pool_assets` and `opx_lib` before Infinity in `resources.load`. For the
+pool renderer use Open77 op77.152 or newer and the compatible client ArchiveXL
+loader; a changed preload requires every player to fully quit and relaunch the
+game. Database/HTTP bridge settings require a dedicated-server restart.
+Cyberpunk 2077 2.5 uses `simulation.expectedGameBuild = 25000`; leaving `23100`
+rejects verified 2.5 clients even after updating the server binary.
 
-Never `DROP DATABASE` — the grants live with it and the server authenticates as a
-non-root user. Empty tables instead, and `mysqldump` first.
-
+Schema changes are applied at boot. **Do not drop the database or empty tables as
+an upgrade step.** Preserve durable money receipts and reconcile `money.pending`
+under its original operation id; see [Economic persistence](#economic-persistence).
+A rollback must consider committed SQL changes as well as files: code alone cannot
+undo completed player transactions.
