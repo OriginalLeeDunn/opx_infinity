@@ -589,44 +589,55 @@ local function pick(payload)
 	if not send('target:loading', { handle = handle, x = x, y = y }) then
 		return close('no_surface')
 	end
-	local context = contextAt(x, y)
-	if context == nil then
-		busy = false
-		-- A ray that answered nothing at all is not the same as a ray that hit
-		-- something nobody has a row for, and the player sees one empty list
-		-- either way. Said once per session: a client whose raycast is refused
-		-- -- a missing grant, an option this build will not take -- otherwise
-		-- looks exactly like a world nobody registered anything in.
-		notedKind('none', 0)
-		send('target:empty', { handle = handle })
-		return
-	end
+	local at = request
+	CreateThread(function()
+		local function checkpoint()
+			Wait(0)
+			return stillHeld(at)
+		end
+		if not checkpoint() then return end
+		local context = contextAt(x, y)
+		if context == nil then
+			busy = false
+			-- A ray that answered nothing at all is not the same as a ray that hit
+			-- something nobody has a row for, and the player sees one empty list
+			-- either way. Said once per session: a client whose raycast is refused
+			-- -- a missing grant, an option this build will not take -- otherwise
+			-- looks exactly like a world nobody registered anything in.
+			notedKind('none', 0)
+			send('target:empty', { handle = handle })
+			return
+		end
 
-	-- One sweep for the whole pick, inside Candidates.
-	local queue = Registry.Candidates(context)
+		-- The ray and the registry each get a fresh resume. Candidate gathering
+		-- prunes stale owners and paces filters and sorting before predicates are sliced.
+		if not checkpoint() then return end
+		local queue = Registry.Candidates(context, checkpoint)
+		if queue == nil or not stillHeld(at) then return end
 
-	-- WHAT THE RAY TOUCHED AND WHAT MATCHED IT, once per kind per session.
-	--
-	-- Everything between the key press and a drawn row is client-side, so when a
-	-- list comes up empty there is nothing an operator can read: the rows may be
-	-- unregistered, the context may be a kind nobody covers, or the ray may not
-	-- have produced a context at all, and all three look identical from the
-	-- outside. The three were guessed at in turn over one afternoon. This is the
-	-- one number that separates them, and it costs at most a handful of notes --
-	-- `OPX.Note` is bounded at sixty per session and this is bounded again by
-	-- the number of kinds.
-	notedKind(tostring(context.kind), #queue)
+		-- WHAT THE RAY TOUCHED AND WHAT MATCHED IT, once per kind per session.
+		--
+		-- Everything between the key press and a drawn row is client-side, so when a
+		-- list comes up empty there is nothing an operator can read: the rows may be
+		-- unregistered, the context may be a kind nobody covers, or the ray may not
+		-- have produced a context at all, and all three look identical from the
+		-- outside. The three were guessed at in turn over one afternoon. This is the
+		-- one number that separates them, and it costs at most a handful of notes --
+		-- `OPX.Note` is bounded at sixty per session and this is bounded again by
+		-- the number of kinds.
+		notedKind(tostring(context.kind), #queue)
 
-	setPending({
-		request = request,
-		context = context,
-		queue = queue,
-		at = 1,
-		rows = {},
-		listed = {},
-		budget = OPX.Now() + LOOKUP_BUDGET_MS,
-		inFlight = false,
-	})
+		setPending({
+			request = at,
+			context = context,
+			queue = queue,
+			at = 1,
+			rows = {},
+			listed = {},
+			budget = OPX.Now() + LOOKUP_BUDGET_MS,
+			inFlight = false,
+		})
+	end)
 end
 
 -- Runs a listed row's onSelect once its target and its predicate still hold. On

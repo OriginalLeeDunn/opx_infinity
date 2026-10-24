@@ -1749,6 +1749,14 @@ carries a labelled hand copy of the tokens.
 
 ---
 
+Interaction candidate collection, including stale-owner cleanup and group sorting,
+is paced before the target predicate slicer runs. Closing the eye invalidates the
+in-flight collection. `tests/audit-target-budget.lua` exercises the full 128-row
+registry and checks both ordering and cancellation; the main suite measures the
+page callback and its worker resumes. Appearance warnings about missing looks
+require an actually nearby player, so joining an empty server is not reported as
+failed replication.
+
 ## Tests
 
 `tests/run.lua` boots the real manifest against a stub platform in `tests/host.lua`

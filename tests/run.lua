@@ -19382,6 +19382,71 @@ end
 -- ── the eye's control hold is all or nothing ────────────────────────────────
 -- A later step that raised or refused left the earlier ones applied with
 -- nothing to give them back: aim, shooting and interaction off for the session.
+section('target: a dense right-click queues bounded candidate work')
+do
+	local keys, pressed = {}, true
+	local function prelude(env)
+		env.RegisterKeyMapping = function(id, _, _, callback) keys[id] = callback end
+		env.Open77.input = { isDown = function() return pressed end, keyFor = function() return 'ALT' end,
+			cursor = function() return { inBounds = true, captured = false } end,
+			isCaptured = function() return false end, block = function() return true end }
+		for _, name in ipairs({ 'allowAim', 'allowShoot', 'allowInteraction', 'freezeRotation', 'resetControls' }) do
+			env.Open77.players[name] = function() return true end
+		end
+		env.Open77.camera = { screenRaycast = function()
+			return { hit = true, entityLookupAvailable = true, position = { x = 1, y = 0, z = 0 },
+				target = { kind = 'world', networked = false } }
+		end }
+		env.Open77.character.state = function()
+			return { health = 100, attached = true, alive = true, position = { x = 0, y = 0, z = 0 } }
+		end
+	end
+	local env, control, why = boot('client', nil, prelude)
+	check('the picking client boots', why == nil, why)
+	if why == nil then
+		local target = env.OPX.Modules.Get('target')
+		local registry = target.Registry
+		for _, owner in ipairs({ 'inventory', 'diagnostics', 'appearance', 'admin' }) do
+			for index = 1, 48 do
+				registry.Register(owner, 'module', { id = 'pick_probe_' .. index, label = 'Pick probe ' .. index,
+					types = { 'world' }, distance = 10, order = index % 7, onSelect = function() end })
+			end
+		end
+		check('the registry is filled to its production bound', registry.Size() == target.Model.MAX_TOTAL)
+		-- Isolate the pick's own resumes from unrelated repeating module jobs.
+		env.OPX.Scheduler.Stop()
+		local opened = keys['opx.target.activate']
+		check('the pick key is registered', type(opened) == 'function')
+		if opened then opened() end
+		local page, handle
+		for _, candidate in ipairs(control.pages) do
+			if candidate.handlers['opx:target:pick'] then
+				page = candidate
+				for _, message in ipairs(page.sent) do
+					if message.channel == 'opx:target:open' then handle = message.payload.handle end
+				end
+			end
+		end
+		check('the eye opens with a handle', page ~= nil and handle ~= nil)
+		if page and handle then
+			local payload = { handle = handle, x = 0.5, y = 0.5 }
+			local spawn, worker = env.CreateThread, nil
+			env.CreateThread = function(fn) worker = fn end
+			local cost = callCost(control.PageEmit, page, 'opx:target:pick', payload)
+			env.CreateThread = spawn
+			check('the page callback only queues bounded work', cost < 4500, tostring(cost))
+			local worst, resumes = resumeCost(env, control, function() env.CreateThread(worker) end, 180)
+			check('the worker was measured across several resumes', resumes > 10, tostring(resumes))
+			check('each candidate worker resume stays below the margin', worst < 4500, tostring(worst))
+			local resolve
+			for _, row in ipairs(env.OPX.Scheduler.Report()) do
+				if row:find('target:resolve', 1, true) then resolve = true end
+			end
+			check('the candidate gather finishes and hands work to the existing slicer', resolve == true)
+		end
+	end
+end
+
 section('target: the control hold is taken whole or not at all')
 do
 	local env, control, why = boot('client')
