@@ -577,10 +577,10 @@ const menuEntry = computed(() => {
 
 const isBag = computed(() => menu.container !== 0 && menu.container === primary.value?.id)
 
-function doUse(): void {
+function doUse(hand?: 'right' | 'left'): void {
   const slot = menu.slot
   closeMenu()
-  void ask('use', { slot })
+  void ask('use', { slot, hand })
 }
 
 /** Where a nearby player stands, as the give list says it: `To your left · 1.2 m`,
@@ -1082,9 +1082,18 @@ try {
             class="row op-label"
             :class="{ off: busy }"
             :disabled="busy"
-            @click="doUse"
+            @click="doUse()"
           >
             {{ label('use') }}
+          </button>
+          <button
+            v-if="isBag && (menuEntry?.weapon || menuEntry?.ammo)"
+            type="button"
+            class="row op-label"
+            :disabled="busy"
+            @click="doUse('left')"
+          >
+            {{ label('leftHand') }}
           </button>
           <button
             v-if="menuStack.count > 1"

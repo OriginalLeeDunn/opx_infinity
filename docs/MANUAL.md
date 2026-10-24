@@ -759,6 +759,36 @@ fronts launder by batch under a daily cap; gang-gated crafting labs heat up; dru
 use, addict and overdose; a street deal is the platform's two-player `give`. Gang gates
 use `OPX.JobGate.EvaluateGroups`. Survey every entry with `/opx.underworld.capture`.
 
+### Inventory: paired weapons (op77.152+)
+
+Equip a right-hand weapon with the ordinary inventory Use action. On a second
+weapon, choose **Equip / holster left hand**. Ammunition items offer the same
+left-hand action to choose which weapon to replenish. `WEAPONS.DUAL_WIELD`
+controls availability; `WEAPONS.SLOT` remains 1–3 and the left partner uses
+`SLOT + 3`. The native game decides pair compatibility. Choosing an equipped
+weapon while paired holsters both weapons; finish holstering before selecting
+a replacement. Single-weapon use and hotbar bindings keep their existing behavior.
+
+Every item retains its own serial and owned ammunition. Before creating a pair,
+OPX saves shots fired by the primary weapon. Pair initialization waits for native
+completion at every dependent step and replaces native creation ammo with owned
+rounds. Shared ammunition totals are reconciled once across the two items, never
+credited to both; a client observation cannot increase ownership. A transfer
+waits for a complete pair readback and secondary-then-primary removal. Native
+initialization failure clears the pair. The HUD displays both magazines, reload
+state and a shared reserve only once, replacing completed snapshots atomically.
+
+Both client and server need Open77 **2.50.0+op77.152** and the matching bundled
+`open77_weapons` resource (an older bundle may still advertise version 0.1.0).
+New refusals: `dual_wield_unavailable`, `primary_required`,
+`weapon_in_other_hand`; incompatible native pairs use the existing
+`weapon_refused` notification. Older builds retain single-weapon support.
+Open77 documents inconsistent native reload allocation when the shared reserve
+is too low; OPX does not infer ownership grants from magazine increases.
+
+Upstream contracts: [dual wielding](https://open2077.net/docs/dual-wielding) and
+[cyberarm styles](https://open2077.net/docs/cyberware-customization).
+
 ### Ripperdoc
 
 `ripperdoc` (`modules/ripperdoc`, `config/ripperdoc.lua`) puts chrome in and takes it
@@ -787,6 +817,31 @@ given back, `submitted` is replayed with the same operation id when the patient 
 
 Contract `ripperdoc` (server): `Body(citizenId)`, `Clinics()`, `Chrome()`,
 `Operation(player)`; bus event `opx:on:ripperdoc:operated`.
+
+Cyberarm appearance is a free, owner-only service at a surveyed clinic chair.
+Use the target row **Customize my cyberarms**, or `/opx.ripperdoc.style`, with
+native Gorilla Arms installed. Choose an installed model and enter two six-digit
+sRGB hex colors. The server checks the character, clinic, bucket, installed arms,
+record syntax and RGB bounds, then projects the selection only to its owner.
+The character's `cyberarmStyle` metadata is written after native acceptance.
+Failed application, an expired acknowledgement or a character switch keeps the
+previous saved selection. Removing arm implants releases the cosmetic override;
+the saved selection remains available for a later installation.
+
+`STYLES.ENABLED` disables new customization requests. `STYLES.RECORDS` is an
+optional `record = true` allowlist; empty means any installed cosmetic identifier
+with valid syntax. The local native catalogue and setter validate installed
+models; this free service never treats catalogue membership as implant ownership
+or authorizes an ability or purchase. Saved RGB is restored after character load
+and native body reset, with bounded retries for body readiness. An unavailable
+saved model is retained and reported rather than substituted.
+
+Requires Cyberpunk 2077 2.5 and Open77 **2.50.0+op77.152** or later. The devkit
+catalogue currently available during implementation is op77.148 and cannot verify
+these newer functions; availability is checked at runtime against the documented
+op77.152 API. Model replacement waits for holstered cyberarms. RGB colors are
+local to the owner: this release has no remote-player RGB projection API.
+Native appearance, streaming and reconnect behavior still require live testing.
 
 ### Netrunner
 

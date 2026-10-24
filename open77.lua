@@ -446,6 +446,7 @@ client_script "modules/inventory/client/main.lua"
 client_script "modules/inventory/client/world.lua"
 client_script "modules/inventory/client/keys.lua"
 client_script "modules/inventory/client/slotbar.lua"
+client_script "modules/inventory/client/weapon-hud.lua"
 
 shared_script "modules/hud/module.lua"
 shared_script "modules/hud/locales.lua"
@@ -661,7 +662,9 @@ shared_script "modules/ripperdoc/shared/model.lua"
 server_script "modules/ripperdoc/server/storage.lua"
 server_script "modules/ripperdoc/server/identity.lua"
 server_script "modules/ripperdoc/server/main.lua"
+server_script "modules/ripperdoc/server/styles.lua"
 client_script "modules/ripperdoc/client/main.lua"
+client_script "modules/ripperdoc/client/styles.lua"
 
 -- Netrunner: networks, breach, daemons, shards and brokers. After `character`,
 -- `inventory` (required), `progress`, `target`, `menu`, `downed` and
@@ -1103,6 +1106,7 @@ permissions {
 
   "player.appearance.read",
   "player.cyberware.read",
+  "player.cyberware.project",
   "player.appearance.edit",
   "player.equipment.read",
   "player.equipment.edit",

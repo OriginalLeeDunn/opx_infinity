@@ -136,6 +136,8 @@ OPX.Config.MODULES.inventory = {
 	WEAPONS = {
 		ENABLED = true,
 		SLOT = 1,
+		-- Open77 op77.152+: the left hand uses SLOT + 3.
+		DUAL_WIELD = true,
 		REMOVE_UNBACKED = true,
 		SCAN_MS = 5000,
 		AMMO_SYNC_MS = 2000,

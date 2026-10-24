@@ -162,7 +162,8 @@ end
 -- @param slot any
 -- @return boolean
 -- @return string|nil
-function Actions.Use(source, slot)
+function Actions.Use(source, slot, hand)
+	if hand ~= nil and hand ~= 'right' and hand ~= 'left' then return false, 'bad_request' end
 	slot = Common.Integer(slot, 1, 65535)
 	if not slot then return false, 'bad_request' end
 
@@ -190,7 +191,7 @@ function Actions.Use(source, slot)
 
 	if item.weapon then
 		lastUse[source] = now
-		local drawn, why = M.Weapons.Use(source, bag, slot, item)
+		local drawn, why = M.Weapons.Use(source, bag, slot, item, hand)
 		-- A DRAWN WEAPON CLOSES THE SCREEN, as food does. It returned before the
 		-- `used` event, so the inventory stayed over the gun the player had just
 		-- asked to hold. Only a draw: putting one away leaves the screen up.
@@ -207,7 +208,7 @@ function Actions.Use(source, slot)
 	end
 	if item.ammo then
 		lastUse[source] = now
-		return M.Weapons.Reload(source, bag, slot)
+		return M.Weapons.Reload(source, bag, slot, hand)
 	end
 
 	local handler = usables[entry.name]

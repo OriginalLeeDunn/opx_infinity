@@ -207,7 +207,7 @@ end
 --- Uses a bag slot, toasting any refusal except the cooldown.
 handlers.use = function(source, payload)
 	if type(payload) ~= 'table' then return false, 'bad_request' end
-	local ok, code = Actions.Use(source, payload.slot)
+	local ok, code = Actions.Use(source, payload.slot, payload.hand)
 	-- The cooldown is not worth a toast: a held key would raise one per frame.
 	if not ok and code ~= 'too_fast' then refuse(source, code, M.Operation.USE) end
 	return ok, code

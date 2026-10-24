@@ -40,7 +40,8 @@ do
 	M.Weapons.Wire()
 	local item = { weapon = { ammo = 'ammo', magazine = 12, record = 'gun' } }
 	local function complete(id, result, accepted)
-		events['open77:weapons:completed'](1, id, 'op', accepted ~= false, nil, result)
+		local kind = requests[id].kind
+		events['open77:weapons:completed'](1, id, kind == 'load' and 'setAmmo' or kind, accepted ~= false, nil, result)
 	end
 	local function arm(slot)
 		assert(M.Weapons.Use(1, bag, slot, item))

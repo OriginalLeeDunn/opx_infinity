@@ -32,6 +32,15 @@ local PENDING_MS = 30000
 -- The weapon this module put in each player's hands, and the relay steps waiting
 -- for their completion, by request id.
 local armed = {}
+local secondary = {}
+local policy = {}
+
+local function slotOf(held) return held and held.slot or Options.WEAPON_SLOT end
+local function mapOf(held) return held and held.hand == 'left' and secondary or armed end
+local function otherOf(source, held)
+	if held and held.hand == 'left' then return armed[source] end
+	return secondary[source]
+end
 local pending = {}
 
 -- Weapons whose rounds are being read back on the way to the holster, by
@@ -50,6 +59,7 @@ end
 --- Records a relay step under its request id, stamped with now.
 local function remember(requestId, step)
 	step.atMs = OPX.Now()
+	if step.held and step.partner == nil then step.partner = otherOf(step.source, step.held) end
 	pending[tostring(requestId)] = step
 end
 
@@ -70,7 +80,7 @@ local function rowOf(rows, slot)
 	if type(rows) ~= 'table' then return nil end
 	for index = 1, #rows do
 		local row = rows[index]
-		if type(row) == 'table' and Common.Integer(row.slot, 1, 3) == slot then return row end
+		if type(row) == 'table' and Common.Integer(row.slot, 1, 6) == slot then return row end
 	end
 	return nil
 end
@@ -79,8 +89,9 @@ end
 -- @author dop42
 -- @param source Source
 -- @return table|nil
-function Weapons.Held(source)
-	return armed[source]
+function Weapons.Held(source, hand)
+	if hand == 'left' then return secondary[source] end
+	return armed[source] or secondary[source]
 end
 
 --- Tells a player's client which bag weapon is in hand, or that none is.
@@ -88,15 +99,21 @@ end
 -- @param source Source
 -- @param held table|nil
 function Weapons.Announce(source, held)
+	held = armed[source] or secondary[source] or held
 	TriggerClientEvent(M.Event.ARMED, source, held and {
 		name = held.name,
 		serial = held.serial,
-		slot = Options.WEAPON_SLOT,
+		slot = slotOf(held),
+		hand = held.hand or 'right',
+		secondary = secondary[source] and { name = secondary[source].name, serial = secondary[source].serial,
+			slot = slotOf(secondary[source]) } or nil,
 	} or false)
 end
 
---- Lowers an item's rounds to a reading. Never raises them.
-local function lower(source, held, total)
+--- Lowers owned rounds to a reading. A paired reserve is counted once.
+-- With shared ammunition, consumption is attributed to the observed hand first
+-- and then its partner; total ownership never increases from a client report.
+local function lower(source, held, total, partner)
 	total = Common.Integer(total, 0, 1000000)
 	if total == nil then return end
 	local citizenId = Players.Citizen(source)
@@ -104,6 +121,19 @@ local function lower(source, held, total)
 	local _, entry = findHeld(bag, held)
 	if not entry then return end
 	local ammo = Common.Integer(entry.metadata.ammo, 0, 1000000) or 0
+	partner = partner or otherOf(source, held)
+	if partner and partner.ammoItem == held.ammoItem and held.sharedAmmo ~= false then
+		local _, other = findHeld(bag, partner)
+		if other then
+			local spare = Common.Integer(other.metadata.ammo, 0, 1000000) or 0
+			local spent = math.max(0, ammo + spare - total)
+			local taken = math.min(ammo, spent)
+			entry.metadata.ammo = ammo - taken
+			other.metadata.ammo = math.max(0, spare - (spent - taken))
+			if spent > 0 then M.Storage.MarkDirty(bag.id); Containers.Publish(bag) end
+			return
+		end
+	end
 	if total >= ammo then return end
 	entry.metadata.ammo = total
 	M.Storage.MarkDirty(bag.id)
@@ -152,6 +182,15 @@ end
 
 --- States the item's rounds to the engine.
 local function load(source, held, state, keepMagazine)
+	local partner = otherOf(source, held)
+	if partner and partner.ammoItem == held.ammoItem then
+		if partner.loading then return end
+		local id = Open77.weapons.requestSnapshot(source)
+		if not id then return end
+		held.loading, partner.loading = true, true
+		remember(id, { source = source, kind = 'pairRead', held = held, partner = partner })
+		return
+	end
 	local citizenId = Players.Citizen(source)
 	local bag = citizenId and Containers.Find(KIND.CHARACTER, citizenId)
 	local _, entry = findHeld(bag, held)
@@ -162,7 +201,7 @@ local function load(source, held, state, keepMagazine)
 	local magazine = type(state) == 'table' and Common.Integer(state.magazine, 0, 100000) or nil
 	local amounts = Weapons.Amounts(ammo, capacity, magazine, keepMagazine)
 
-	local requestId, reason = Open77.weapons.setAmmo(source, Options.WEAPON_SLOT, amounts)
+	local requestId, reason = Open77.weapons.setAmmo(source, slotOf(held), amounts)
 	if not requestId then
 		Open77.log.warn(('[inventory] setAmmo for player %d refused: %s')
 			:format(source, tostring(reason)))
@@ -210,24 +249,52 @@ end
 -- @param item table the catalogue entry, already checked by the caller
 -- @return boolean
 -- @return string|nil
-function Weapons.Use(source, bag, slot, item)
+function Weapons.Use(source, bag, slot, item, hand, prepared)
 	if not available() then return false, 'weapons_unavailable' end
-	-- All bag weapons share one engine slot. A different serial must not
-	-- overwrite that slot while the previous weapon's readback is pending.
+	if hand ~= nil and hand ~= 'right' and hand ~= 'left' then return false, 'bad_request' end
+	local left = hand == 'left'
+	local map = left and secondary or armed
+	if left and (not Options.DUAL_WIELD or type(Open77.weapons.setDualWieldAllowed) ~= 'function'
+		or type(Open77.weapons.clear) ~= 'function') then
+		return false, 'dual_wield_unavailable'
+	end
+	if left and not armed[source] then return false, 'primary_required' end
+	-- The pair shares native ammunition and cannot change while a dependent
+	-- assignment, ammunition write or holster is waiting for completion.
 	for _, step in pairs(pending) do
-		if step.source == source and (step.kind == 'holster' or step.kind == 'redraw') then
+		if step.source == source and (step.kind ~= 'sync' and step.kind ~= 'scan') then
 			return false, 'holstering'
 		end
+	end
+	if left and not policy[source] then
+		local id = Open77.weapons.setDualWieldAllowed(source, true)
+		if not id then return false, 'dual_wield_unavailable' end
+		remember(id, { source = source, kind = 'policy', bag = bag, slot = slot, item = item, name = bag.items[slot].name,
+			serial = bag.items[slot].metadata and bag.items[slot].metadata.serial })
+		return true
+	end
+	if left and not prepared and not secondary[source] then
+		local right = armed[source]
+		if right.state ~= 'armed' or right.loading then return false, 'holstering' end
+		local id = Open77.weapons.requestSnapshot(source)
+		if not id then return false, 'weapon_refused' end
+		right.loading = true
+		remember(id, { source = source, kind = 'prePair', held = right, bag = bag, slot = slot,
+			item = item, name = bag.items[slot].name, serial = bag.items[slot].metadata and bag.items[slot].metadata.serial })
+		return true
 	end
 	local entry = bag.items[slot]
 	if type(entry.metadata) == 'table' and reading[entry.metadata.serial] then
 		return false, 'holstering'
 	end
 
-	local held = armed[source]
+	local held = map[source]
+	local other = left and armed[source] or secondary[source]
+	if other and entry.metadata and entry.metadata.serial == other.serial then return false, 'weapon_in_other_hand' end
+	if held and other then Weapons.Holster(source, true); return false, 'holstering' end
 	if held and Weapons.InHand(source) then
 		local heldSlot = findHeld(bag, held)
-		Weapons.Holster(source, true)
+		Weapons.Holster(source, true, hand or 'right')
 		-- Using the weapon already in hand is how a player puts it away.
 		if heldSlot == slot then return true, nil end
 		-- Assigning a replacement before the reading lands destroys the old
@@ -249,7 +316,7 @@ function Weapons.Use(source, bag, slot, item)
 				serial = entry.metadata and entry.metadata.serial })
 			return true, nil
 		end
-		armed[source] = nil
+		map[source] = nil
 		Weapons.Announce(source, nil)
 	end
 
@@ -265,6 +332,8 @@ function Weapons.Use(source, bag, slot, item)
 		name = entry.name,
 		serial = entry.metadata.serial,
 		record = item.weapon.record,
+		hand = left and 'left' or 'right',
+		slot = Options.WEAPON_SLOT + (left and 3 or 0),
 		ammoItem = ammoItem,
 		-- THE GUN'S MAGAZINE, NOT THE BOX'S STACK. This read the ammo item's
 		-- `MAX` -- how many rounds fit in a crate, five hundred for a handgun --
@@ -277,12 +346,13 @@ function Weapons.Use(source, bag, slot, item)
 		state = 'arming',
 		loading = false,
 	}
-	armed[source] = held
+	map[source] = held
+	if left then policy[source] = nil end
 
 	local requestId, refusal = Open77.weapons.assign(source, item.weapon.record,
-		Options.WEAPON_SLOT, { active = true, addToInventory = true })
+		slotOf(held), { active = true, addToInventory = true })
 	if not requestId then
-		armed[source] = nil
+		map[source] = nil
 		Open77.log.warn(('[inventory] assign for player %d refused: %s')
 			:format(source, tostring(refusal)))
 		return false, 'weapon_refused'
@@ -296,10 +366,32 @@ end
 -- @author dop42
 -- @param source Source
 -- @param sync boolean
-function Weapons.Holster(source, sync)
-	local held = armed[source]
+function Weapons.Holster(source, sync, hand)
+	if sync == false and secondary[source] and type(Open77.weapons.clear) == 'function' then
+		Open77.weapons.clear(source)
+		armed[source], secondary[source] = nil, nil
+		Weapons.Announce(source, nil)
+		return
+	end
+	if hand == nil and secondary[source] and armed[source] then
+		local right, left = armed[source], secondary[source]
+		if right.loading or left.loading then return end
+		local id = Open77.weapons.requestSnapshot(source)
+		if not id then return end
+		right.loading, left.loading = true, true
+		reading[right.serial], reading[left.serial] = true, true
+		remember(id, { source = source, kind = 'pairHolster', held = right, partner = left })
+		return
+	end
+	if hand == nil then
+		Weapons.Holster(source, sync, 'left')
+		Weapons.Holster(source, sync, 'right')
+		return
+	end
+	local map = hand == 'left' and secondary or armed
+	local held = map[source]
 	if not held then return end
-	armed[source] = nil
+	map[source] = nil
 	Weapons.Announce(source, nil)
 	if not available() then return end
 
@@ -311,7 +403,7 @@ function Weapons.Holster(source, sync)
 			return
 		end
 	end
-	local requestId = Open77.weapons.remove(source, Options.WEAPON_SLOT)
+	local requestId = Open77.weapons.remove(source, slotOf(held))
 	if requestId then remember(requestId, { source = source, kind = 'remove' }) end
 end
 
@@ -342,8 +434,13 @@ function Weapons.BeforeLeave(bag, entry)
 	if reading[serial] then return 'holstering' end
 	local source = Players.SourceOf(bag.owner)
 	local held = source and armed[source]
+	if source and secondary[source] and secondary[source].serial == serial then held = secondary[source] end
 	if not held or held.serial ~= serial or held.name ~= entry.name then return nil end
-	if not held.ammoItem or held.state ~= 'armed' or not available() then return nil end
+	if held.loading or held.state ~= 'armed' then return 'holstering' end
+	if not held.ammoItem or not available() then
+		Weapons.Holster(source, false)
+		return nil
+	end
 	Weapons.Holster(source, true)
 	-- No reading could be asked for (the relay refused it, or rounds are being
 	-- loaded and the item was just set from a fresh reading): the weapon is
@@ -359,12 +456,25 @@ end
 -- @param slot integer
 -- @return boolean
 -- @return string|nil
-function Weapons.Reload(source, bag, slot)
+function Weapons.Reload(source, bag, slot, hand, fresh)
 	if not available() then return false, 'weapons_unavailable' end
-	local held = armed[source]
+	local held
+	if hand == 'left' then held = secondary[source] else held = armed[source] end
 	local entry = bag.items[slot]
+	if hand == nil and (not held or held.ammoItem ~= entry.name) then held = secondary[source] end
+	if held and held.loading then return false, 'holstering' end
 	if not held or held.state ~= 'armed' or held.ammoItem ~= entry.name then
 		return false, 'no_weapon_for_ammo'
+	end
+	local partner = otherOf(source, held)
+	if partner and not fresh then
+		if partner.loading then return false, 'holstering' end
+		local id = Open77.weapons.requestSnapshot(source)
+		if not id then return false, 'weapon_refused' end
+		held.loading, partner.loading = true, true
+		remember(id, { source = source, kind = 'pairReload', held = held, partner = partner,
+			bag = bag, slot = slot, name = entry.name })
+		return true
 	end
 	local _, weapon = findHeld(bag, held)
 	if not weapon then
@@ -399,14 +509,21 @@ end
 -- @param source Source
 -- @param connected boolean
 function Weapons.Forget(source, connected)
-	if connected then
+	policy[source] = nil
+	if connected and secondary[source] and type(Open77.weapons.clear) == 'function' then
+		Open77.weapons.clear(source)
+		armed[source], secondary[source] = nil, nil
+		Weapons.Announce(source, nil)
+	elseif connected then
 		Weapons.Holster(source, false)
 	else
 		armed[source] = nil
+		secondary[source] = nil
 	end
 	for key, step in pairs(pending) do
 		if step.source == source then
-			if (step.kind == 'holster' or step.kind == 'redraw') and step.held then reading[step.held.serial] = nil end
+			if step.held then reading[step.held.serial] = nil end
+			if step.partner then reading[step.partner.serial] = nil end
 			pending[key] = nil
 		end
 	end
@@ -416,12 +533,28 @@ end
 -- During arming the slot may already show the weapon before the completion names
 -- its id, so a held weapon with no id yet counts as backed.
 local function backed(source, row)
-	local held = armed[source]
+	local held = tonumber(row.slot) == Options.WEAPON_SLOT + 3 and secondary[source] or armed[source]
 
 	if not held then return false end
-	if Common.Integer(row.slot, 1, 3) ~= Options.WEAPON_SLOT then return false end
+	if Common.Integer(row.slot, 1, 6) ~= slotOf(held) then return false end
 	if held.state ~= 'armed' or held.tweakDbId == nil then return true end
 	return row.tweakDbId == held.tweakDbId
+end
+
+--- Clears a pair whose native initialization could not be verified.
+local function failPair(source, first, second)
+	if type(Open77.weapons.clear) == 'function' then
+		local id = Open77.weapons.clear(source)
+		if id then remember(id, { source = source, kind = 'clear' }) end
+	else
+		Open77.weapons.remove(source, Options.WEAPON_SLOT + 3)
+		Open77.weapons.remove(source, Options.WEAPON_SLOT)
+	end
+	armed[source], secondary[source] = nil, nil
+	if first then first.loading = false; reading[first.serial] = nil end
+	if second then second.loading = false; reading[second.serial] = nil end
+	Weapons.Announce(source, nil)
+	OPX.NotifyLocale(source, 'inventory.error.weapon_refused', nil, 'error')
 end
 
 --- Resumes the relay step a completion answers.
@@ -429,17 +562,132 @@ local function completed(playerId, requestId, _operation, accepted, reason, resu
 	local key = tostring(requestId)
 	local step = pending[key]
 	if step == nil then return end
-	pending[key] = nil
 	local source = step.source
 	if tonumber(playerId) ~= source then return end
-	local held = armed[source]
+	local expected = ({ policy = 'setDualWieldAllowed', assign = 'assign', load = 'setAmmo', remove = 'remove', clear = 'clear', pairFirst = 'setAmmo', pairLast = 'setAmmo', pairRemoveLeft = 'remove', pairRemoveRight = 'remove' })[step.kind] or 'snapshot'
+	if _operation ~= expected then return end
+	pending[key] = nil
+	local map = mapOf(step.held)
+	local held = map[source]
+	if step.kind == 'policy' then
+		if accepted ~= true then OPX.NotifyLocale(source, 'inventory.error.dual_wield_unavailable', nil, 'error'); return end
+		policy[source] = true
+		local hauling = OPX.Api.Get('hauling')
+		if hauling and type(hauling.IsCarrying) == 'function' and hauling.IsCarrying(source) then return end
+		local entry = step.bag.items[step.slot]
+		if Players.Citizen(source) == step.bag.owner and Players.MayAct(source) and entry
+			and entry.name == step.name and (entry.metadata and entry.metadata.serial) == step.serial then
+			Weapons.Use(source, step.bag, step.slot, step.item, 'left')
+		end
+		return
+	end
+
+	if step.kind == 'prePair' or step.kind == 'pairReload' then
+		if held ~= step.held then return end
+		held.loading = false
+		if step.partner then step.partner.loading = false end
+		local row = rowOf(result, slotOf(held))
+		if accepted ~= true or not row or row.tweakDbId ~= held.tweakDbId then return end
+		if held.ammoItem and type(row.ammo) == 'table' then lower(source, held, row.ammo.total, step.partner) end
+		local entry = step.bag.items[step.slot]
+		if not entry or entry.name ~= step.name or Players.Citizen(source) ~= step.bag.owner
+			or not Players.MayAct(source) then return end
+		local hauling = OPX.Api.Get('hauling')
+		if hauling and type(hauling.IsCarrying) == 'function' and hauling.IsCarrying(source) then return end
+		if step.kind == 'prePair' then
+			if (entry.metadata and entry.metadata.serial) ~= step.serial then return end
+			Weapons.Use(source, step.bag, step.slot, step.item, 'left', true)
+		else Weapons.Reload(source, step.bag, step.slot, held.hand, true) end
+		return
+	end
+	if step.kind == 'pairHolster' then
+		local right, left = step.held, step.partner
+		if armed[source] ~= right or secondary[source] ~= left then return end
+		if accepted ~= true then
+			right.loading, left.loading = false, false
+			reading[right.serial], reading[left.serial] = nil, nil
+			return
+		end
+		local row = rowOf(result, slotOf(right))
+		local leftRow = rowOf(result, slotOf(left))
+		if not row or not leftRow or row.tweakDbId ~= right.tweakDbId or leftRow.tweakDbId ~= left.tweakDbId then
+			right.loading, left.loading = false, false
+			reading[right.serial], reading[left.serial] = nil, nil
+			return
+		end
+		if type(row.ammo) == 'table' then lower(source, right, row.ammo.total, left) end
+		if (left.ammoItem ~= right.ammoItem or right.sharedAmmo == false) and type(leftRow.ammo) == 'table' then lower(source, left, leftRow.ammo.total) end
+		local id = Open77.weapons.remove(source, slotOf(left))
+		if id then remember(id, { source = source, kind = 'pairRemoveLeft', held = right, partner = left })
+		else
+			right.loading, left.loading = false, false
+			reading[right.serial], reading[left.serial] = nil, nil
+		end
+		return
+	end
+	if step.kind == 'pairRemoveLeft' or step.kind == 'pairRemoveRight' then
+		local right, left = step.held, step.partner
+		if accepted == true and step.kind == 'pairRemoveLeft' then
+			secondary[source] = nil
+			local id = Open77.weapons.remove(source, slotOf(right))
+			if id then remember(id, { source = source, kind = 'pairRemoveRight', held = right, partner = left }); return end
+		elseif accepted == true then armed[source] = nil end
+		right.loading, left.loading = false, false
+		reading[right.serial], reading[left.serial] = nil, nil
+		Weapons.Announce(source, armed[source])
+		return
+	end
+	if step.kind == 'pairRead' then
+		local partner = step.partner
+		if held ~= step.held or mapOf(partner)[source] ~= partner then return end
+		local a, b = rowOf(result, slotOf(held)), rowOf(result, slotOf(partner))
+		local citizen = Players.Citizen(source)
+		local bag = citizen and Containers.Find(KIND.CHARACTER, citizen)
+		local _, first = findHeld(bag, held)
+		local _, second = findHeld(bag, partner)
+		if accepted ~= true or not first or not second or not a or not b
+			or type(a.ammo) ~= 'table' or type(b.ammo) ~= 'table' then
+			failPair(source, held, partner)
+			return
+		end
+		local capacityA = Common.Integer(a.ammo.capacity, 1, 100000)
+		local capacityB = Common.Integer(b.ammo.capacity, 1, 100000)
+		if not capacityA or not capacityB then
+			failPair(source, held, partner)
+			return
+		end
+		local ammoA = Common.Integer(first.metadata.ammo, 0, held.max) or 0
+		local ammoB = Common.Integer(second.metadata.ammo, 0, partner.max) or 0
+		local magA, magB = math.min(ammoA, capacityA), math.min(ammoB, capacityB)
+		local shared = a.ammo.tweakDbId == b.ammo.tweakDbId
+		local reserve = shared and (ammoA + ammoB - magA - magB) or (ammoB - magB)
+		held.sharedAmmo, partner.sharedAmmo = shared, shared
+		local id = Open77.weapons.setAmmo(source, slotOf(held), { reserve = shared and 0 or (ammoA - magA), magazine = magA, activate = true })
+		if id then
+			remember(id, { source = source, kind = 'pairFirst', held = held, partner = partner,
+				amounts = { reserve = reserve, magazine = magB, activate = true } })
+		else failPair(source, held, partner) end
+		return
+	end
+	if step.kind == 'pairFirst' or step.kind == 'pairLast' then
+		if held ~= step.held or mapOf(step.partner)[source] ~= step.partner then return end
+		if accepted == true and step.kind == 'pairFirst' then
+			local id = Open77.weapons.setAmmo(source, slotOf(step.partner), step.amounts)
+			if id then remember(id, { source = source, kind = 'pairLast', held = held, partner = step.partner }); return end
+			failPair(source, held, step.partner)
+			return
+		end
+		held.loading, step.partner.loading = false, false
+		if accepted ~= true then failPair(source, held, step.partner) end
+		return
+	end
 
 	if step.kind == 'redraw' then
 		reading[step.held.serial] = nil
 		step.held.loading = false
 		if held ~= step.held then return end
 		if Players.Citizen(source) ~= step.bag.owner then return end
-		local row = rowOf(result, Options.WEAPON_SLOT)
+		local row = rowOf(result, slotOf(step.held))
 		if accepted ~= true or row == nil or type(row.ammo) ~= 'table'
 			or held.tweakDbId == nil or row.tweakDbId ~= held.tweakDbId
 			or Common.Integer(row.ammo.total, 0, 1000000) == nil then
@@ -451,19 +699,20 @@ local function completed(playerId, requestId, _operation, accepted, reason, resu
 		if Players.Citizen(source) ~= step.bag.owner or entry == nil
 			or entry.name ~= step.name
 			or (entry.metadata and entry.metadata.serial) ~= step.serial then return end
-		armed[source] = nil
+		map[source] = nil
 		Weapons.Announce(source, nil)
 		if not Players.MayAct(source) then return end
 		local hauling = OPX.Api.Get('hauling')
 		if hauling and type(hauling.IsCarrying) == 'function' and hauling.IsCarrying(source) then return end
-		Weapons.Use(source, step.bag, step.slot, step.item)
+		Weapons.Use(source, step.bag, step.slot, step.item, step.held.hand)
 		return
 	end
 
 	if step.kind == 'assign' then
 		if held ~= step.held then return end
 		if accepted ~= true then
-			armed[source] = nil
+			if step.held.hand == 'left' then failPair(source, step.held, step.partner); return end
+			map[source] = nil
 			Weapons.Announce(source, nil)
 			Open77.log.warn(('[inventory] drawing %s for player %d failed: %s')
 				:format(step.held.record, source, tostring(reason)))
@@ -494,14 +743,14 @@ local function completed(playerId, requestId, _operation, accepted, reason, resu
 	if accepted ~= true then
 		if step.held then step.held.loading = false end
 		-- A refused read on the way to holstering still has to take the weapon off.
-		if step.kind == 'holster' and armed[source] == nil then
-			local removal = Open77.weapons.remove(source, Options.WEAPON_SLOT)
+		if step.kind == 'holster' and map[source] == nil then
+			local removal = Open77.weapons.remove(source, slotOf(step.held))
 			if removal then remember(removal, { source = source, kind = 'remove' }) end
 		end
 		return
 	end
 
-	local row = rowOf(result, Options.WEAPON_SLOT)
+	local row = rowOf(result, slotOf(step.held))
 
 	if step.kind == 'holster' then
 		-- Only a reading of THIS weapon lowers its rounds. A different weapon may
@@ -509,10 +758,10 @@ local function completed(playerId, requestId, _operation, accepted, reason, resu
 		-- replaced what is there, so there is nothing to remove.
 		if row and type(row.ammo) == 'table' and step.held.tweakDbId ~= nil and
 			row.tweakDbId == step.held.tweakDbId then
-			lower(source, step.held, row.ammo.total)
+			lower(source, step.held, row.ammo.total, step.partner)
 		end
-		if armed[source] == nil then
-			local removal = Open77.weapons.remove(source, Options.WEAPON_SLOT)
+		if map[source] == nil then
+			local removal = Open77.weapons.remove(source, slotOf(step.held))
 			if removal then remember(removal, { source = source, kind = 'remove' }) end
 		end
 		return
@@ -526,12 +775,14 @@ local function completed(playerId, requestId, _operation, accepted, reason, resu
 	end
 
 	if step.kind == 'sync' or step.kind == 'scan' then
-		if held and held == step.held and held.state == 'armed' and not held.loading then
+		if held and held == step.held and held.state == 'armed' and not held.loading
+			and step.partner == otherOf(source, held)
+			and not (otherOf(source, held) and otherOf(source, held).loading) then
 			if not row or row.equipped ~= true or
 				(held.tweakDbId ~= nil and row.tweakDbId ~= held.tweakDbId) then
 				-- Taken off or replaced by another path -- the game's own inventory
 				-- screen, for one. It is no longer ours.
-				armed[source] = nil
+				map[source] = nil
 				Weapons.Announce(source, nil)
 			elseif held.ammoItem and type(row.ammo) == 'table' then
 				lower(source, held, row.ammo.total)
@@ -539,11 +790,11 @@ local function completed(playerId, requestId, _operation, accepted, reason, resu
 		end
 
 		if step.kind == 'scan' and Options.REMOVE_UNBACKED and type(result) == 'table' then
-			for index = 1, #result do
+			for index = #result, 1, -1 do
 				local slotRow = result[index]
 				if type(slotRow) == 'table' and slotRow.equipped == true and
 					slotRow.locked ~= true and not backed(source, slotRow) then
-					local slot = Common.Integer(slotRow.slot, 1, 3)
+					local slot = Common.Integer(slotRow.slot, 1, 6)
 					if slot then
 						Open77.log.info(('[inventory] player %d had a weapon in slot %d nothing ' ..
 							'backs; taking it off'):format(source, slot))
@@ -563,20 +814,24 @@ end
 function Weapons.CheckHeld(bag)
 	local source = Players.SourceOf(bag.owner)
 	local held = source and armed[source]
-	if not held then return end
-	if not findHeld(bag, held) then Weapons.Holster(source, false) end
+	local left = source and secondary[source]
+	if left and not findHeld(bag, left) then Weapons.Holster(source, false) end
+	if held and not findHeld(bag, held) then Weapons.Holster(source, false) end
 end
 
 --- Asks for a reading of every drawn weapon that loads rounds.
 -- @author dop42
 function Weapons.SyncAmmo()
 	if not available() then return end
-	for source, held in pairs(armed) do
-		if held.ammoItem and held.state == 'armed' and not held.loading and
-			Players.GateOpen(source) then
-			local requestId = Open77.weapons.requestSnapshot(source)
-			if requestId then
-				remember(requestId, { source = source, kind = 'sync', held = held })
+	for _, map in ipairs({ armed, secondary }) do
+		for source, held in pairs(map) do
+			if held.ammoItem and held.state == 'armed' and not held.loading and
+				not (otherOf(source, held) and otherOf(source, held).loading) and
+				Players.GateOpen(source) then
+				local requestId = Open77.weapons.requestSnapshot(source)
+				if requestId then
+					remember(requestId, { source = source, kind = 'sync', held = held })
+				end
 			end
 		end
 	end
@@ -594,6 +849,10 @@ function Weapons.Scan()
 			local requestId = Open77.weapons.requestSnapshot(source)
 			if requestId then
 				remember(requestId, { source = source, kind = 'scan', held = armed[source] })
+				if secondary[source] then
+					local leftId = Open77.weapons.requestSnapshot(source)
+					if leftId then remember(leftId, { source = source, kind = 'sync', held = secondary[source] }) end
+				end
 			end
 		end
 	end
@@ -606,7 +865,12 @@ function Weapons.SweepPending()
 	for key, step in pairs(pending) do
 		if now - (step.atMs or now) > PENDING_MS then
 			pending[key] = nil
-			if step.held then step.held.loading = false end
+			if step.kind == 'pairRead' or step.kind == 'pairFirst' or step.kind == 'pairLast'
+				or (step.kind == 'assign' and step.held and step.held.hand == 'left') then
+				failPair(step.source, step.held, step.partner)
+			end
+			if step.held then step.held.loading = false; reading[step.held.serial] = nil end
+			if step.partner then step.partner.loading = false; reading[step.partner.serial] = nil end
 			if (step.kind == 'holster' or step.kind == 'redraw') and step.held then reading[step.held.serial] = nil end
 		end
 	end

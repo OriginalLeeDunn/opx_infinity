@@ -15961,6 +15961,135 @@ do
 	end
 end
 
+section('dual wield: shared ammunition, authenticated completions and ordered cleanup')
+do
+	local env, control, why = boot('server')
+	check('the server boots with dual wielding', why == nil, why)
+	if why == nil then
+		local m = env.OPX.Modules.Get('inventory')
+		local W, P, C = m.Weapons, m.Players, m.Containers
+		local player, citizen = 1961, 'PAIR0001'
+		P.Citizen = function() return citizen end
+		P.SourceOf = function() return player end
+		P.MayAct = function() return true end
+		P.GateOpen = function() return true end
+		local bag = C.Transient('character', citizen, 10, 100000)
+		local name = 'weapon_lexington'
+		local item = m.Catalog.Get(name)
+		local requests, seq = {}, 0
+		local function request(operation, slot, amounts)
+			seq = seq + 1
+			requests[#requests + 1] = { id = seq, operation = operation, slot = slot, amounts = amounts }
+			return seq
+		end
+		env.Open77.weapons = {
+			assign = function(_, _, slot) return request('assign', slot) end,
+			remove = function(_, slot) return request('remove', slot) end,
+			setAmmo = function(_, slot, amounts) return request('setAmmo', slot, amounts) end,
+			requestSnapshot = function() return request('snapshot') end,
+			setDualWieldAllowed = function() return request('setDualWieldAllowed') end,
+			clear = function() return request('clear') end,
+			get = function() return { fresh = true, drawn = true } end,
+		}
+		local function complete(result, accepted)
+			local r = requests[#requests]
+			env.TriggerEvent('open77:weapons:completed', tostring(player), r.id, r.operation, accepted ~= false, nil, result)
+		end
+		local slot = m.Options.WEAPON_SLOT
+		local function snapshot(total, magA, magB)
+			return {
+				{ slot = slot, equipped = true, tweakDbId = 'right', ammo = {
+					total = total, reserve = 0, magazine = magA or 10, capacity = 18, tweakDbId = 'pistol' } },
+				{ slot = slot + 3, equipped = true, tweakDbId = 'left', ammo = {
+					total = total, reserve = 0, magazine = magB or 10, capacity = 18, tweakDbId = 'pistol' } },
+			}
+		end
+		bag.items[1] = { name = name, count = 1, metadata = { serial = 'right-item', ammo = 10 } }
+		bag.items[2] = { name = name, count = 1, metadata = { serial = 'left-item', ammo = 10 } }
+		check('a left weapon requires a right weapon', select(2, W.Use(player, bag, 2, item, 'left')) == 'primary_required')
+		check('the right weapon can be drawn', W.Use(player, bag, 1, item) == true)
+		local initial = requests[#requests]
+		env.TriggerEvent('open77:weapons:completed', tostring(player + 1), initial.id, 'assign', true, nil, {})
+		check('a different player cannot consume the pending request', W.Held(player).state == 'arming')
+		env.TriggerEvent('open77:weapons:completed', tostring(player), initial.id, 'snapshot', true, nil, {})
+		check('a different operation cannot consume it either', W.Held(player).state == 'arming')
+		complete({ tweakDbId = 'right', ammo = { capacity = 18 } })
+		complete({})
+		check('left equipment queues the native policy', W.Use(player, bag, 2, item, 'left') == true
+			and requests[#requests].operation == 'setDualWieldAllowed')
+		complete({})
+		check('policy acceptance reads the old gun before creating the pair', requests[#requests].operation == 'snapshot')
+		complete(snapshot(8))
+		check('shots before pairing are saved', bag.items[1].metadata.ammo == 8)
+		check('the secondary uses the matching slot plus three', requests[#requests].operation == 'assign'
+			and requests[#requests].slot == slot + 3)
+		complete({ tweakDbId = 'left', ammo = { capacity = 18 } })
+		complete(snapshot(999)) -- Native creation may preload rounds; ownership wins.
+		check('the first magazine receives only owned rounds', requests[#requests].operation == 'setAmmo'
+			and requests[#requests].amounts.magazine == 10 and requests[#requests].amounts.reserve == 0)
+		complete({})
+		check('the other magazine preserves the right items remaining rounds', requests[#requests].slot == slot
+			and requests[#requests].amounts.magazine == 8 and requests[#requests].amounts.reserve == 0)
+		complete({})
+		check('two distinct inventory serials back the two hands', W.Held(player).serial == 'right-item'
+			and W.Held(player, 'left').serial == 'left-item')
+		W.SyncAmmo()
+		complete(snapshot(12))
+		check('shared total is counted once across both items', bag.items[1].metadata.ammo + bag.items[2].metadata.ammo == 12)
+		local before = bag.items[1].metadata.ammo + bag.items[2].metadata.ammo
+		W.SyncAmmo(); complete(snapshot(1000))
+		check('native observations cannot grant ammunition', bag.items[1].metadata.ammo + bag.items[2].metadata.ammo == before)
+		check('transferring the left gun waits for both guns to be read', W.BeforeLeave(bag, bag.items[2]) == 'holstering')
+		complete(snapshot(9))
+		check('cleanup removes secondary before primary', requests[#requests].slot == slot + 3)
+		complete({})
+		check('the next removal is primary', requests[#requests].slot == slot)
+		complete({})
+		check('both hands are clear and the paid total survives', W.Held(player) == nil and W.Held(player, 'left') == nil
+			and bag.items[1].metadata.ammo + bag.items[2].metadata.ammo == 9)
+		check('the left item can now leave', W.BeforeLeave(bag, bag.items[2]) == nil)
+		check('the primary can be equipped again after paired holstering', W.Use(player, bag, 1, item) == true)
+		complete({ tweakDbId = 'right', ammo = { capacity = 18 } }); complete({})
+		W.Use(player, bag, 2, item, 'left')
+		check('the dual policy is reapplied on the next pairing', requests[#requests].operation == 'setDualWieldAllowed')
+		complete({}); complete(snapshot(bag.items[1].metadata.ammo))
+		complete({ tweakDbId = 'left', ammo = { capacity = 18 } })
+		complete(nil, false)
+		check('a failed pair initialization removes native creation ammunition', requests[#requests].operation == 'clear'
+			and W.Held(player) == nil and W.Held(player, 'left') == nil)
+
+	end
+end
+
+section('cyberarm styles: bounded schema and server model restrictions')
+do
+	local env, _, why = boot('server')
+	check('the server boots with cosmetic styles', why == nil, why)
+	if why == nil then
+		local m = env.OPX.Modules.Get('ripperdoc')
+		local style = { schemaVersion = 1, enabled = true, record = '0x123456',
+			primary = { r = 0, g = 128, b = 255 }, secondary = { r = 255, g = 0, b = 1 } }
+		check('explicit RGB snapshots are accepted', m.ValidateStyle(style) ~= nil)
+		style.primary.r = 256
+		check('RGB overflow is refused', m.ValidateStyle(style) == nil)
+		style.primary.r = 0.5
+		check('fractional channels are refused', m.ValidateStyle(style) == nil)
+		style.primary.r = 0
+		style.schemaVersion = 2
+		check('unknown schemas are refused', m.ValidateStyle(style) == nil)
+		style.schemaVersion = 1
+		style.record = '../arbitrary'
+		check('paths are not model identifiers', m.ValidateStyle(style) == nil)
+		style.record = '0x123456'
+		m.Settings.STYLES.RECORDS = { ['0xabcdef'] = true }
+		check('an operator model allowlist is authoritative', m.ValidateStyle(style) == nil)
+		style.record = '0xabcdef'
+		local copy = m.ValidateStyle(style)
+		style.primary.r = 128
+		check('accepted snapshots are copied before storage', copy ~= nil and copy.primary.r == 0)
+	end
+end
+
 -- ── the version is one number, in three places ──────────────────────────────
 -- THE SERVER REPORTED 0.1.0 WHILE THE MANIFEST SAID 0.1.2, for two releases,
 -- and the only symptom was the owner reading the wrong number off a boot line
@@ -19794,7 +19923,7 @@ do
 	local modules = {
 		'chat/ChatInput', 'chat/ChatLog', 'downed/DownedView', 'form/FormView',
 		'hud/HudInfo', 'hud/HudRoot',
-		'hud/HudStatus', 'hud/HudVehicle', 'hud/HudVitals', 'hud/HudVoice',
+		'hud/HudStatus', 'hud/HudVehicle', 'hud/HudVitals', 'hud/HudVoice', 'hud/HudWeapons',
 		'inventory/InventoryGrid', 'inventory/InventorySlot', 'inventory/InventoryView',
 		'inventory/SlotbarRoot', 'menu/MenuView', 'notify/NotifyRoot', 'notify/NotifyToast',
 		'panel/PanelView', 'progress/ProgressRoot', 'prompts/PromptsRoot', 'spawn/SpawnView',
@@ -26482,7 +26611,7 @@ do
 	local VIEWS = {
 		'chat/ChatInput', 'chat/ChatLog', 'downed/DownedView', 'form/FormView',
 		'hud/HudInfo', 'hud/HudRoot', 'hud/HudStatus', 'hud/HudVehicle',
-		'hud/HudVitals', 'hud/HudVoice', 'inventory/InventoryGrid',
+		'hud/HudVitals', 'hud/HudVoice', 'hud/HudWeapons', 'inventory/InventoryGrid',
 		'inventory/InventorySlot', 'inventory/InventoryView', 'inventory/SlotbarRoot',
 		'menu/MenuView', 'notify/NotifyRoot', 'notify/NotifyToast', 'panel/PanelView',
 		'progress/ProgressRoot', 'prompts/PromptsRoot', 'spawn/SpawnView',
@@ -26943,7 +27072,9 @@ do
 			get = function() return { fresh = true, drawn = true } end,
 		}
 		local function complete(id, result)
-			env.TriggerEvent('open77:weapons:completed', tostring(SHOOTER), id, 'op', true, nil,
+			local operation
+			for _, request in ipairs(requests) do if request.id == id then operation = request.kind end end
+			env.TriggerEvent('open77:weapons:completed', tostring(SHOOTER), id, operation, true, nil,
 				result)
 		end
 
@@ -39973,7 +40104,7 @@ do
 	local VIEWS = {
 		'calls/HoloRoot', 'chat/ChatInput', 'chat/ChatLog', 'doorlock/DoorList',
 		'doorlock/DoorSettings', 'doorlock/DoorlockView', 'downed/DownedView', 'form/FormView',
-		'hud/HudInfo', 'hud/HudStatus', 'hud/HudVehicle', 'hud/HudVitals', 'hud/HudVoice',
+		'hud/HudInfo', 'hud/HudStatus', 'hud/HudVehicle', 'hud/HudVitals', 'hud/HudVoice', 'hud/HudWeapons',
 		'inventory/InventoryGrid', 'inventory/InventorySlot', 'inventory/InventoryView',
 		'inventory/SlotbarRoot', 'loading/LoadingCover', 'menu/MenuView', 'notify/NotifyRoot',
 		'notify/NotifyToast', 'panel/PanelView', 'progress/ProgressRoot', 'prompts/PromptsRoot',

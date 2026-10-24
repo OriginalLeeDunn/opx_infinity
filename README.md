@@ -52,7 +52,7 @@ It is built around three rules:
 - **Join flow**: a join screen, the game's character creator, a name, spawn
   locations, appearance and a fitting room.
 - **Inventory**: bag, hotbar, stashes, trunks and gloveboxes, ground piles with real
-  props, weapons drawn from the bag, eddies as a bearer item, gives the receiver accepts.
+  props, weapons drawn from the bag (including paired weapons and per-hand ammunition on op77.152+), eddies as a bearer item, gives the receiver accepts.
 - **Vehicles**: an owned-vehicle registry, keys as inventory items with a real host
   lock, garages with entries and exits, dealerships with showrooms and
   player-to-player sales paid into a company account, and **fuel** (an ox_fuel port:
@@ -66,6 +66,7 @@ It is built around three rules:
   emotes (every platform animation, solo and duo), holocalls and contacts, chat.
 - **Interface**: one Vue page with hand-drawn chamfered shapes (HUD, menus, forms, panels, toasts), recoloured
   live from the server's theme, in **English and French**.
+- **Cyberarms**: installed Gorilla Arms can use native cosmetic models and two saved RGB colors at a configured ripperdoc clinic (op77.152+; colors remain local).
 - **Staff**: an F9 staff panel and eye rows, ACL-scoped commands, staff immunity,
   audit lines for every privileged action.
 - **For creators**: server and client exports with a uniform `{ ok, value | error }`
