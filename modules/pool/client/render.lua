@@ -21,7 +21,7 @@ local function fail(why)
 	return false
 end
 local function make(model, position, yaw)
-	local id, why = Open77.props.create({ model = model, position = position, yaw = yaw or 0, collision = false, physics = false, visible = true })
+	local id, why = Open77.props.create({ model = model, position = position, yaw = yaw or 0, collision = false, physics = "none", visible = true })
 	if not id then return nil, why end
 	created[id] = OPX.Now()
 	return id

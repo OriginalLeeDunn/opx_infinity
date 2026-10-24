@@ -989,7 +989,7 @@ ball centres (`OVERVIEW_HEIGHT`, range 1.2–2.4), with a wider lens to keep the
 cloth framed. A small lateral cue-camera offset keeps the shaft visible. The
 queue sits behind the white ball, retracts with charge and follows through for
 220 ms after release. All rendered balls/queue explicitly request `collision =
-false`, `physics = false`, `visible = true`; ball contacts remain server simulation.
+false`, `physics = "none"`, `visible = true`; ball contacts remain server simulation.
 
 **R** resets even during aim, cancelling charge first. In a duel it proposes a
 new game; the other participant must accept with **R** or the table menu. The

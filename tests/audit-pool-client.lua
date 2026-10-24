@@ -11,7 +11,9 @@ env.Open77.character.position = function() return 99,10,1 end
 env.Open77.input.axis = function() return mouse end
 env.Open77.props = {
 	create = function(options)
-		assert(options.collision==false and options.physics==false and options.visible==true,'pool visual prop acquired collision/physics')
+		local modes={static=true,kinematic=true,dynamic=true,none=true}
+		if not modes[options.physics] then return nil,'invalid_physics' end
+		assert(options.collision==false and options.physics=='none' and options.visible==true,'pool visual prop acquired collision/physics')
 		nextId=nextId+1; creates=creates+1
 		local id=tostring(nextId)
 		props[id]={id=id,model=options.model,position=options.position,rendered=true,failed=false,backend='test_host'}
