@@ -9,6 +9,7 @@
 -- word and is never translated.
 
 local EN = {
+	['fuel.error.purchase_pending'] = 'Your purchase is being confirmed. Please wait before trying again.',
 	['fuel.title'] = 'FUEL',
 	['fuel.key.use'] = 'Use a fuel pump',
 	['fuel.prompt.pump'] = 'Refuel ({price}/L)',
@@ -79,6 +80,7 @@ local EN = {
 }
 
 local FR = {
+	['fuel.error.purchase_pending'] = 'Ton achat est en cours de confirmation. Patiente avant de réessayer.',
 	['fuel.title'] = 'CARBURANT',
 	['fuel.key.use'] = 'Utiliser une pompe à essence',
 	['fuel.prompt.pump'] = 'Faire le plein ({price}/L)',

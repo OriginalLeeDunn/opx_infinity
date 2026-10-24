@@ -482,7 +482,7 @@ end
 -- `spec` is already a plain copy: { issuer, target, amount, reason, account?,
 -- cutPct?, source?, company?, ceiling? }.
 -- @return Result { id }
-local function issue(spec)
+local function issue(spec, service)
 	local cfg = config()
 	local issuer, target = playerId(spec.issuer), playerId(spec.target)
 	if issuer == nil or target == nil then return Result.Err('bad_player') end
@@ -513,7 +513,6 @@ local function issue(spec)
 	if asking[tcid] ~= nil then return Result.Err('target_busy') end
 	if cfg.maxUnpaid > 0 and unpaidCount(tcid) >= cfg.maxUnpaid then return Result.Err('too_many_unpaid') end
 
-	asking[tcid] = true
 	local record = {
 		state = State.ASKED, rev = 0, issuerCid = icid, issuerName = nameOf(idata), targetCid = tcid,
 		targetName = nameOf(tdata),
@@ -521,6 +520,46 @@ local function issue(spec)
 		amount = amount, reason = reason, account = account, cutPct = account and cut or 0,
 		source = source, issuedAt = wall(), expiresAt = 0,
 	}
+	if service then
+		if cfg.maxUnpaid <= 0 then return Result.Err('too_many_unpaid') end
+		record.state = State.UNPAID
+		record.expiresAt = cfg.unpaidTtlS > 0 and wall() + cfg.unpaidTtlS or 0
+		local prepared = {}
+		prepared.Participant = function(op)
+			if op.citizenId ~= tcid or citizenOf(issuer) ~= icid or citizenOf(target) ~= tcid then return nil, 'no_target' end
+			if asking[tcid] ~= nil then return nil, 'target_busy' end
+			if unpaidCount(tcid) >= cfg.maxUnpaid then return nil, 'too_many_unpaid' end
+			local token = {}
+			asking[tcid] = token
+			local release, resolve, apply, publish = op.release, op.resolve, op.apply, op.publish
+			local stored
+			op.release = function()
+				if release then pcall(release) end
+				if asking[tcid] == token then asking[tcid] = nil end
+			end
+			op.resolve = function(answer)
+				if resolve and not resolve(answer) then return false end
+				local read = M.Storage.ByIssue(op.id)
+				if not read.ok or not read.value then return false end
+				stored = read.value
+				return stored.issuerCid == icid and stored.targetCid == tcid and stored.amount == amount and stored.source == source
+			end
+			op.apply = function()
+				if apply then apply() end
+				prepared.id = stored.id
+				invoices[stored.id] = stored
+			end
+			op.publish = function()
+				if publish then pcall(publish) end
+				audit(stored, 'issued', 'info', 'consented service filed on tab')
+				tellCitizen(tcid, 'invoices.target.filed', { amount = money(amount) })
+				OPX.Publish(Event.ON_ISSUED, sourceOf(tcid), busPayload(stored))
+			end
+			return function(attempt) return M.Storage.ServiceStatements(attempt, record, cfg.maxUnpaid) end
+		end
+		return Result.Ok(prepared)
+	end
+	asking[tcid] = true
 	local inserted = M.Storage.Insert(record)
 	if not inserted.ok then
 		asking[tcid] = nil
@@ -734,7 +773,7 @@ local SPEC_FIELDS = { 'issuer', 'target', 'amount', 'reason', 'cutPct', 'source'
 -- @author dop42
 -- @param spec table
 -- @return Result { id }
-local function apiIssue(spec)
+local function apiIssue(spec, service)
 	if type(spec) ~= 'table' then return Result.Err('bad_spec') end
 	local copy = {}
 	for _, key in ipairs(SPEC_FIELDS) do
@@ -743,7 +782,7 @@ local function apiIssue(spec)
 	end
 	if spec.account ~= nil then copy.account = Model.Account(spec.account) or false end
 	if copy.account == false then return Result.Err('bad_account') end
-	return issue(copy)
+	return issue(copy, service)
 end
 
 --- What a player owes: `Result{ rows }`, oldest first.
@@ -778,6 +817,7 @@ end
 function M.Api()
 	OPX.Api.Provide('invoices', 1, {
 		Issue = apiIssue,
+		PrepareServiceBill = function(spec) return apiIssue(spec, true) end,
 		Pending = apiPending,
 		Get = apiGet,
 		Cancel = function(id)

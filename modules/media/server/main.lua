@@ -21,10 +21,9 @@
 -- that URL -- the picture never crosses the game transport). Either way the
 -- photo item carries the server's reads: where, when, who, how many in frame.
 --
--- THE DESK PAYS IN THIS ORDER: the pieces leave the bag first, then the money
--- leaves the newsroom's treasury (`accounts.Withdraw`, idempotent by opId) or
--- is minted under MINT_PER_HOUR when there is no treasury, then the reporter
--- is paid. A refusal at any step puts back what moved before it.
+-- Desk settlement commits the exact selected slots, reporter payment, company
+-- debit (when configured), hourly caps and scene history in one transaction.
+-- Unknown replies are never compensated or redirected to another source.
 
 local M = OPX.Modules.Get('media')
 local Model = M.Model
@@ -40,8 +39,6 @@ local lastBreak, lastAnyBreak, breaks, feed = {}, nil, {}, {}
 local tips, tipSerial = {}, 0
 -- citizen id -> { at } wall seconds, for the hourly photo and story caps.
 local photosBy, storiesBy = {}, {}
--- citizen id -> { at, amount }; network -> { at, amount }; desk id -> { x, y, z, at }.
-local paidTo, minted, bought = {}, {}, {}
 -- Caps and scene deduplication span desks and reporters; one sale owns them until settlement.
 local selling = false
 -- player -> the photo being framed: { slot, at, cid, network, barId }.
@@ -492,7 +489,7 @@ end
 
 local function accountsApi()
 	local api = OPX.Api.Get('accounts')
-	if api == nil or type(api.Withdraw) ~= 'function' then return nil end
+	if api == nil or type(api.PayCitizen) ~= 'function' then return nil end
 	return api
 end
 
@@ -519,25 +516,26 @@ local function sellOnce(player, payload)
 		return answer(player, false, 'too_far')
 	end
 	local api = inventory()
-	if api == nil or type(api.RemoveFromSlot) ~= 'function' then return answer(player, false, 'no_inventory') end
+	if api == nil or type(api.AtomicTrade) ~= 'function' then return answer(player, false, 'no_inventory') end
 
 	local network = built.networks[desk.network]
 	local treasury = network.account ~= nil and accountsApi() or nil
 	local nowS = wallS()
 	local deskId = desk.network .. '/' .. desk.key
-	bought[deskId] = Model.Prune(bought[deskId], nowS, built.sales.repeatS)
-	paidTo[who.cid] = Model.Prune(paidTo[who.cid], nowS)
-	minted[network.key] = Model.Prune(minted[network.key], nowS)
-	local room = Model.Left(paidTo[who.cid], built.sales.sellerCap, nowS)
-	if treasury == nil then room = math.min(room, Model.Left(minted[network.key], built.sales.mintCap, nowS)) end
+	local snapshot = M.Storage.State(who.cid, network.key, deskId, built.sales.repeatS)
+	if not snapshot.ok then return answer(player, false, 'desk_closed') end
+	local room = math.max(0, built.sales.sellerCap - snapshot.value.seller)
+	if treasury == nil then room = math.min(room, math.max(0, built.sales.mintCap - snapshot.value.minted)) end
 
 	local photoName, storyName = built.items.photo.name, built.items.story.name
 	local picked, total, foreign, capped, photos, stories, old = {}, 0, 0, 0, 0, 0, 0
 	-- The desk's recent purchases plus what this sale has picked so far: two
 	-- photos of one scene sold together are one scoop, and the second is old news.
 	local scene = {}
-	for index, row in ipairs(bought[deskId]) do scene[index] = row end
-	for _, item in ipairs(itemsOf(player)) do
+	for index, row in ipairs(snapshot.value.scenes) do scene[index] = row end
+	local offered = itemsOf(player)
+	nowS = wallS()
+	for _, item in ipairs(offered) do
 		if type(item) == 'table' and (item.name == photoName or item.name == storyName) then
 			local metadata = type(item.metadata) == 'table' and item.metadata or {}
 			if metadata.by ~= who.cid then
@@ -551,7 +549,7 @@ local function sellOnce(player, payload)
 				end
 				local count = math.max(1, math.tointeger(item.count) or 1)
 				for _ = 1, count do
-					if total + price > room then
+					if #picked >= 128 or total + price > room then
 						capped = capped + 1
 					else
 						picked[#picked + 1] = { slot = item.slot, name = item.name, metadata = metadata, price = price }
@@ -574,59 +572,44 @@ local function sellOnce(player, payload)
 		return answer(player, false, foreign > 0 and 'not_your_byline' or 'nothing_to_sell')
 	end
 
-	-- 1. The pieces leave the bag.
-	local removed = {}
+	local current = reporterOf(player)
+	if current == nil or current.cid ~= who.cid then return answer(player, false, 'sale_failed') end
+	local id = M.Storage.NewId()
+	if not id.ok then return answer(player, false, 'desk_closed') end
+	local opId, reason = 'media:' .. id.value, ('media:desk:%s'):format(deskId)
+	local fundedFrom = treasury and 'accounts' or 'mint'
+	local changes, soldScenes = {}, {}
 	for _, piece in ipairs(picked) do
-		local read, done = pcall(api.RemoveFromSlot, who.cid, piece.slot, 1, piece)
-		if read and type(done) == 'table' and done.ok == true then
-			removed[#removed + 1] = piece
-		else
-			total = total - piece.price
+		changes[#changes + 1] = { slot = piece.slot, name = piece.name, count = -1, metadata = piece.metadata }
+		if piece.name == photoName then
+			soldScenes[#soldScenes + 1] = { x = OPX.Math.Finite(piece.metadata.x) or 0,
+				y = OPX.Math.Finite(piece.metadata.y) or 0, z = OPX.Math.Finite(piece.metadata.z) or 0 }
 		end
 	end
-	local function putBack()
-		for _, piece in ipairs(removed) do pcall(api.AddItem, who.cid, piece.name, 1, piece.metadata) end
+	local sale = { network = network.key, desk = deskId, total = total, funded = fundedFrom,
+		revision = snapshot.value.revision, sellerCap = built.sales.sellerCap, mintCap = built.sales.mintCap, scenes = soldScenes }
+	local function participant()
+		local live = reporterOf(player)
+		local here = pointOf(player)
+		if not live or live.cid ~= who.cid or down(player) or not here or here.bucket ~= desk.bucket
+			or distance(here, desk.x, desk.y, desk.z) > OPX.Spots.ServerReach(desk.radius) then return nil, 'error.unavailable' end
+		if not Model.MaySellTo(built, live.grade, live.network, desk.network) then return nil, 'error.unavailable' end
+		return function(op) return M.Storage.SaleStatements(op, sale) end
 	end
-	if #removed == 0 then return answer(player, false, 'nothing_to_sell') end
+	local done
+	if treasury and total > 0 then
+		done = treasury.PayCitizen(network.account.kind, network.account.key, who.cid, built.currency,
+			total, reason, opId, changes, participant)
+	else
+		done = api.AtomicTrade(who.cid, built.currency, total, changes, reason, opId, participant)
+	end
+	if type(done) ~= 'table' or not done.ok then
+		local code = type(done) == 'table' and done.error or 'money.pending'
+		return answer(player, false, code == 'insufficient_funds' and 'desk_broke'
+			or code == 'money.pending' and 'sale_pending' or 'desk_closed')
+	end
+	local removed = picked
 
-	-- 2. The money leaves the newsroom (or is minted under the cap).
-	local opId = ('media:%s:%s'):format(who.cid, nextSerial('sale'))
-	local reason = ('media:desk:%s'):format(deskId)
-	local fundedFrom = 'mint'
-	if total > 0 and treasury ~= nil then
-		local read, result = pcall(treasury.Withdraw, network.account.kind, network.account.key, total, reason, opId)
-		if not read or type(result) ~= 'table' or result.ok ~= true then
-			putBack()
-			local code = read and type(result) == 'table' and result.error or nil
-			return answer(player, false, code == 'insufficient_funds' and 'desk_broke' or 'desk_closed')
-		end
-		fundedFrom = 'accounts'
-	end
-
-	-- 3. The reporter is paid.
-	local paid = total <= 0
-	if not paid then
-		local money = character()
-		if money ~= nil and type(money.AddMoneyOffline) == 'function' then
-			local read, result = pcall(money.AddMoneyOffline, who.cid, built.currency, total, reason)
-			paid = read and type(result) == 'table' and result.ok == true
-		end
-	end
-	if not paid then
-		if fundedFrom == 'accounts' then
-			pcall(treasury.Deposit, network.account.kind, network.account.key, total, reason .. ':refund', opId .. ':refund')
-		end
-		putBack()
-		return answer(player, false, 'sale_failed')
-	end
-
-	local rows = paidTo[who.cid]
-	rows[#rows + 1] = { at = nowS, amount = total }
-	if fundedFrom == 'mint' then
-		local mintRows = minted[network.key]
-		mintRows[#mintRows + 1] = { at = nowS, amount = total }
-	end
-	bought[deskId] = scene
 	local serials = {}
 	for index = 1, math.min(#removed, 20) do serials[index] = removed[index].metadata.serial end
 	OPX.Audit.Log({ event = 'media.sell', message = ('%s sold %d photo(s) and %d story(ies) to %s for %d (%s)')
@@ -1013,9 +996,10 @@ end
 function M.Init()
 	built = Model.Build(OPX.Config.MODULES.media or M.Settings)
 	M.Built = built
+	OPX.Schema.Add(M.Storage.SCHEMA)
 	lastBreak, lastAnyBreak, breaks, feed = {}, nil, {}, {}
 	tips, tipSerial, photosBy, storiesBy = {}, 0, {}, {}
-	paidTo, minted, bought, shoots = {}, {}, {}, {}
+	shoots = {}
 	selling = false
 end
 

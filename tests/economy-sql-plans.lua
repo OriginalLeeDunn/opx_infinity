@@ -3,8 +3,8 @@
 local Host = dofile('tests/host.lua')
 local env = Host.Environment('server')
 local character, business, crafting, appearance, vehicles, dealership, inventory = {}, {}, {}, {}, {}, {}, { Common = { Copy = function(value) return value end } }
-local underworld, invoices, contracts = {}, {}, {}
-local modules = { underworld = underworld, invoices = invoices, contracts = contracts, character = character, inventory = inventory, business = business, crafting = crafting, appearance = appearance, vehicles = vehicles, dealership = dealership }
+local underworld, invoices, contracts, media = {}, {}, {}, {}
+local modules = { media = media, underworld = underworld, invoices = invoices, contracts = contracts, character = character, inventory = inventory, business = business, crafting = crafting, appearance = appearance, vehicles = vehicles, dealership = dealership }
 env.OPX = { Modules = { Get = function(name) return modules[name] end } }
 assert(loadfile('lib/shared/result.lua', 't', env))()
 assert(loadfile('lib/server/storage.lua', 't', env))()
@@ -18,8 +18,9 @@ assert(loadfile('modules/dealership/server/storage.lua', 't', env))()
 assert(loadfile('modules/underworld/server/storage.lua', 't', env))()
 assert(loadfile('modules/invoices/server/storage.lua', 't', env))()
 assert(loadfile('modules/contracts/server/storage.lua', 't', env))()
-local output = { schema = {}, cases = {}, companyCases = {}, concurrent = {}, columns = {}, craftingSequential = {} }
-for _, schema in ipairs({ character.Storage.SCHEMA, inventory.Storage.SCHEMA, business.Storage.SCHEMA, crafting.Storage.SCHEMA, appearance.Storage.SCHEMA, vehicles.Storage.SCHEMA, dealership.Storage.SCHEMA, underworld.Storage.SCHEMA, invoices.Storage.SCHEMA, contracts.Storage.SCHEMA }) do
+assert(loadfile('modules/media/server/storage.lua', 't', env))()
+local output = { schema = {}, cases = {}, companyCases = {}, concurrent = {}, columns = {}, craftingSequential = {}, mediaConcurrent = {} }
+for _, schema in ipairs({ character.Storage.SCHEMA, inventory.Storage.SCHEMA, business.Storage.SCHEMA, crafting.Storage.SCHEMA, appearance.Storage.SCHEMA, vehicles.Storage.SCHEMA, dealership.Storage.SCHEMA, underworld.Storage.SCHEMA, invoices.Storage.SCHEMA, contracts.Storage.SCHEMA, media.Storage.SCHEMA }) do
 	for index = 1, #schema do output.schema[#output.schema + 1] = schema[index] end
 end
 for _, storage in ipairs({ business.Storage, vehicles.Storage, invoices.Storage, contracts.Storage, underworld.Storage }) do
@@ -117,7 +118,7 @@ local function peerCase(name, buyerBalance, sellerBalance, refused)
 		citizenId = 'ECONTEST', moneyType = 'EDDIES', action = 'remove', amount = 100, reason = 'peer trade' }
 	local function plan()
 		local statements, guard = character.Storage.PeerStatements(op, 'SELLTEST')
-		for _, bag in ipairs({ { id = 1, items = { [1] = { name = 'water', count = 2 } } },
+		for _, bag in ipairs({ { id = 1, items = { [1] = { name = 'weapon_test', count = 1, metadata = { ammo = 9 } }, [2] = { name = 'water', count = 2 } } },
 			{ id = 2, items = { [1] = { name = 'water', count = 1 } } } }) do
 			for _, statement in ipairs(inventory.Storage.MoneyStatements(bag, op)) do statements[#statements + 1] = statement end
 		end
@@ -180,6 +181,73 @@ end
 underworldCase('underworld-mint', 'mint')
 underworldCase('underworld-batch', 'batch')
 underworldCase('underworld-collect', 'collect')
+local function commerceCase(name, invoice, overflow)
+	local op = { id = 'integration:' .. name, attempt = '11111111-1111-1111-1111-111111111111', citizenId = 'ECONTEST',
+		moneyType = 'EDDIES', action = invoice and 'touch' or 'remove', amount = invoice and 0 or 100, reason = 'bar sale' }
+	local function plan()
+		local effects, guard = character.Storage.PeerStatements(op, 'SELLTEST', invoice and 0 or 25)
+		local extra, extraGuard
+		if invoice then
+			extra, extraGuard = invoices.Storage.ServiceStatements(op, { state = 'unpaid', issuerCid = 'SELLTEST', issuerName = 'Staff',
+				targetCid = 'ECONTEST', targetName = 'Customer', amount = 100, reason = 'Consented drink', account = { kind = 'job', key = 'test' },
+				cutPct = 25, source = 'bar', issuedAt = 1760000000, expiresAt = 0 }, 3)
+		else extra, extraGuard = business.Storage.WalletStatements(op, 'job', 'test', 75, true) end
+		for _, statement in ipairs(extra) do effects[#effects + 1] = statement end
+		guard = env.OPX.Storage.CombineGuards(guard, extraGuard)
+		for _, bag in ipairs({ { id = 1, items = { [1] = { name = 'weapon_test', count = 1, metadata = { ammo = 9 } }, [2] = { name = 'water', count = 1 } } },
+			{ id = 2, items = { [1] = { name = 'water', count = 2 } } } }) do
+			for _, statement in ipairs(inventory.Storage.MoneyStatements(bag, op)) do effects[#effects + 1] = statement end
+		end
+		return assert(character.Storage.MoneyStatements(op, effects, guard).value)
+	end
+	local statements = plan()
+	op.attempt = '22222222-2222-2222-2222-222222222222'
+	output.cases[#output.cases + 1] = { name = name, balance = 500, notes = 0, peer = 40,
+		peerCredit = invoice and 0 or 25, company = overflow and 9007199254740991 or 40, serviceInvoice = invoice,
+		refused = overflow or false, statements = statements, replay = plan() }
+end
+commerceCase('bar-split', false, false)
+commerceCase('bar-company-overflow', false, true)
+commerceCase('bar-invoice', true, false)
+local function mediaPlan(name, citizen, bagId, sale, replay)
+	local op = { id = 'integration:' .. name, attempt = replay and '22222222-2222-2222-2222-222222222222' or '11111111-1111-1111-1111-111111111111',
+		citizenId = citizen, moneyType = 'EDDIES', action = 'add', amount = sale.total, reason = 'media sale' }
+	local effects, guard, before = media.Storage.SaleStatements(op, sale)
+	local items = { id = bagId, items = { [1] = { name = 'weapon_test', count = 1, metadata = { ammo = 9 } } } }
+	for _, statement in ipairs(inventory.Storage.MoneyStatements(items, op)) do effects[#effects + 1] = statement end
+	if sale.funded == 'accounts' then
+		local extra, eligibility = business.Storage.WalletStatements(op, 'job', 'test', sale.total, false)
+		for _, statement in ipairs(extra) do effects[#effects + 1] = statement end
+		guard = env.OPX.Storage.CombineGuards(guard, eligibility)
+	end
+	return assert(character.Storage.MoneyStatements(op, effects, guard, before).value)
+end
+local function mediaCase(name, funded, sellerCap, mintCap, stale, company)
+	local scenes = {}
+	for index = 1, 16 do scenes[index] = { x = index, y = 2, z = 3 } end
+	local sale = { network = 'test-network', desk = 'test-network/desk', total = 100, funded = funded, revision = 0,
+		sellerCap = sellerCap, mintCap = mintCap, scenes = scenes }
+	output.cases[#output.cases + 1] = { name = name, balance = 500, notes = 0, media = true, mediaStale = stale or false,
+		company = company or 400, spent = funded == 'mint' and not stale and sellerCap >= 100 and mintCap >= 100 and -100 or 0,
+		refused = stale or sellerCap < 100 or (funded == 'mint' and mintCap < 100) or (company and company < 100) or false,
+		statements = mediaPlan(name, 'ECONTEST', 1, sale), replay = mediaPlan(name, 'ECONTEST', 1, sale, true) }
+end
+mediaCase('media-mint', 'mint', 1000, 1000)
+mediaCase('media-accounts', 'accounts', 1000, 1000)
+mediaCase('media-seller-cap', 'mint', 50, 1000)
+mediaCase('media-network-cap', 'mint', 1000, 50)
+mediaCase('media-stale-quote', 'mint', 1000, 1000, true)
+mediaCase('media-company-insufficient', 'accounts', 1000, 1000, false, 40)
+for index, citizen in ipairs({ 'ECONTEST', 'SELLTEST' }) do
+	for _, stale in ipairs({ false, true }) do
+		local sale = { network = 'test-network', desk = stale and 'shared-desk' or 'desk-' .. index,
+			total = 100, funded = 'mint', revision = 0, sellerCap = 1000, mintCap = stale and 1000 or 100,
+			scenes = { { x = 1, y = 2, z = 3 } } }
+		local key = stale and 'revision' or 'cap'
+		output.mediaConcurrent[key] = output.mediaConcurrent[key] or {}
+		output.mediaConcurrent[key][index] = mediaPlan('media-concurrent-' .. key .. index, citizen, index, sale)
+	end
+end
 local function accountCase(name, method, source, target, amount)
 	local op = { id = 'generic:' .. name, out = 'generic:' .. name .. ':out', into = 'generic:' .. name .. ':in',
 		kind = 'job', group = 'test', from = { kind = 'job', group = 'test' },

@@ -758,7 +758,7 @@ end
 -- Every participant statement must join BOTH op_id and attempt_token. A guarded
 -- INSERT that matches no balance must not reuse a receipt another attempt wrote.
 -- The selected character and any eligibility subquery are locked until commit.
-function M.Storage.MoneyStatements(op, effects, guard)
+function M.Storage.MoneyStatements(op, effects, guard, before)
 	local path = '$.' .. op.moneyType
 	local balance = 'COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(c.money, ?)) AS SIGNED), 0)'
 	local value, condition, values
@@ -797,6 +797,12 @@ function M.Storage.MoneyStatements(op, effects, guard)
 			values = { path, op.id, op.attempt } },
 	}
 	for index = 1, #(effects or {}) do statements[#statements + 1] = effects[index] end
+	if before and #before > 0 then
+		local combined = {}
+		for _, statement in ipairs(before) do combined[#combined + 1] = statement end
+		for _, statement in ipairs(statements) do combined[#combined + 1] = statement end
+		statements = combined
+	end
 	if #statements > 64 then return Result.Err('money.tooLarge', 'transaction statement limit') end
 	return Result.Ok(statements)
 end
@@ -832,13 +838,13 @@ function M.Storage.MoneyChange(op, build)
 			return Result.Err(uncertain and 'money.pending' or 'error.unavailable', op.id)
 		end
 		op.attempt = attempt.value
-		local effects, guard = {}, nil
+		local effects, guard, before = {}, nil, nil
 		if build then
 			local prepared
-			prepared, effects, guard = pcall(build, op)
+			prepared, effects, guard, before = pcall(build, op)
 			if not prepared then return Result.Err(uncertain and 'money.pending' or 'error.unavailable', op.id) end
 		end
-		local built, planned = pcall(M.Storage.MoneyStatements, op, effects, guard)
+		local built, planned = pcall(M.Storage.MoneyStatements, op, effects, guard, before)
 		if not built then return Result.Err(uncertain and 'money.pending' or 'error.unavailable', op.id) end
 		if not planned.ok then return planned end
 		local written = Storage.Transaction(planned.value)
@@ -859,9 +865,10 @@ function M.Storage.MoneyChange(op, build)
 end
 
 --- The peer credit is authorized by the buyer's exact receipt attempt.
-function M.Storage.PeerStatements(op, citizenId)
+function M.Storage.PeerStatements(op, citizenId, creditAmount)
+	creditAmount = creditAmount or op.amount
 	local peer = { id = op.id .. ':credit', attempt = op.attempt, citizenId = citizenId,
-		moneyType = op.moneyType, action = op.amount > 0 and 'add' or 'touch', amount = op.amount,
+		moneyType = op.moneyType, action = creditAmount > 0 and 'add' or 'touch', amount = creditAmount,
 		reason = 'peer-credit:' .. op.id, allowNegative = op.allowNegative }
 	local planned = M.Storage.MoneyStatements(peer, nil,
 		{ query = 'EXISTS (SELECT 1 FROM opx77_money_ledger WHERE op_id = ? AND attempt_token = ?)',
@@ -871,5 +878,5 @@ function M.Storage.PeerStatements(op, citizenId)
 	local balance = 'COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(money, ?)) AS SIGNED), 0)'
 	return planned.value, { query = "EXISTS (SELECT 1 FROM opx77_characters WHERE citizen_id = ? AND deleted_at IS NULL AND JSON_TYPE(money) = 'OBJECT' AND " ..
 		balance .. ' <= ? AND ' .. balance .. ' >= ? FOR UPDATE)',
-		values = { citizenId, path, 9007199254740991 - op.amount, path, -9007199254740991 }, error = 'money.tooLarge' }
+		values = { citizenId, path, 9007199254740991 - creditAmount, path, -9007199254740991 }, error = 'money.tooLarge' }
 end

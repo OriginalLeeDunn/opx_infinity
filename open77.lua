@@ -732,6 +732,7 @@ client_script "modules/workplace/client/main.lua"
 shared_script "modules/media/module.lua"
 shared_script "modules/media/locales.lua"
 shared_script "modules/media/shared/model.lua"
+server_script "modules/media/server/storage.lua"
 server_script "modules/media/server/main.lua"
 client_script "modules/media/client/main.lua"
 

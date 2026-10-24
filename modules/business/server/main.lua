@@ -764,6 +764,7 @@ function M.Api()
 		Withdraw = Accounts.Withdraw,
 		Transfer = Accounts.Transfer,
 		PayCitizen = Accounts.PayCitizen,
+		PrepareTrade = Accounts.PrepareTrade,
 		History = Accounts.History,
 		-- Beyond v1, for a writer that banks into the same table on its own
 		-- (the dealership): records the movement for the history and the bus.

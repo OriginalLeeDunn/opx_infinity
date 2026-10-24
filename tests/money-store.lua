@@ -60,10 +60,10 @@ function Fixture.Install(env, database)
 		if value > 9007199254740991 or value < -9007199254740991 then return Result.Err('money.tooLarge') end
 		if value < 0 and not op.allowNegative then return Result.Err('money.insufficient') end
 		op.attempt = M.Storage.NewMoneyId().value
-		local effects, guard = {}, nil
+		local effects, guard, before = {}, nil, nil
 		if build then
 			local prepared
-			prepared, effects, guard = pcall(build, op)
+			prepared, effects, guard, before = pcall(build, op)
 			if not prepared then return Result.Err('error.unavailable') end
 		end
 		local peerChanges = {}
@@ -81,7 +81,7 @@ function Fixture.Install(env, database)
 			end
 		end
 
-		local planned = M.Storage.MoneyStatements(op, effects, guard)
+		local planned = M.Storage.MoneyStatements(op, effects, guard, before)
 		if not planned.ok then return planned end
 		if guard and database and database.unitMoneyGuard and not database.unitMoneyGuard(guard) then
 			return Result.Err(guard.error)

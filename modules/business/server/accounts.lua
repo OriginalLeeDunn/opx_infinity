@@ -182,19 +182,36 @@ local function move(op, sign)
 end
 
 --- Pays a loaded character from company funds in one wallet transaction.
-function M.Accounts.PayCitizen(kind, key, citizenId, moneyType, amount, reason, opId, changes)
+function M.Accounts.PayCitizen(kind, key, citizenId, moneyType, amount, reason, opId, changes, participant)
 	local op, refused = prepare(kind, key, amount, reason, opId, citizenId, 'pay')
 	if not op then return refused end
 	local character = OPX.Api.Get('character')
 	if not character or type(character.AtomicMoney) ~= 'function' then return Result.Err('accounts.failed') end
-	local function preparePayment(context)
+	local function preparePayment(context, staged)
+		local extraBuild, why
+		if participant then
+			extraBuild, why = participant(context, staged)
+			if not extraBuild then return nil, why or 'error.unavailable' end
+		end
+		local extraPublish = context.publish
 		context.publish = function()
+			if extraPublish then pcall(extraPublish) end
 			local receipt = Store.Receipt(context.id)
 			if receipt.ok and receipt.value then
 				announce(kind, key, -op.amount, tonumber(receipt.value.balance_after), op.reason, op.id, citizenId)
 			end
 		end
-		return function(attempt) return Store.WalletStatements(attempt, kind, key, op.amount, false) end
+		return function(attempt)
+			local statements, guard = Store.WalletStatements(attempt, kind, key, op.amount, false)
+			local before
+			if extraBuild then
+				local extra, extraGuard, prefix = extraBuild(attempt)
+				before = prefix
+				for _, statement in ipairs(extra or {}) do statements[#statements + 1] = statement end
+				guard = OPX.Storage.CombineGuards(guard, extraGuard)
+			end
+			return statements, guard, before
+		end
 	end
 	if changes then
 		local inventory = OPX.Api.Get('inventory')
@@ -202,6 +219,13 @@ function M.Accounts.PayCitizen(kind, key, citizenId, moneyType, amount, reason, 
 		return inventory.AtomicTrade(citizenId, moneyType, op.amount, changes, op.reason, op.id, preparePayment)
 	end
 	return character.AtomicMoney(citizenId, moneyType, op.amount, 'add', op.reason, op.id, preparePayment)
+end
+
+--- Trusted participant for company-funded stock purchases or sale revenue.
+function M.Accounts.PrepareTrade(op, kind, key, amount, deposit)
+	local prepared, refused = prepare(kind, key, amount, op.reason, op.id, op.citizenId, 'trade')
+	if not prepared then return nil, refused.error end
+	return function(attempt) return Store.WalletStatements(attempt, kind, key, prepared.amount, deposit == true) end
 end
 
 --- One account's balance.

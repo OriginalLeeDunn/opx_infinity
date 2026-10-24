@@ -6,6 +6,7 @@
 -- item's LABEL are the operator's own words and never translated.
 
 local EN = {
+	['bar.error.payment_pending'] = 'This exchange is still being confirmed. Please wait before trying again.',
 	['bar.title'] = 'BAR',
 	['bar.row.counter'] = 'Bar counter',
 	['bar.row.stash'] = 'Back room',
@@ -80,6 +81,7 @@ local EN = {
 }
 
 local FR = {
+	['bar.error.payment_pending'] = 'Cet échange est encore en cours de confirmation. Patiente avant de réessayer.',
 	['bar.title'] = 'BAR',
 	['bar.row.counter'] = 'Comptoir',
 	['bar.row.stash'] = 'Réserve',

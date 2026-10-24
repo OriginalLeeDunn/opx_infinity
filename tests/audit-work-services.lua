@@ -96,19 +96,22 @@ assert(restored == 0, 'old job change restored the replacement character uniform
 
 local bar, barEnv, _, barCharacter, barContracts = setup('bar')
 local customerCid = 'CUSTOMER'
+local bartenderData, customerData = { citizenId = 'BARTENDER' }, { citizenId = 'CUSTOMER' }
 barCharacter.GetPlayer = function(player)
-	return { PlayerData = { citizenId = player == 7 and 'BARTENDER' or customerCid } }
+	customerData.citizenId = customerCid
+	return { PlayerData = player == 7 and bartenderData or customerData }
 end
 local charged, given, removed
-barCharacter.RemoveMoney = function(target) charged = target; return true end
-barCharacter.AddMoney = function() return true end
 barContracts.inventory.GetItemCount = function() return { ok = true, value = 1 } end
-barContracts.inventory.RemoveItem = function(target)
-	removed = target
-	coroutine.yield()
+barContracts.inventory.AtomicPeerTrade = function(seller, buyer, _, _, _, _, _, options)
+	assert(seller == 'BARTENDER' and buyer == 'CUSTOMER', 'trade lost its pinned characters')
+	coroutine.yield() -- a save fence yields before participant validation
+	local build, why = options.participant({})
+	if not build then return { ok = false, error = why } end
+	removed, charged, given = seller, buyer, buyer
 	return { ok = true }
 end
-barContracts.inventory.AddItem = function(target) given = target; return { ok = true } end
+barEnv.OPX.EnsureSession = function(player) return barEnv.OPX.Sessions[player] end
 barEnv.OPX.Now = function() return 0 end
 barEnv.OPX.Math = { Finite = function(value) return value end }
 barEnv.OPX.Spots = { ServerReach = function(value) return value end }
@@ -124,14 +127,15 @@ bar.S.venues = { venue = venue }
 bar.S.venueList = { venue }
 bar.S.items = { drink = { label = 'drink' } }
 bar.S.serveRadius, bar.S.serveReach = 5, 5
-bar.S.serve = {}
+bar.S.serve = { breakDistance = 5 }
+bar.S.reach = 5
 bar.S.billing, bar.S.money = 'direct', 'BANK'
 bar.Start()
 assert(bar.Serve(7, 8, 'drink'))
-local sale = coroutine.create(function() assert(bar.Complete('sale')) end)
+local sale = coroutine.create(function() local ok, why = bar.Complete('sale'); assert(not ok and why == 'left', tostring(why)) end)
 assert(coroutine.resume(sale))
 customerCid = 'REPLACEMENT'
 assert(coroutine.resume(sale))
-assert(removed == 'BARTENDER' and charged == 'CUSTOMER' and given == 'CUSTOMER',
+assert(removed == nil and charged == nil and given == nil,
 	'sale moved drinks or money through a recycled player slot')
 print('audit-work-services: PASS')
