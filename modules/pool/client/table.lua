@@ -5,6 +5,9 @@ local G = M.Match
 M.TableMenu = {}
 local T = M.TableMenu
 local handle, menu
+local icons = { practice = 'interact', challenge = 'flag', duel = 'person', join = 'plus',
+	resume = 'eye', acceptReset = 'refresh', declineReset = 'back', requestReset = 'refresh',
+	rack = 'refresh', finish = 'flag', leave = 'door' }
 function T.Close()
 	if handle and menu then menu.Close(handle, 'pool') end
 	handle = nil
@@ -15,7 +18,7 @@ function T.Rows(state, me)
 	local function row(action, key, extra, confirm, disabled)
 		local data = { action = action, epoch = state.epoch, revision = state.revision }
 		for k,v in pairs(extra or {}) do data[k] = v end
-		rows[#rows+1] = { id = action .. (data.mode or ''), label = locale('pool.' .. key),
+		rows[#rows+1] = { id = action .. (data.mode or ''), label = locale('pool.' .. key), icon = icons[key] or 'info',
 			description = locale('pool.' .. key .. 'Info', { shots = game.limit, target = game.target }),
 			data = data, close = true, confirm = confirm, disabled = disabled }
 	end
@@ -25,12 +28,12 @@ function T.Rows(state, me)
 		row('create', 'duel', { mode = 'duel' })
 	elseif not slot then
 		if game.mode == 'duel' and game.status == 'waiting' then row('join', 'join')
-		else rows[1] = { id = 'occupied', label = locale('pool.busy'), disabled = true } end
+		else rows[1] = { id = 'occupied', label = locale('pool.busy'), icon = 'lock', disabled = true } end
 	else
 		if state.owner == me and state.phase == 'ready' then row('resume', 'resume') end
 		if game.resetBy > 0 then
 			if game.resetBy ~= slot then row('acceptReset', 'acceptReset', nil, true)
-			else rows[#rows+1] = { id = 'pending', label = locale('pool.resetPending'), disabled = true } end
+			else rows[#rows+1] = { id = 'pending', label = locale('pool.resetPending'), icon = 'clock', disabled = true } end
 			row('declineReset', 'declineReset')
 		else row('reset', game.mode == 'duel' and game.status ~= 'waiting' and 'requestReset' or 'rack', nil, true, state.phase ~= 'ready') end
 		if game.mode ~= 'duel' or game.status == 'waiting' or game.status == 'finished' then row('finish', 'finish', nil, game.status == 'playing') end

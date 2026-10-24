@@ -140,7 +140,12 @@ local function press()
 		if not ok then cameraFailure(why); return end
 	end
 	-- Do not resume an interrupted charge or a held click after closing a menu.
-	if captured then autoAim, following, shotSeen, watching = false, false, false, false end
+	if captured then
+		-- New mode/turn ownership can arrive before the menu releases native
+		-- focus. Defer that first aim; cancel only an already active aim/charge.
+		if input.aiming then autoAim = false end
+		following, shotSeen, watching = false, false, false
+	end
 	if following and can and (shotSeen or not waiting) then
 		following, shotSeen, autoAim = false, false, true
 	end

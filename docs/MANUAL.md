@@ -1004,8 +1004,11 @@ Participants can use middle mouse to watch the overhead view during the other tu
 
 The overlay shows the mode, scores, active player, remaining solo shots and a
 smooth power gauge, and takes no focus. Right-click cancels/resumes aim; while
-cancelled the player can walk around. Capturing a menu cancels charge without
-firing and requires an explicit resume afterwards. The scoped camera and control
+cancelled the player can walk around. Capturing a menu cancels an active charge without
+firing and requires an explicit resume afterwards. A newly accepted mode or turn
+waits for the menu to release native focus before its first automatic aim; the
+brief capture during closing does not discard that pending entry. Table menu rows
+use the shared OPX glyph vocabulary for modes, reset, resume and leaving. The scoped camera and control
 leases release on loss of the seat, leaving, character unload and stop. The
 scripted camera explicitly requests **thirdPersonBody = true**, verified against
 the signed op77.152 client; if the native returns a body/options availability
