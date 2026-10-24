@@ -23,26 +23,10 @@ local Target = M.Target
 
 -- Rows sent in one registration.
 --
--- FOUR, AND THE NUMBER IS EVIDENCE RATHER THAN TASTE. It was eight, chosen so
--- that one bad row in a refused batch is easy to place -- the registry takes up
--- to 32 and refuses a batch whole. Eight turned out to be more than a loaded
--- client can register in one resume: with a yield already between every
--- registration call, the live journal still caught a client dying INSIDE a
--- single `RegisterSelf` of eight rows.
---
---   [admin] target rows, player 1: staff rows not registered:
---   modules/target/shared/model.lua:187: script execution budget exceeded
---
--- The cost is per ROW -- validation and a generation read each -- so halving the
--- batch halves the work per resume. It costs frames at registration, which
--- happens on an access change and not per tick.
---
--- TWO, NOT FOUR. Four rows measured 4,600 to 6,400 instructions a resume once
--- every grant was held -- the registry's own walks (the sweep, the limit count)
--- on top of four validations -- which is the budget's neighbourhood, not its
--- margin. Two rows and a registry that counts once per batch keep a resume
--- near a third of that. Forty rows is twenty frames, on an access change.
-local BATCH = 2
+-- One row per registration resume. With all grants enabled, two rows measured
+-- 5,139 instructions in the current registry; one keeps the same rows available
+-- at 4,173. The extra frames occur only when access changes, never per tick.
+local BATCH = 1
 
 -- Milliseconds before the first access request, then between two. A grant taken
 -- away has to reach the eye without the operator opening the menu.

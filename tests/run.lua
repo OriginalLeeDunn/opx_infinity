@@ -23,6 +23,18 @@ end
 
 local function section(name) print(('\n== %s'):format(name)) end
 
+--- Public image names and checksums; the actual pictures live in opx_images.
+function Host.ImageCatalogue()
+	local names = {}
+	local file = assert(io.open('tools/image-catalog.txt', 'r'))
+	for line in file:lines() do
+		local name = line:match('^%x+  (.+)$')
+		if name then names[name] = true end
+	end
+	file:close()
+	return names
+end
+
 --- Pumps until `ready()` answers true, or `rounds` are spent.
 -- The client scheduler runs at most four jobs per pass and rotates between
 -- them, so "one scan later" is not a fixed number of rounds -- a test that
@@ -4141,37 +4153,24 @@ do
 		table.concat(bad, ', ', 1, math.min(#bad, 5)))
 	check('the data names over fifteen hundred garments', rows > 1500, tostring(rows))
 
-	--- The .webp files in one folder, from a directory listing.
-	local function listed(folder)
-		local found = {}
-		local windows = package.config:sub(1, 1) == '\\'
-		local command = windows and ('dir /b "%s" 2>nul'):format((folder:gsub('/', '\\')))
-			or ('ls -1 "%s" 2>/dev/null'):format(folder)
-		local pipe = io.popen(command)
-		if pipe == nil then return found end
-		for line in pipe:lines() do
-			line = line:gsub('%s+$', '')
-			if line:find('%.webp$') then found[line] = true end
-		end
-		pipe:close()
-		return found
+	local present = {}
+	for name in pairs(Host.ImageCatalogue()) do
+		local picture = name:match('^clothing/(.+)$')
+		if picture then present[picture] = true end
 	end
-	for _, folder in ipairs({ 'ui/public/images/clothing', 'web/images/clothing' }) do
-		local present = listed(folder)
-		local missing, orphan = {}, {}
-		for picture in pairs(named) do
-			if not present[picture] then missing[#missing + 1] = picture end
-		end
-		for picture in pairs(present) do
-			if not named[picture] then orphan[#orphan + 1] = picture end
-		end
-		check(('every picture a row names is in %s'):format(folder), #missing == 0,
-			('%d missing, e.g. %s'):format(#missing, tostring(missing[1])))
-		check(('and %s ships nothing no row names'):format(folder), #orphan == 0,
-			('%d orphan(s), e.g. %s'):format(#orphan, tostring(orphan[1])))
+	local missing, orphan = {}, {}
+	for picture in pairs(named) do
+		if not present[picture] then missing[#missing + 1] = picture end
 	end
-	local attribution = io.open('web/images/clothing/ATTRIBUTION.md', 'r')
-	check('the pictures ship with their attribution', attribution ~= nil)
+	for picture in pairs(present) do
+		if not named[picture] then orphan[#orphan + 1] = picture end
+	end
+	check('every garment picture is in the separate image catalogue', #missing == 0,
+		('%d missing, e.g. %s'):format(#missing, tostring(missing[1])))
+	check('the garment image catalogue has no orphan pictures', #orphan == 0,
+		('%d orphan(s), e.g. %s'):format(#orphan, tostring(orphan[1])))
+	local attribution = io.open('docs/image-attribution.md', 'r')
+	check('the separate pictures retain their attribution', attribution ~= nil)
 	if attribution then attribution:close() end
 end
 
@@ -16582,18 +16581,9 @@ do
 	end
 end
 
--- ── every item picture the catalogue names is actually shipped ──────────────
--- WRITTEN AFTER LOSING TWO OF THEM. A `git add -A` on a working tree that had
--- been through three branch switches staged a deletion nobody asked for: the
--- two icons went out of the tree while `data/weapons.lua` kept naming them, and
--- the suite passed, and the deploy went out. The page falls back to a monogram
--- on a broken image, so nothing crashed and nothing said anything either.
---
--- That is the hole. A missing picture is invisible from Lua, invisible from the
--- tests and invisible in the log; the only reporter is somebody looking at the
--- slot. So the catalogue's own claim is checked against the filesystem: every
--- `IMAGE` it names must exist in the SOURCE tree the build copies from.
-section('every item picture the catalogue names is shipped')
+-- Every explicit picture name must exist in the separate CDN source catalogue.
+-- Actual bytes and hashes are checked by opx_images CI, outside the game resource.
+section('every item picture the catalogue names exists in opx_images')
 do
 	local env, _, why = boot('server')
 	check('the server boots', why == nil, why)
@@ -16604,18 +16594,8 @@ do
 	if type(inventory) == 'table' then
 		local Catalog = inventory.Catalog
 
-		-- CHECKED IN THE SOURCE, NOT IN THE BUILD, and the first version of this
-		-- test got that wrong and let the same file go missing twice.
-		-- `ui/public/images` is what a picture IS; `web/images` is where the vite
-		-- build copies it, and a file dropped into `web` alone survives exactly
-		-- until the next `npm run build` rewrites that tree. Asserting on the
-		-- output is asserting on a cache.
-		local function shipped(file)
-			local source = io.open('ui/public/images/' .. file, 'rb')
-			if source == nil then return false end
-			source:close()
-			return true
-		end
+		local pictures = Host.ImageCatalogue()
+		local function shipped(file) return pictures[file] == true end
 
 		local named, missing = 0, {}
 		for _, name in ipairs(Catalog.Names()) do
@@ -16631,7 +16611,7 @@ do
 		end
 
 		check('some items name a picture of their own', named > 0, tostring(named))
-		check('and every one of those files is in ui/public/images', #missing == 0,
+		check('and every picture is listed in the separate image catalogue', #missing == 0,
 			table.concat(missing, ', '))
 	end
 end
@@ -36678,8 +36658,8 @@ do
 		if #path > ROOM - MARGIN and #over < 6 then over[#over + 1] = ('%s (%d)'):format(path, #path) end
 	end
 	check('the resource\'s files are listed', #shipped > 500, #shipped)
-	check('and the walk reached web/, the wardrobe pictures included',
-		underWeb > 1000 and pictures > 1000, ('%d under web/, %d pictures'):format(underWeb, pictures))
+	check('the walk reached web/ and no wardrobe image is bundled',
+		underWeb > 0 and pictures == 0, ('%d under web/, %d pictures'):format(underWeb, pictures))
 	check(('none is longer than %d, %d short of the %d a client can see'):format(ROOM - MARGIN, MARGIN, ROOM),
 		#over == 0, #over > 0 and table.concat(over, ' ') or ('the longest: %s (%d)'):format(longest, #longest))
 end

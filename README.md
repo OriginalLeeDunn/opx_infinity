@@ -44,6 +44,15 @@ It is built around three rules:
 - **Never a name to a stranger.** A character's name is learnt in roleplay; no plate,
   chat line, menu or payload reveals it.
 
+## Images
+
+Inventory and garment pictures and their upload scripts live in
+[opx_images](https://github.com/opx77-framework/opx_images). Run its Windows or
+Linux script with your Fivemanage API key, then set the account key in the
+framework's **server-only** `config/images.lua`. OPX resolves catalogue file names
+automatically. Without this setup, no inventory or garment pictures are displayed.
+See [image hosting](docs/MANUAL.md#image-cdn) for the required Open77 HTTP setting.
+
 ## Features
 
 - **Characters and economy**: accounts and characters, cash and bank, jobs and gangs
