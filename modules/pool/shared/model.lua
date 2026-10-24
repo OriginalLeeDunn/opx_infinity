@@ -1,7 +1,7 @@
 --- Bounded geometry and wire vocabulary; pure in both sandboxes.
 -- @author dop42
 local M = OPX.Modules.Get('pool')
-M.Model = { RADIUS = 0.028575, BALLS = 3, STEP = 1 / 120, DELAY = 100 }
+M.Model = { RADIUS = 0.028575, BALLS = 16, STEP = 1 / 120, DELAY = 100 }
 local Model = M.Model
 function Model.Number(value, low, high)
 	return type(value) == 'number' and value == value and value >= low and value <= high and value or nil
@@ -42,6 +42,16 @@ function Model.Models()
 		local path = raw[name]
 		if type(path) ~= 'string' or #path == 0 or #path > 256 or path:find('%c') then return nil end
 		result[name] = path
+	end
+	result.objects = {}
+	local used = {}
+	if raw.objects ~= nil and (type(raw.objects) ~= 'table' or #raw.objects ~= Model.BALLS-1) then return nil end
+	for number = 1, Model.BALLS-1 do
+		local path = raw.objects and raw.objects[number] or
+			('base\\environment\\decoration\\recreation\\sports\\ball\\ball_' .. string.char(98+number) .. '_billiard.mesh')
+		if type(path) ~= 'string' or #path == 0 or #path > 256 or path:find('%c') or used[path] then return nil end
+		used[path] = true
+		result.objects[number] = path
 	end
 	result.stickYaw = Model.Number(raw.stickYaw, -360, 360) or 0
 	result.stickOffset = Model.Number(raw.stickOffset, 0.2, 2) or 0.7

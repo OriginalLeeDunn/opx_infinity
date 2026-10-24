@@ -104,7 +104,9 @@ local function step()
 				else phase, readyAt, revision, aim.visible = 'ready', ticks*1000/120, revision+1, false end
 			end
 		end
-		frames[#frames+1] = P.Frame(balls, ticks*1000/120)
+		-- Keep fixed-step physics at 120 Hz; two endpoint samples per 50 ms
+		-- update bound client validation/transport cost for all sixteen balls.
+		if #frames == 0 or _ == 6 then frames[#frames+1] = P.Frame(balls, ticks*1000/120) end
 	end
 	while sounds[1] and ticks*1000/120-sounds[1].time > 250 do table.remove(sounds, 1) end
 	publish(frames)

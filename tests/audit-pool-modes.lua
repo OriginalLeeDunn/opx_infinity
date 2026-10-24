@@ -12,6 +12,7 @@ local env=setmetatable({OPX={Modules={Get=function() return M end},Config={MODUL
 M.Event={STATE='state',NOTICE='notice'};M.Settings={SOLO_SHOTS=2,DUEL_TARGET=2}
 for _,file in ipairs({'shared/model','shared/match','server/physics','server/main'}) do assert(loadfile('modules/pool/'..file..'.lua','t',env))() end
 local G,P=M.Match,M.Physics
+local function clearRack() local result={};for i=2,M.Model.BALLS do result[i]=false end;return result end
 local original=P.Step
 P.Step=function(balls,spec,dt,contact)
  if result then
@@ -72,7 +73,7 @@ assert(game.game.status=='playing' and game.game.shots==1)
 assert(call(7,'shoot',{angle=0,power=.5}));result={};game=step()
 assert(game.game.status=='finished' and game.game.reason=='limit' and game.game.winner==0,'solo shot limit missing')
 assert(call(7,'reset'));game=step();assert(game.game.mode=='challenge' and game.game.shots==0)
-assert(call(7,'shoot',{angle=0,power=.5}));result={[2]=false,[3]=false};game=step()
+assert(call(7,'shoot',{angle=0,power=.5}));result=clearRack();game=step()
 assert(game.game.winner==1 and game.game.reason=='clear','solo clear failed')
 assert(call(7,'finish'));step();assert(call(7,'create',{mode='duel'}));step();assert(call(8,'watch'));step();assert(call(8,'join'));step()
 sessions[7]={};game=step()
@@ -80,8 +81,10 @@ assert(game.game.status=='finished' and game.game.winner==2,'recycled identity r
 assert(not call(7,'reset'),'new session controlled old seat')
 assert(call(8,'finish'));step();assert(call(8,'create',{mode='practice'}));game=step()
 assert(call(8,'shoot',{angle=0,power=.5}));result={[2]=false,[3]=false};game=step()
+assert(game.phase=='ready' and game.game.scores[1]==2 and game.frames[2].balls[16][3],'two pockets cleared the whole fifteen-ball rack')
+assert(call(8,'shoot',{angle=0,power=.5}));result=clearRack();game=step()
 assert(game.phase=='rolling','clear did not preserve a smooth between-rack interval')
-now=now+400;game=step();assert(game.phase=='ready' and game.game.scores[1]==2,'practice did not rerack/preserve stats')
+now=now+400;game=step();assert(game.phase=='ready' and game.game.scores[1]==15,'practice did not rerack/preserve stats')
 assert(call(8,'reset'));game=step();assert(game.game.scores[1]==0)
 -- Closed metadata rejects impossible nested identities/counts before playback.
 local corrupt=G.New('duel',7);assert(G.Join(corrupt,8));corrupt.players[2]=7;assert(not G.Read(corrupt))

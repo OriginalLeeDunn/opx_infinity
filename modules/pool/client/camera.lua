@@ -34,16 +34,16 @@ function C.Pose(spec, points, angle, overview, height)
 	local c, s = math.cos(angle), math.sin(angle)
 	local ball = points[1]
 	if overview then
-		local at = Model.World(spec, -c*0.45, -s*0.45)
+		-- A stable broadside view: fit the full cloth instead of hovering over it.
+		local distance = math.max(spec.halfWidth+1.8, spec.halfLength*1.45+spec.halfWidth)
+		local at = Model.World(spec, 0, -distance)
 		at.z = at.z+(Model.Number((M.Settings or {}).OVERVIEW_HEIGHT, 1.2, 2.4) or 1.65)
-		local aim = Model.World(spec, 0, 0)
-		return { position = at, target = aim, fov = 72 }
+		return { position = at, target = Model.World(spec, 0, 0), fov = 60 }
 	end
-	local at = Model.World(spec, ball[1]-c*1.25-s*0.14, ball[2]-s*1.25+c*0.14)
+	-- The ball is the exact look-at point, on the shot axis with no shoulder offset.
+	local at = Model.World(spec, ball[1]-c*1.25, ball[2]-s*1.25)
 	at.z = at.z+height
-	local aim = Model.World(spec, ball[1]+c*0.45, ball[2]+s*0.45)
-	aim.z = aim.z+0.015
-	return { position = at, target = aim, fov = 52 }
+	return { position = at, target = Model.World(spec, ball[1], ball[2]), fov = 52 }
 end
 function C.Update(spec, points, angle, overview, height, now)
 	local wanted = C.Pose(spec, points, angle, overview, height)

@@ -19,10 +19,28 @@ for _,file in ipairs({'shared/model','client/camera','client/guide','client/inpu
 local C,G,I=M.Camera,M.Guide,M.Input
 local spec={x=100,y=50,z=10,yaw=90,halfLength=1.4,halfWidth=0.68}
 local balls={{0,0,true},{0.5,0,true},{0.8,0.3,true}}
+for index=4,M.Model.BALLS do balls[index]={0,0,false} end
 local p=C.Pose(spec,balls,0,false,0.5)
-assert(math.abs(p.position.x-99.86)<1e-9 and math.abs(p.position.y-48.75)<1e-9 and p.position.z==10.5,'cue camera not behind white ball in world frame')
-assert(p.target.y>50 and p.position.z>p.target.z,'cue view does not look down the shot')
-assert(C.Pose(spec,balls,0,true,0.5).position.z==11.65,'overhead camera was not lowered')
+assert(math.abs(p.position.x-100)<1e-9 and math.abs(p.position.y-48.75)<1e-9 and p.position.z==10.5,'cue camera not behind white ball in world frame')
+assert(p.target.x==100 and p.target.y==50 and p.target.z==10,'white ball is not exactly centered')
+assert(C.Pose(spec,balls,0,true,0.5).position.z==11.65,'side camera height changed')
+-- Project the cloth's corners into a conservative 4:3 camera frustum.
+for _,size in ipairs({{0.9,0.4},{1.4,0.68},{2,1}}) do
+ for _,yaw in ipairs({0,90,179}) do
+  local tableSpec={x=100,y=50,z=10,yaw=yaw,halfLength=size[1],halfWidth=size[2]}
+  local pose=C.Pose(tableSpec,balls,2,true,0.5)
+  local dx,dy,dz=pose.target.x-pose.position.x,pose.target.y-pose.position.y,pose.target.z-pose.position.z
+  local n=math.sqrt(dx*dx+dy*dy+dz*dz);dx,dy,dz=dx/n,dy/n,dz/n
+  local h=math.sqrt(dx*dx+dy*dy);local rx,ry=dy/h,-dx/h
+  local ux,uy,uz=-dz*ry,dz*rx,dx*ry-dy*rx
+  local tangent=math.tan(math.rad(pose.fov/2))
+  for _,x in ipairs({-size[1],size[1]})do for _,y in ipairs({-size[2],size[2]})do
+   local point=M.Model.World(tableSpec,x,y);local a,b,c=point.x-pose.position.x,point.y-pose.position.y,point.z-pose.position.z
+   local depth=a*dx+b*dy+c*dz
+   assert(depth>0 and math.abs(a*rx+b*ry)<depth*tangent*4/3 and math.abs(a*ux+b*uy+c*uz)<depth*tangent,'side view clips a cloth corner')
+  end end
+ end
+end
 assert(C.Update(spec,balls,0,false,0.5,0) and current==1)
 assert(calls[1][2].thirdPersonBody==true,'scripted view omitted the full body request')
 assert(C.Check())

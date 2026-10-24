@@ -8,11 +8,16 @@ M.Physics = {}
 local P = M.Physics
 local DRAG, RESTITUTION, RAIL, EPS = 0.7, 0.97, 0.82, 1e-8
 function P.Rack(spec)
-	return {
-		{ x = -spec.halfLength * 0.5, y = 0, vx = 0, vy = 0, alive = true },
-		{ x = spec.halfLength * 0.35, y = -R * 1.05, vx = 0, vy = 0, alive = true },
-		{ x = spec.halfLength * 0.35, y = R * 1.05, vx = 0, vy = 0, alive = true },
-	}
+	local balls = { { x = -spec.halfLength*0.5, y = 0, vx = 0, vy = 0, alive = true } }
+	-- Five rows, a tiny gap to avoid overlapping contact chains at the break.
+	local spacing = R*2.02
+	for row = 0, 4 do
+		for column = 0, row do
+			balls[#balls+1] = { x = spec.halfLength*0.35+row*spacing*math.sqrt(3)/2,
+				y = (column-row/2)*spacing, vx = 0, vy = 0, alive = true }
+		end
+	end
+	return balls
 end
 local function hitTime(x, y, vx, vy, radius, limit)
 	local c = x*x + y*y - radius*radius
@@ -75,7 +80,7 @@ function P.Step(balls, spec, dt, contact)
 		remaining = remaining - soon
 		if not kind then break end
 		contacts = contacts + 1
-		if contacts > 32 then
+		if contacts > 128 then
 			for _, ball in ipairs(balls) do ball.vx, ball.vy = 0, 0 end
 			return false
 		end

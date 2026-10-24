@@ -1,4 +1,4 @@
---- Closed three-ball modes and pure scoring; the server alone applies them.
+--- Closed full-rack modes and pure scoring; the server alone applies them.
 -- @author dop42
 local M = OPX.Modules.Get('pool')
 local Number = M.Model.Number

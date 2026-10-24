@@ -48,13 +48,24 @@ assert(O.Modules.IsRunning('pool'),'enabled prototype failed to boot')
 O.Modules.Get('character').PlayerData={citizenId='POOL_TEST'}
 M.Client.Watch()
 local now=O.Now()
+local function wireBalls()
+ local result={{-0.6,0,true}}
+ for row=0,4 do for column=0,row do
+  result[#result+1]={0.35+row*0.05,(column-row/2)*0.058,true}
+ end end
+ return result
+end
 local function packet(seq,time,owner)
 	return {epoch=1,sequence=seq,revision=1,owner=owner or 7,phase='ready',readyAt=0,
-		frames={{time=time,balls={{-0.6,0,true},{0.4,0,true},{0.5,0.2,true}}}}}
+		frames={{time=time,balls=wireBalls()}}}
 end
 M.Client.Receive(packet(1,0))
 M.Client.Draw(); M.Client.Input()
-assert(creates==3 and state.allowShoot==false and state.allowAim==false,'practice did not render/hold weapons')
+local drawnModels={}
+for _,prop in pairs(props)do drawnModels[prop.model]=true end
+local distinct=0;for _ in pairs(drawnModels)do distinct=distinct+1 end
+assert(distinct==16,'object balls reused the same yellow model')
+assert(creates==16 and state.allowShoot==false and state.allowAim==false,'practice did not render/hold weapons')
 M.Client.Frame(); M.Client.Guide(); M.Client.Strip()
 assert(cameraHeld and state.freezePosition==true and guideShown,'entry did not arm a camera/guide')
 control.input.down.V=true;control.Advance(20);M.Client.Frame();control.input.down.V=false
@@ -66,24 +77,25 @@ local function measured(fn)
 	debug.sethook(function() cost=cost+100 end,'',100)
 	local ok,why=pcall(fn)
 	debug.sethook()
-	assert(ok,why); assert(cost<5000,'client resume exceeds prototype budget: '..cost)
+	assert(ok,why); assert(cost<5000,'client resume exceeds full-rack budget: '..cost)
 	return cost
 end
 local worst=0
 local burst=packet(2,50)
-burst.epoch=2; burst.frames={}
-for sample=0,6 do burst.frames[#burst.frames+1]={time=sample*1000/120,balls={{-0.6,0,true},{0.4,0,true},{0.5,0.2,true}}} end
+burst.epoch=2; burst.frames={};burst.game=M.Match.New('practice',7);burst.sounds={}
+for index=1,12 do burst.sounds[index]={id=index,kind='ball',x=0,y=0,time=0,volume=.5} end
+for sample=0,1 do burst.frames[#burst.frames+1]={time=sample*50,balls=wireBalls()} end
 worst=math.max(worst,measured(function() M.Client.Receive(burst) end))
 local reset=packet(1,0); reset.epoch=3; M.Client.Receive(reset)
 for _=1,100 do worst=math.max(worst,measured(M.Client.Frame)) end
-assert(creates==4 and moves>=300 and cameraCreated==2,'movement respawned props or camera')
+assert(creates==17 and moves>=1600 and cameraCreated==2,'movement respawned props or camera')
 -- Right click cancels the automatically armed view; another press arms it.
 control.input.down.mouse2=true; M.Client.Frame()
 assert(not cameraHeld and state.freezePosition==false,'cancel kept camera/body frozen')
 control.input.down.mouse2=false; M.Client.Frame()
 control.input.down.mouse2=true; M.Client.Frame()
 assert(state.freezeRotation==true and state.freezePosition==true and cameraHeld,'aim failed to acquire camera/position')
-M.Client.Draw(); assert(creates>=4,'cue missing')
+M.Client.Draw(); assert(creates>=17,'cue missing')
 control.input.down.mouse2=false; control.input.down.mouse1=true; M.Client.Input()
 control.Advance(1200); control.input.captured=true; M.Client.Input(); M.Client.Draw()
 assert(state.freezeRotation==false and state.freezePosition==false and not cameraHeld and not guideShown,'chat capture kept view/guide/body frozen')
@@ -164,7 +176,7 @@ M.Stop()
 -- A just-created native entity may not be transformable until streaming ends.
 M.Render.Reset(); failed=false
 local geometry={x=100,y=10,z=1,yaw=0}
-local points={{-0.6,0,true},{0.4,0,true},{0.5,0.2,true}}
+local points=wireBalls()
 assert(M.Render.Draw(geometry,points,false,0,0))
 local initial=creates
 refused='projection_pending'

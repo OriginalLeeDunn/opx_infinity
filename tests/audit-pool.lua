@@ -50,10 +50,37 @@ for _=1,1400 do
 	check(energy <= previous+1e-7, 'energy created'); previous=energy
 end
 check(not P.Moving(balls), 'shot never settled')
+-- A full triangle fits every accepted table and never starts overlapped.
+for _,size in ipairs({{0.9,0.4},{1.4,0.68},{2,1}}) do
+ local tableSpec={halfLength=size[1],halfWidth=size[2]}
+ local rack=P.Rack(tableSpec);check(#rack==16,'full rack is not fifteen objects plus white')
+ for i,a in ipairs(rack) do
+  check(math.abs(a.x)+Model.RADIUS<tableSpec.halfLength and math.abs(a.y)+Model.RADIUS<tableSpec.halfWidth,'rack outside cloth')
+  for j=i+1,#rack do local b=rack[j];check((a.x-b.x)^2+(a.y-b.y)^2>(Model.RADIUS*2)^2,'overlapping starting balls') end
+ end
+end
+-- Breaks through a dense triangle remain finite, bounded and dissipative.
+for _,angle in ipairs({-0.1,-0.025,0,0.025,0.1}) do
+ for _,power in ipairs({0.2,0.6,1}) do
+  local rack=P.Rack(spec);check(P.Shoot(rack,angle,power),'break refused')
+  local previous=math.huge
+  for tick=1,1000 do
+   check(P.Step(rack,spec,Model.STEP),'full-rack break exceeded contact ceiling')
+   local energy=0
+   for _,b in ipairs(rack) do
+    check(b.x==b.x and b.y==b.y and math.abs(b.x)<=spec.halfLength and math.abs(b.y)<=spec.halfWidth,'break escaped table')
+    energy=energy+b.vx*b.vx+b.vy*b.vy
+   end
+   check(energy<=previous+1e-7,'full-rack break created energy');previous=energy
+   if not P.Moving(rack) then break end
+  end
+  check(not P.Moving(rack),'full-rack break never settled')
+ end
+end
 -- Delayed playback must be smooth, ordered and bounded, including visibility.
 local function packet(epoch,seq,t,x,alive)
-	return { epoch=epoch,sequence=seq,revision=1,owner=7,readyAt=0,phase='ready',
-		frames={ {time=t,balls={{x,0,alive},{0.5,0,true},{0.5,0.2,true}}} } }
+ local frame=P.Frame(P.Rack(spec),t);frame.balls[1]={x,0,alive}
+ return {epoch=epoch,sequence=seq,revision=1,owner=7,readyAt=0,phase='ready',frames={frame}}
 end
 local buffer=B.New()
 check(B.Push(buffer,packet(1,1,0,0,true),10000), 'initial playback')
@@ -93,6 +120,9 @@ M.Server.Step(); players[8].snapshot.bucket=1; M.Server.Step()
 check(packets[8].closed==true,'bucket change retained spectator projection')
 players[8].snapshot.bucket=0
 M.Server.Step(); local state=packets[7]
+check(#state.frames==2 and #state.frames[1].balls==16,'wire packet omitted full-rack endpoints')
+local Host=dofile('tests/host.lua')
+check(Host.PayloadNodes(state)<Host.MAX_PAYLOAD_NODES,'full-rack packet exceeds transport budget')
 local command={epoch=state.epoch,revision=state.revision,angle=0,power=1}
 check(not request(8,'shoot',command),'nonowner shot accepted')
 check(request(7,'aim',{epoch=state.epoch,revision=state.revision,angle=0,power=0,visible=true}),'valid aim')
@@ -122,6 +152,9 @@ assert(loadfile('config/pool.lua','t',env))()
 local config=env.OPX.Config.MODULES.pool
 check(Model.Table()==nil,'unverified preset enabled by default')
 local mapped=Model.Models()
+check(#mapped.objects==15,'missing object ball models')
+local distinct={}
+for _,path in ipairs(mapped.objects) do check(not distinct[path] and path:match('ball_[c-q]_billiard%.mesh$'),'duplicate/non-billiard model');distinct[path]=true end
 check(mapped.cue=='recreation.tent' and mapped.object=='recreation.sleeping_bag' and mapped.stick=='recreation.gym_equipment','asset profile mapping mismatch')
 local count=0
 for key in pairs(config.PRESETS) do
@@ -134,4 +167,4 @@ local coyote=Model.Table()
 check(coyote.x==-1247.944 and coyote.z==13.263 and coyote.halfLength==1.4,'floor height used as ball centre')
 config.TABLE.preset='missing'
 check(Model.Table()==nil,'unknown preset did not fail closed')
-print('pool prototype:',checks,'physics, playback, input and server-authority checks passed')
+print('pool full rack:',checks,'physics, playback, input and server-authority checks passed')

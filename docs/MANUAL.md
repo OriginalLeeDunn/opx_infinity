@@ -948,12 +948,18 @@ Contract `bar` v1 (server): `Venues()`, `Items()`, `DrunkLevel(player)`. Bus:
 ### Pool
 
 `modules/pool` + `config/pool.lua` offers three original modes using one white
-cue ball and two yellow object balls. Cooked models, recorded audio and cleanup
+cue ball and fifteen distinct vanilla object balls, arranged in a five-row triangle.
+The object balls use the game’s `ball_c_billiard.mesh` through `ball_q_billiard.mesh`
+models via the documented [raw mesh prop backend](https://open2077.net/docs/props).
+An optional `MODELS.objects` array supplies exactly fifteen model paths. Existing
+configs without that field receive the full vanilla set automatically. Cue/white
+hosts, recorded audio and cleanup
 patches live in the separate `opx_pool_assets` resource. Table actions use menu-wide
 `closeOnSelect`, so selecting a mode dispatches its command before releasing
 focus. Confirmation submenus dispatch only their confirmed selection. The modes
 have no wagers,
-XP or money rewards, spin, numbered-ball families or persisted match records.
+XP or money rewards, spin, full eight-ball group/black-ball rules or persisted
+match records. All fifteen object balls score equally in the existing points duel.
 
 `TABLE.enabled` ships false. Survey a real, unobstructed table before enabling it:
 `x/y/z` are the **ball centres above the cloth**, not the floor; `halfLength` and
@@ -975,21 +981,24 @@ in place; inspect the client ArchiveXL log. The gameplay module never deletes
 another resource's props or world nodes.
 
 The eye opens **Table and game modes**. Choose **Free practice** (unlimited
-shots, automatic rerack after both yellows are pocketed), **Solo challenge**
-(clear both within `SOLO_SHOTS`, default 10), or create a **Two-player duel**.
+shots, automatic rerack after all fifteen object balls are pocketed), **Solo challenge**
+(clear all fifteen within `SOLO_SHOTS`, default 10), or create a **Two-player duel**.
 A second nearby player chooses **Join the duel**; this starts the game. A solo
 challenge ends on a clear or the shot limit; scratching while pocketing the last
-yellow loses the challenge. Scores count pockets, with a one-point scratch penalty
+object ball loses the challenge. Scores count pockets, with a one-point scratch penalty
 floored at zero. Duel target is `DUEL_TARGET` (default 5): a pocket retains the
-turn, a miss or scratch passes it, and the two yellows rerack when cleared.
+turn, a miss or scratch passes it, and the fifteen object balls rerack when cleared.
 Only the server's physical outcomes change these scores and turns.
 
 The current shooter automatically gets a camera behind the white ball. Mouse
 movement aims; **Shift** gives fine control. Hold/release left-click to charge/fire.
-**Middle mouse** toggles the overhead view; V remains available to inventory.
-The wheel adjusts cue-view height. The overhead default is now **1.65 m** above
-ball centres (`OVERVIEW_HEIGHT`, range 1.2–2.4), with a wider lens to keep the
-cloth framed. A small lateral cue-camera offset keeps the shaft visible. The
+**Middle mouse** toggles the side view; V remains available to inventory.
+The wheel adjusts cue-view height. The cue camera lies directly on the shot axis
+and targets the white ball itself, centering it without a shoulder offset. The
+shot-follow camera shows the cloth from its long side and targets the table centre.
+Its distance grows with the table dimensions to fit all corners, including on 4:3
+screens. `OVERVIEW_HEIGHT` retains its name for config compatibility and now sets
+the side-view elevation (default **1.65 m**, range 1.2–2.4). The
 queue sits behind the white ball, retracts with charge and follows through for
 220 ms after release. All rendered balls/queue explicitly request `collision =
 false`, `physics = "none"`, `visible = true`; ball contacts remain server simulation.
@@ -1003,7 +1012,7 @@ until the balls stop. **Backspace** leaves at any time. Leaving, dying, changing
 character/session, changing bucket or moving more than 6 m away forfeits an active
 duel; the shooter must stay within 3.5 m. Unfilled lobbies expire after two minutes,
 finished results free the table after 30 seconds. Spectators cannot change a game.
-Participants can use middle mouse to watch the overhead view during the other turn.
+Participants can use middle mouse to watch the side view during the other turn.
 
 The overlay shows the mode, scores, active player, remaining solo shots and a
 smooth power gauge, and takes no focus. Right-click cancels/resumes aim; while
@@ -1038,9 +1047,9 @@ presentation features, not new permissions to decide shots or outcomes.
 
 The server owns all ball coordinates, collisions, pockets and scratch recovery.
 Its fixed 120 Hz solver advances to swept ball/rail/pocket contacts, with a bounded
-contact count and dissipative collisions/friction. Six timestamped samples are
-sent every 50 ms to valid nearby watchers. Clients keep at most 40 samples and
-interpolate 100 ms behind the stream; they never extrapolate or decide outcomes.
+contact ceiling of 128 per fixed tick and dissipative collisions/friction. Two
+timestamped endpoint samples are sent every 50 ms to valid nearby watchers.
+Clients keep at most 40 samples and interpolate 100 ms behind the stream; they never extrapolate or decide outcomes.
 Creation, joining, shots and resets bind to the viewed epoch/revision. Reset votes
 and scores remain tied to the two original character/session tickets. Shot and
 rack requests carry the current epoch and ready revision. Old, duplicate,

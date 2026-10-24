@@ -21,7 +21,7 @@ OPX.Config.MODULES.pool = {
 	},
 	SENSITIVITY = 0.0018, -- radians per physical mouse count
 	CHARGE_SECONDS = 1.8,
-	OVERVIEW_HEIGHT = 1.65, -- metres above ball centres
+	OVERVIEW_HEIGHT = 1.65, -- metres above ball centres for the side camera
 	SOLO_SHOTS = 10,
 	DUEL_TARGET = 5,
 	AUDIO_VOLUME = 0.65, -- 0 mutes the recorded table contacts
@@ -30,7 +30,9 @@ OPX.Config.MODULES.pool = {
 	-- Do not use them as tents, sleeping bags or gym equipment on this world.
 	MODELS = {
 		cue = 'recreation.tent',
-		object = 'recreation.sleeping_bag',
+		object = 'recreation.sleeping_bag', -- retained legacy profile field
+		-- Object balls use the fifteen vanilla ball_c..ball_q meshes by default.
+		-- Optional objects = { ... } must name exactly fifteen distinct models.
 		stick = 'recreation.gym_equipment',
 		-- Host-specific heading/pivot calibration, in degrees/metres.
 		stickYaw = 0, stickOffset = 0.7,

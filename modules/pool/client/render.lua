@@ -5,12 +5,13 @@ local Model = M.Model
 M.Render = {}
 local R = M.Render
 local ids, stick, created, failure, stroke = {}, nil, {}, nil, nil
+local models
 function R.Clear()
 	for index, id in pairs(ids) do Open77.props.remove(id); ids[index] = nil end
 	if stick then Open77.props.remove(stick); stick = nil end
 	created, stroke = {}, nil
 end
-function R.Reset() R.Clear(); failure = nil end
+function R.Reset() R.Clear(); failure = nil; models = Model.Models() end
 local function fail(why)
 	if not failure then
 		failure = tostring(why)
@@ -39,7 +40,7 @@ function R.Strike(spec, positions, angle, power)
 	stroke = { at = OPX.Now(), point = { positions[1][1], positions[1][2], true }, angle = angle, power = power }
 end
 function R.StickTransform(spec, ball, angle, power, forward)
-	local models = Model.Models()
+	models = models or Model.Models()
 	local distance = math.max(0.2, models.stickOffset + power*0.35-(forward or 0))
 	local at = Model.World(spec, ball[1]-math.cos(angle)*distance, ball[2]-math.sin(angle)*distance)
 	at.z = at.z+0.006
@@ -47,13 +48,13 @@ function R.StickTransform(spec, ball, angle, power, forward)
 end
 function R.Draw(spec, positions, aiming, angle, power)
 	if failure then return false end
-	local models = Model.Models()
+	models = models or Model.Models()
 	if not models then return fail('invalid model configuration') end
 	for index, ball in ipairs(positions) do
 		if ball[3] then
 			local position = Model.World(spec, ball[1], ball[2])
 			if not ids[index] then
-				local id, why = make(index == 1 and models.cue or models.object, position)
+				local id, why = make(index == 1 and models.cue or models.objects[index-1], position)
 				if not id then return fail(why) end
 				ids[index] = id
 			elseif not move(ids[index], { position = position }) then return false end
