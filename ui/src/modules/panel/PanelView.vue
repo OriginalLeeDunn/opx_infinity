@@ -892,8 +892,8 @@ const moreToLoad = computed(() => {
   return tiles.entries.length < slider.count
 })
 
-/** The garment's picture. `imageFromFile` is the one place the `images/` base lives --
-    `ui/public/images` is the source and `web/images` the build's copy of it -- so this
+/** The garment's picture. `imageFromFile` resolves names against the server's
+    public CDN map, so this
     borrows it rather than writing a second copy of the path. The garments have a
     folder of their own under it, so a garment file can never collide with an item's.
     The file name is the one Lua sent; see `Tiles`. */
@@ -903,8 +903,8 @@ function art(name: string, file: string): string {
 
 /** A picture that will not load, recorded once so every box holding that record draws
     the monogram from then on instead of asking for the file again. With the garment
-    pictures shipped this is the rare path -- a file named in the data but missing
-    from `web/images/clothing` -- and the grid still works when it is taken. */
+    pictures on the CDN this handles a file named in the data but missing
+    from the image CDN -- and the grid still works when it is taken. */
 function artBroken(name: string): void {
   broken[name] = true
 }
@@ -1430,7 +1430,7 @@ function filter(value: string): void {
             >
               <span class="tile-art">
                 <img
-                  v-if="box.image && !broken[box.name]"
+                  v-if="box.image && art(box.name, box.image) && !broken[box.name]"
                   :src="art(box.name, box.image)"
                   alt=""
                   draggable="false"

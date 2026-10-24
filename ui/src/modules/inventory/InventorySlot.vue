@@ -201,7 +201,7 @@ function onBroken(): void {
   if (props.stack) emit('broke', props.stack.name)
 }
 
-const showArt = computed(() => props.stack !== null && !props.broken.has(props.stack.name))
+const showArt = computed(() => props.stack !== null && image.value !== '' && !props.broken.has(props.stack.name))
 </script>
 
 <template>

@@ -21,8 +21,8 @@ import { corners } from '@/stores/corners'
  *
  * IT HOLDS NO CATALOGUE. The grid resolves a picture out of the catalogue it was
  * sent; this layer has none, so Lua resolves the five rows and sends the label,
- * the count and the catalogue's own file name with them. `imageFromFile` is the
- * one place the `images/` base lives, shared with the grid.
+ * the count and the catalogue's own file name with them. `imageFromFile` shares
+ * the server-provided CDN lookup with the grid.
  *
  * IT TAKES NO POINTER AND NO KEYBOARD. It is on the overlay layer, which is
  * `pointer-events: none` for the whole layer, and nothing here re-enables it.

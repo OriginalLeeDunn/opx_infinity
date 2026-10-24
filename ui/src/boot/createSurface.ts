@@ -7,6 +7,7 @@ import { configureFocus } from '@/bridge/focus'
 import { configureRpc } from '@/bridge/rpc'
 import { setStrings } from '@/stores/ui'
 import { applyLoading } from '@/stores/loading'
+import { applyImages } from '@/stores/images'
 import { applyTheme } from '@/design-system/theme'
 import '@/design-system/fonts.css'
 import '@/design-system/tokens.css'
@@ -63,6 +64,8 @@ export function createSurface(options: SurfaceOptions): void {
   // go, and the properties are written before the first module paints if Lua
   // already has the answer in hand.
   subscribe('opx:theme:set', applyTheme)
+  subscribe('opx:images:set', applyImages)
+  emit('opx:images:ready', {})
 
   // The other half of the handshake the rest of the surface uses: Lua wires
   // `opx:<module>:ready` for every declared module when it builds the page, and

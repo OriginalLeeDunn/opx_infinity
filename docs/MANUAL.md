@@ -1774,6 +1774,56 @@ harness. When you write one, make it fail on purpose once before you trust it.
 
 ---
 
+## Image CDN
+
+Inventory, hotbar and garment pictures and their upload scripts live in the
+separate [`opx_images`](https://github.com/opx77-framework/opx_images) repository.
+All pictures are under its `images/` directory, with garments in
+`images/clothing/`. No inventory or garment pictures are bundled in the framework.
+
+1. Clone `opx_images` and install Python 3.10+.
+2. From **that repository**, run `bash upload-images.sh` on Linux or
+   `upload-images.bat` on Windows. Enter the Fivemanage key when prompted.
+   The uploader recursively scans every file under `images/`, uploads new or
+   changed content and reuses unchanged uploads. It never saves the key.
+3. Set the same account's key in the framework's **server-only**
+   `config/images.lua` (`API_KEY`). It is never loaded by a client.
+4. Enable Open77's outbound HTTP bridge in `server.jsonc`, preserving any hosts
+   already required by your other resources:
+
+   ```jsonc
+   "http": {
+     "enabled": true,
+     "allowedHosts": ["api.fivemanage.com"],
+     "timeoutSeconds": 10,
+     "maxResponseBytes": 1048576
+   }
+   ```
+
+5. Restart OPX. Catalogue entries remain file names (`IMAGE = 'water.png'`),
+   with no manual URL edits and no framework rebuild.
+
+Both components need a key: `opx_images` uploads, and `opx_infinity` reads the
+account catalogue. Players receive only a cached public name-to-URL map. The
+server reads all Fivemanage API pages at startup and every five minutes, publishes
+only complete snapshots, and keeps the previous catalogue if a refresh fails.
+Unchanged snapshots are not resent. No API call is made when opening inventory or
+displaying an item. UI delivery uses eight-row packets with a yield between them;
+the complete snapshot replaces the visible map atomically.
+
+The uploader records relative names, checksums and upload timestamps in file
+metadata. The newest upload wins for duplicate names, independently of API order.
+A reverted file is uploaded again if its older content is no longer the active
+version. Old CDN files are never automatically deleted. Storage and bandwidth
+follow your Fivemanage plan. Keep only image files under `images/`; all its
+subdirectories are included, and files above 16 MiB are refused.
+
+Fivemanage setup is required to display these pictures. Without it, or when an
+individual picture fails, OPX uses its existing text monograms. There is no local
+image mode. Actual account uploads and in-game rendering still need validation
+with your own key. Credits are retained in
+[`docs/image-attribution.md`](image-attribution.md) and the asset repository.
+
 ## Deploying
 
 Over SSH to the test server, then restart, then read the journal back — in the same

@@ -197,6 +197,7 @@ shared_script "config/admin.lua"
 -- one. `Settings` is therefore empty on the client, and the client half reads
 -- none of it.
 server_script "config/theme.lua"
+server_script "config/images.lua"
 
 shared_script "lib/shared/result.lua"
 shared_script "lib/shared/table.lua"
@@ -275,6 +276,10 @@ client_script "modules/diagnostics/client/main.lua"
 -- colour the page is. Asked here, the answer is normally in the client's hands
 -- before the page has finished mounting. It depends on nothing and provides one
 -- read-only contract, so nothing depends on it being later either.
+shared_script "modules/images/module.lua"
+server_script "modules/images/server/main.lua"
+client_script "modules/images/client/main.lua"
+
 shared_script "modules/theme/module.lua"
 shared_script "modules/theme/shared/palette.lua"
 server_script "modules/theme/server/main.lua"
@@ -959,6 +964,7 @@ web_files { "web/**" }
 files { "web/blips/*.svg" }
 
 permissions {
+  "http.request",
   "network.events",
 
   -- WRITING a replicated state bag; reading one needs nothing, on either side.

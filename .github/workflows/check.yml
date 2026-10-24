@@ -26,6 +26,9 @@ jobs:
         run: node tests/ui-spawn-focus.mjs
       - name: Garment generator encoding regressions
         run: node tests/tool-garments.mjs
+      - name: Image CDN catalogue regressions
+        run: |
+          node tests/ui-images.mjs
       - run: npm run build
       - name: The shipped pages match their sources
         run: git diff --exit-code -- web/

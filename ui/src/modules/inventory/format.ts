@@ -1,4 +1,5 @@
 import type { CatalogEntry, ScreenConfig, Stack } from './types'
+import { imageUrls } from '@/stores/images'
 
 /**
  * Turning a stack into the words and the picture a cell shows.
@@ -8,23 +9,20 @@ import type { CatalogEntry, ScreenConfig, Stack } from './types'
  * in every container payload.
  */
 
-/** Where the 195 item pictures live once the build has copied `ui/public`. */
-const IMAGE_BASE = 'images/'
-
 /**
  * The picture for an item whose catalogue file name is already known.
  *
  * Split out of `imageFor` for the hotbar peek, which draws on the OVERLAY layer
  * and has no catalogue: the interactive screen holds it, the overlay does not,
  * so Lua resolves the five rows and sends the file name with them. Both callers
- * go through this so the base path is written once -- a second copy of
- * `images/` is the kind of thing that survives a folder rename by half.
+ * go through this so inventory, hotbar and garments share the same CDN lookup.
  */
 export function imageFromFile(name: string, file: string): string {
-  return `${IMAGE_BASE}${file || `${name}.png`}`
+  const picture = file || `${name}.png`
+  return imageUrls.value[picture] || ''
 }
 
-/** Relative, and served by the resource itself: the surface has no network. */
+/** The catalogue keeps file names; the server CDN map supplies their URLs. */
 export function imageFor(name: string, entry: CatalogEntry | undefined): string {
   return imageFromFile(name, entry && entry.image ? entry.image : '')
 }

@@ -106,6 +106,13 @@ local pedCount = checkCatalog(modules.admin.Data.PEDS, 'FAMILIES', 'PEDS', 'FAMI
 local vehicleCount = checkCatalog(modules.admin.Data.VEHICLES, 'CLASSES', 'VEHICLES', 'CLASS', '^[%w_%.]+$')
 local garments, garmentCount = {}, 0
 local images = {}
+local availableImages = {}
+local imageCatalogue = assert(io.open('tools/image-catalog.txt', 'r'))
+for line in imageCatalogue:lines() do
+ local name = line:match('^%x+  (.+)$')
+ if name then availableImages[name] = true end
+end
+imageCatalogue:close()
 for part = 1, 5 do
  assert(loadfile(('modules/appearance/data/garments-%d.lua'):format(part), 't', env))()
 end
@@ -121,8 +128,7 @@ for _, part in ipairs(modules.appearance.Data.GARMENTS) do
    if image ~= nil then
     assert(type(image) == 'string' and image:match('^[a-f0-9]+%.webp$') and #image <= 80, record .. ': image')
     if not images[image] then
-     local file = assert(io.open('ui/public/images/clothing/' .. image, 'rb'), record .. ': missing image')
-     file:close()
+     assert(availableImages['clothing/' .. image], record .. ': missing CDN source image')
      images[image] = true
     end
    end

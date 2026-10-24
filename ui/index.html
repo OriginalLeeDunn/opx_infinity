@@ -3,14 +3,12 @@
 <head>
   <meta charset="utf-8">
   <!-- No viewport meta: the surface is created at a fixed 1920x1080 by Lua and there is
-       no device to fit. No CSP meta either -- the page loads nothing to restrict, which
-       is enforced by the build, not by policy. -->
+       no device to fit. Image CDN URLs arrive from the server after the page handshake. -->
   <title>OPEN//77</title>
 </head>
 <body>
   <!-- ONE surface, two layers: the HUD, and everything the player drives. Everything
-       this page needs is inlined by the build. There is no network inside a CEF
-       surface: a <link> or a <script src> here would silently never resolve. -->
+       code this page needs is inlined by the build. Pictures come from the server CDN map; no image assets are bundled. -->
   <div id="app"></div>
   <script type="module" src="/src/boot/main.ts"></script>
 </body>
