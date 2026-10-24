@@ -950,8 +950,9 @@ Contract `bar` v1 (server): `Venues()`, `Items()`, `DrunkLevel(player)`. Bus:
 `modules/pool` + `config/pool.lua` offers three original modes using one white
 cue ball and fifteen distinct vanilla object balls, arranged in a five-row triangle.
 The object balls use the game’s `ball_c_billiard.mesh` through `ball_q_billiard.mesh`
-models through fifteen cooked hosts in `opx_pool_assets` **0.3.0 or later**. Infinity
-registers each mesh/visual-host pair with the separate `props.register` permission
+models through fifteen cooked hosts in `opx_pool_assets` **0.3.1 or later**. Infinity
+registers each mesh/visual-host pair under its required
+`open77/assets/opx_infinity/` namespace, with the separate `props.register` permission
 using the resource-owned model registry on
 **op77.152 or later**, then renders the opaque model ID returned by the native.
 Raw mesh names alone displayed fallback cylinders on the deployed client. Missing
@@ -1067,7 +1068,7 @@ cannot take a shot. These modes have no economic effects or persisted game state
 The native baseline checked is Devkit `2.50.0+op77.148`; the test VPS uses
 `2.50.0+op77.152`. Install
 [`opx_pool_assets`](https://github.com/opx77-framework/opx_pool_assets) before Infinity.
-Use asset resource version `0.3.0` or later. Its client script publishes the recorded
+Use asset resource version `0.3.1` or later. Its client script publishes the recorded
 audio service and makes the resource available in the signed client set to satisfy
 Infinity's dependency. The service alone declares `audio.play`; Infinity does not
 request audio-network authority.
@@ -1090,7 +1091,7 @@ required-mod trust/review policy; do not silently enable unsecured mode to insta
 a loader. Restart the server, fully quit Cyberpunk, and reconnect through the
 launcher: cooked archives cannot mount during a running game session.
 
-The fifteen new `opx/pool/ball_*.ent` hosts have their own namespace and reserve
+The fifteen new `open77/assets/opx_infinity/pool/ball_*.ent` hosts have their own namespace and reserve
 no additional global aliases. The legacy asset package reserves three aliases globally:
 `recreation.tent` (white), `recreation.sleeping_bag` (yellow), and
 `recreation.gym_equipment` (horizontal cue). Other resources must not use them for

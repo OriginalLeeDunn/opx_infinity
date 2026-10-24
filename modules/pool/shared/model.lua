@@ -49,7 +49,7 @@ function Model.Models()
 	if raw.objects ~= nil and (type(raw.objects) ~= 'table' or #raw.objects ~= Model.BALLS-1) then return nil end
 	for number = 1, Model.BALLS-1 do
 		local path = raw.objects and raw.objects[number] or
-			('base\\environment\\decoration\\recreation\\sports\\ball\\ball_' .. string.char(98+number) .. '_billiard.mesh')
+			('open77\\assets\\opx_infinity\\pool\\ball_%02d.mesh'):format(number)
 		if type(path) ~= 'string' or #path == 0 or #path > 256 or path:find('%c') or used[path] then return nil end
 		used[path] = true
 		result.objects[number] = path
