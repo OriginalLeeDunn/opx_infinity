@@ -988,6 +988,10 @@ cannot take a shot. Practice has no economic effects or persisted game state.
 The native baseline checked is Devkit `2.50.0+op77.148`; the test VPS uses
 `2.50.0+op77.152`. Install
 [`opx_pool_assets`](https://github.com/opx77-framework/opx_pool_assets) before Infinity.
+Use asset resource version `0.1.2` or later: its idle client script makes the
+resource available in the signed client set to satisfy Infinity's dependency.
+A server-only asset resource is omitted from that set and causes client activation
+to fail even when the archive download succeeds.
 World-decoration cleanup additionally requires the
 [Open77 ArchiveXL port for Cyberpunk 2.5](https://github.com/Open2077/archive-xl),
 currently published as `1.27.5-open77.6`. The stable signed catalogue checked on
