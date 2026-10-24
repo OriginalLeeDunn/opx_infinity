@@ -948,7 +948,8 @@ Contract `bar` v1 (server): `Venues()`, `Items()`, `DrunkLevel(player)`. Bus:
 ### Pool practice prototype
 
 `modules/pool` + `config/pool.lua` is an original, free practice prototype with
-one cue ball and two object balls. It imports no nc_pool scripts or archives.
+one cue ball and two object balls. Gameplay is original; cooked visuals and
+world cleanup are supplied by the separate `opx_pool_assets` resource.
 It is not a competitive 8-ball mode: no stakes, XP, families, spin or winner payout.
 
 `TABLE.enabled` ships false. Survey a real, unobstructed table before enabling it:
@@ -962,8 +963,10 @@ offset of 0.843 m is already applied to `z`. Choose one with
 `(-1247.944, -995.978, 13.263)`, yaw `99.85`. The prototype activates one table at
 a time. These inherited measurements require visual verification on the current
 game build; they are not newly surveyed. To use a custom table, omit `preset` and
-put the geometry directly in `TABLE`. No cleanup patches are installed. Decorative balls already on a vanilla table need separate authored
-world cleanup; this module never deletes another resource's props or world nodes.
+put the geometry directly in `TABLE`. The asset resource supplies the recorded
+ArchiveXL cleanup patches. A sector/node-count mismatch leaves vanilla decorations
+in place; inspect the client ArchiveXL log. The gameplay module never deletes
+another resource's props or world nodes.
 
 The eye offers **Practise pool** at the configured table. One loaded character
 holds the practice seat; nearby loaded characters in the same bucket receive
@@ -983,18 +986,31 @@ out-of-range, cross-bucket, dead, stale-transform or recycled-session requests
 cannot take a shot. Practice has no economic effects or persisted game state.
 
 The native baseline checked is Devkit `2.50.0+op77.148`; the test VPS uses
-`2.50.0+op77.152`. Configured raw billiard meshes come from the native data catalogue
-and are **discoverable, not individually validated**. On the actual game build,
-verify the visible ball shape/scale and the cue's horizontal orientation and pivot;
-`MODELS.stickYaw` and `stickOffset` provide host-specific calibration. The verified
-local transform API offers position and yaw only: this slice does not promise
-full 3D rolling rotation or tilt/spin on the cue. If a raw mesh
-has no safe host, supply separately authored compatible hosts through `MODELS`.
-Do not overwrite a curated unrelated prop alias. No `.ent` backend, copied archive,
-preload or custom asset redistribution is included. Local-prop creation, transform,
-failed rendering and marker fallbacks are diagnosed; the friendly player message
-asks them to contact staff. A renderer failure removes the module's visuals,
-releases the controls and stops retries until the resource is restarted.
+`2.50.0+op77.152`. Install
+[`opx_pool_assets`](https://github.com/opx77-framework/opx_pool_assets) and its
+`archivexl >=1.27.1` dependency, then load both before Infinity. The framework
+manifest declares the asset-resource dependency. Keep the server's existing
+required-mod trust/review policy; do not silently enable unsecured mode to install
+a loader. Restart the server, fully quit Cyberpunk, and reconnect through the
+launcher: cooked archives cannot mount during a running game session.
+
+The asset package deliberately reserves three native aliases globally:
+`recreation.tent` (white), `recreation.sleeping_bag` (yellow), and
+`recreation.gym_equipment` (horizontal cue). Other resources must not use them for
+their original objects. Six normal/attached hosts are repacked from the supplied
+Darkpickle templates; the source pack's 44 unrelated food/medical/military and
+other overrides, and its unused standalone ball-template archive, are excluded.
+The current platform has no published custom-alias registration API, so this
+reservation is an explicit integration constraint rather than a new native pool
+catalogue. Do not load `nc_pool` or its old preload alongside this pack.
+
+Verify the actual ball shape/scale and cue alignment in game. `MODELS.stickYaw`
+and `stickOffset` calibrate the cue. The local transform API supplies position and
+yaw, not full 3D rolling or cue tilt/spin. Local-prop creation/render failures and
+marker fallbacks are diagnosed; fresh native objects get a bounded three-second
+streaming grace before a repeated transform refusal stops practice. Diagnostics
+preserve the native reason; player messages stay friendly. A permanent failure
+removes visuals, releases the seat/controls, and stops retries until restart.
 
 Live qualification: two real clients on the same table, fast glancing impacts,
 rail/pocket transitions, mouse feel at different frame rates, jitter, spectator

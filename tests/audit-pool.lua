@@ -121,6 +121,8 @@ check(not request(7,'enter'),'stopped resource accepted request')
 assert(loadfile('config/pool.lua','t',env))()
 local config=env.OPX.Config.MODULES.pool
 check(Model.Table()==nil,'unverified preset enabled by default')
+local mapped=Model.Models()
+check(mapped.cue=='recreation.tent' and mapped.object=='recreation.sleeping_bag' and mapped.stick=='recreation.gym_equipment','asset profile mapping mismatch')
 local count=0
 for key in pairs(config.PRESETS) do
 	count=count+1; config.TABLE={enabled=true,preset=key}

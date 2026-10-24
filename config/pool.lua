@@ -21,12 +21,12 @@ OPX.Config.MODULES.pool = {
 	},
 	SENSITIVITY = 0.0025, -- radians per physical mouse count
 	CHARGE_SECONDS = 2.4,
-	-- Raw meshes found in Open77.data; discoverable, NOT individually validated.
-	-- Supply authored, spawn-safe hosts here if the runtime cannot render them.
+	-- opx_pool_assets reserves these three native recreation aliases globally.
+	-- Do not use them as tents, sleeping bags or gym equipment on this world.
 	MODELS = {
-		cue = 'base\\environment\\decoration\\recreation\\sports\\ball\\ball_b_billiard.mesh',
-		object = 'base\\environment\\decoration\\recreation\\sports\\ball\\ball_m_billiard.mesh',
-		stick = 'base\\environment\\decoration\\recreation\\sports\\billiard_stick\\billiard_stick_a.mesh',
+		cue = 'recreation.tent',
+		object = 'recreation.sleeping_bag',
+		stick = 'recreation.gym_equipment',
 		-- Host-specific heading/pivot calibration, in degrees/metres.
 		stickYaw = 0, stickOffset = 0.7,
 	},
