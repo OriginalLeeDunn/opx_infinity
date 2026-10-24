@@ -8,8 +8,14 @@ function Model.Number(value, low, high)
 end
 function Model.Table()
 	local cfg = OPX.Config.MODULES.pool or {}
-	local raw = cfg.TABLE
-	if type(raw) ~= 'table' or raw.enabled ~= true then return nil end
+	local choice = cfg.TABLE
+	if type(choice) ~= 'table' or choice.enabled ~= true then return nil end
+	local raw = choice
+	if choice.preset ~= nil then
+		if type(choice.preset) ~= 'string' or type(cfg.PRESETS) ~= 'table' then return nil end
+		raw = cfg.PRESETS[choice.preset]
+		if type(raw) ~= 'table' then return nil end
+	end
 	local x, y, z = Model.Number(raw.x, -20000, 20000), Model.Number(raw.y, -20000, 20000), Model.Number(raw.z, -2000, 5000)
 	local yaw, bucket = Model.Number(raw.yaw, -360, 360), Model.Number(raw.bucket, 0, 65535)
 	local length, width = Model.Number(raw.halfLength, 0.9, 2), Model.Number(raw.halfWidth, 0.4, 1)

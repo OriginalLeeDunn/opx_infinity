@@ -117,4 +117,19 @@ check(M.Server.Request(8,'leave'),'quick leave swallowed by entry timer')
 check(request(7,'enter'),'practice could not be reclaimed')
 M.Stop()
 check(not request(7,'enter'),'stopped resource accepted request')
+-- Named base measurements are adapted as data; no placement helper is imported.
+assert(loadfile('config/pool.lua','t',env))()
+local config=env.OPX.Config.MODULES.pool
+check(Model.Table()==nil,'unverified preset enabled by default')
+local count=0
+for key in pairs(config.PRESETS) do
+	count=count+1; config.TABLE={enabled=true,preset=key}
+	check(Model.Table()~=nil,'malformed inherited measurement: '..key)
+end
+check(count==10,'missing base table measurements')
+config.TABLE={enabled=true,preset='el_coyote_cojo'}
+local coyote=Model.Table()
+check(coyote.x==-1247.944 and coyote.z==13.263 and coyote.halfLength==1.4,'floor height used as ball centre')
+config.TABLE.preset='missing'
+check(Model.Table()==nil,'unknown preset did not fail closed')
 print('pool prototype:',checks,'physics, playback, input and server-authority checks passed')

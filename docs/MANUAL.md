@@ -955,8 +955,14 @@ It is not a competitive 8-ball mode: no stakes, XP, families, spin or winner pay
 `x/y/z` are the **ball centres above the cloth**, not the floor; `halfLength` and
 `halfWidth` describe the playable rectangle in metres. `yaw` rotates the local
 long axis from world +X, counterclockwise in degrees. `bucket` must match the
-players' routing bucket. No vanilla table coordinates or cleanup patches are
-installed. Decorative balls already on a vanilla table need separate authored
+players' routing bucket. Ten named measurements supplied with nc_pool are available as `PRESETS`, with
+credit to Darkpickle for the placement data. Their documented floor-to-ball
+offset of 0.843 m is already applied to `z`. Choose one with
+`TABLE = { enabled = true, preset = 'el_coyote_cojo' }`; the Coyote ball centre is
+`(-1247.944, -995.978, 13.263)`, yaw `99.85`. The prototype activates one table at
+a time. These inherited measurements require visual verification on the current
+game build; they are not newly surveyed. To use a custom table, omit `preset` and
+put the geometry directly in `TABLE`. No cleanup patches are installed. Decorative balls already on a vanilla table need separate authored
 world cleanup; this module never deletes another resource's props or world nodes.
 
 The eye offers **Practise pool** at the configured table. One loaded character
