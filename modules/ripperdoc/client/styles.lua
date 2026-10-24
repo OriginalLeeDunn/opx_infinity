@@ -85,6 +85,25 @@ local function clear()
 	local a = api()
 	if a then a.resetCustomization() end
 end
+local function watch()
+	if job then return end
+	job = OPX.Scheduler.Every('ripperdoc:style', 1000, function()
+		if needRestore then needRestore = false; TriggerServerEvent(M.Event.STYLE, 'restore') end
+		if wanted == nil then
+			if not needRestore then OPX.Scheduler.Cancel(job); job = nil end
+			return
+		end
+		local a = api()
+		if not a then wanted = nil; return end
+		local ok, reason
+		if wanted == false then ok, reason = a.resetCustomization() else ok, reason = a.setCustomization(wanted) end
+		attempts = attempts + 1
+		if ok == true then wanted = nil
+		elseif reason ~= 'body_not_ready' and reason ~= 'appearance_editor_open' or attempts >= 30 then
+			wanted = nil; errorToast(); OPX.Note('ripperdoc', tostring(reason))
+		end
+	end)
+end
 local start, stop = M.Start, M.Stop
 function M.Start()
 	start()
@@ -101,27 +120,17 @@ function M.Start()
 	end)
 	RegisterNetEvent(M.Event.STYLE_RESTORE, function(style)
 		wanted, attempts = type(style) == 'table' and style or false, 0
+		watch()
 	end)
 	AddEventHandler(OPX.Event(OPX.Channel.LOCAL, 'character', 'loaded'), function()
 		clear()
 		needRestore = true
+		watch()
 	end)
 	AddEventHandler(OPX.Event(OPX.Channel.LOCAL, 'character', 'unloaded'), clear)
-	AddEventHandler('open77:playerReset:complete', function() needRestore = true end)
+	AddEventHandler('open77:playerReset:complete', function() needRestore = true; watch() end)
 	RegisterCommand('opx.ripperdoc.style', function() TriggerServerEvent(M.Event.STYLE) end, false)
-	job = OPX.Scheduler.Every('ripperdoc:style', 1000, function()
-		if needRestore then needRestore = false; TriggerServerEvent(M.Event.STYLE, 'restore') end
-		if wanted == nil then return end
-		local a = api()
-		if not a then wanted = nil; return end
-		local ok, reason
-		if wanted == false then ok, reason = a.resetCustomization() else ok, reason = a.setCustomization(wanted) end
-		attempts = attempts + 1
-		if ok == true then wanted = nil
-		elseif reason ~= 'body_not_ready' and reason ~= 'appearance_editor_open' or attempts >= 30 then
-			wanted = nil; errorToast(); OPX.Note('ripperdoc', tostring(reason))
-		end
-	end)
+
 	CreateThread(function()
 		local target = OPX.Api.Get('target')
 		if not target then return end

@@ -12,6 +12,24 @@ local function publish(value)
 	showing = #value > 0
 	OPX.UI.Send('overlay', 'hud:weapons', { hands = value })
 end
+local function watch()
+	if job then return end
+	job = OPX.Scheduler.Every('inventory:weapon-hud', 500, function()
+		if request then
+			if OPX.Now() > deadline then request, rows = nil, {}; publish({}) end
+			return
+		end
+		if not M.Screen.Held() then
+			publish({})
+			if job then OPX.Scheduler.Cancel(job); job = nil end
+			return
+		end
+		local api = Open77.weapons
+		if type(api) ~= 'table' or type(api.snapshot) ~= 'function' then return end
+		local id = api.snapshot()
+		if id then request, rows, deadline = tostring(id), {}, OPX.Now() + 12000 end
+	end)
+end
 local start, stop = M.Start, M.Stop
 function M.Start()
 	start()
@@ -35,17 +53,10 @@ function M.Start()
 		rows = {}
 		publish(complete)
 	end)
-	job = OPX.Scheduler.Every('inventory:weapon-hud', 500, function()
-		if request then
-			if OPX.Now() > deadline then request, rows = nil, {}; publish({}) end
-			return
-		end
-		if not M.Screen.Held() then publish({}); return end
-		local api = Open77.weapons
-		if type(api) ~= 'table' or type(api.snapshot) ~= 'function' then return end
-		local id = api.snapshot()
-		if id then request, rows, deadline = tostring(id), {}, OPX.Now() + 12000 end
+	AddEventHandler(M.Event.ON_ARMED, function(held)
+		if held then watch() end
 	end)
+	if M.Screen.Held() then watch() end
 end
 function M.Stop()
 	if job then OPX.Scheduler.Cancel(job); job = nil end

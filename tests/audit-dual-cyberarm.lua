@@ -103,7 +103,7 @@ print(('%d cyberarm lifecycle checks passed'):format(checks))
 do
 	local hooks, jobs, pushes = {}, {}, {}
 	local now, nextId, held = 0, 0, true
-	local module = { Start = function() end, Stop = function() end,
+	local module = { Start = function() end, Stop = function() end, Event = { ON_ARMED = 'armed' },
 		Screen = { Held = function() return held end } }
 	local runtime = setmetatable({
 		OPX = { Modules = { Get = function() return module end },
