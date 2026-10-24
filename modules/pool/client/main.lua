@@ -1,18 +1,27 @@
---- Practice entry, bounded local playback and physical mouse input.
+--- Guided practice entry, camera, physical input and authoritative playback.
 -- @author dop42
 local M = OPX.Modules.Get('pool')
-local Model, B, I, R = M.Model, M.Playback, M.Input, M.Render
-local spec, buffer, input, positions, target, prompts, jobs, lastPacket, subscribed, lastMouse, lastAim, waiting, owned, held, reported, lastControls
+local Model, B, I, R, C, G = M.Model, M.Playback, M.Input, M.Render, M.Camera, M.Guide
+local spec, buffer, input, positions, target, prompts, jobs, lastPacket, subscribed, lastMouse, lastWheel, lastAim, waiting, owned, held, reported, lastControls
+local autoAim, following, shotSeen, hudVisible
 local function request(action, extra)
 	extra = extra or {}
 	extra.epoch = buffer.epoch
 	extra.revision = buffer.state and buffer.state.revision
 	TriggerServerEvent(M.Event.REQUEST, action, extra)
 end
-local function controls(aiming, on)
+local function hideHud()
+	if hudVisible then OPX.UI.Send('overlay', 'pool:hide', {}); hudVisible = false end
+end
+local function releaseView() C.Clear(); G.Clear(); hideHud() end
+local function controls(view, on)
 	local names = { 'allowAim', 'allowShoot' }
-	if aiming then names[#names+1] = 'freezeRotation' end
-	local signature = on and (aiming and 'aim' or 'walk') or 'free'
+	if view then
+		names[#names+1], names[#names+2] = 'freezeRotation', 'freezePosition'
+		names[#names+1], names[#names+2] = 'allowJump', 'allowDodge'
+		names[#names+1] = 'allowInteraction'
+	end
+	local signature = on and (view and 'view' or 'walk') or 'free'
 	if held == signature and (not on or OPX.Now()-lastControls < 250) then return true end
 	if not OPX.Controls.Set('pool', names, on) then return false end
 	held, lastControls = signature, OPX.Now()
@@ -22,7 +31,9 @@ end
 local function clear(leave)
 	if leave and subscribed then request('leave') end
 	owned, subscribed, waiting, positions = false, false, nil, nil
-	input, buffer, lastMouse = I.New(), B.New(), nil
+	autoAim, following, shotSeen = false, false, false
+	input, buffer, lastMouse, lastWheel = I.New(), B.New(), nil, nil
+	releaseView()
 	controls(false, false)
 	if target then target.SetTargetingEnabled('pool', true) end
 	if prompts then prompts.HideAll('pool') end
@@ -43,13 +54,18 @@ end
 local function receive(packet)
 	if not spec or not subscribed then return end
 	if type(packet) == 'table' and packet.closed == true then clear(true); return end
-	local oldEpoch = buffer.epoch
+	local oldEpoch, wasOwned = buffer.epoch, owned
 	if B.Push(buffer, packet, OPX.Now()) then
 		lastPacket = OPX.Now()
-		if oldEpoch ~= buffer.epoch then input, waiting = I.New(), nil end
 		local nextOwned = buffer.state.owner == Open77.players.localId()
-		if owned and not nextOwned then input, waiting = I.New(), nil end
+		if oldEpoch ~= buffer.epoch or (wasOwned and not nextOwned) then
+			input, waiting, following, shotSeen = I.New(), nil, false, false
+			releaseView()
+		end
 		owned = nextOwned
+		if owned and (not wasOwned or oldEpoch ~= buffer.epoch) then autoAim = true end
+		if not owned then autoAim, following, shotSeen = false, false, false; releaseView() end
+		if following and buffer.state.phase == 'rolling' then shotSeen = true end
 		if waiting and (buffer.state.phase == 'rolling' or waiting.revision ~= buffer.state.revision
 			or OPX.Now()-waiting.at > 1500) then waiting = nil end
 	end
@@ -63,6 +79,11 @@ local function watch()
 	request('watch')
 	if not R.Check() then clear(true) end
 end
+local function cameraFailure(why)
+	OPX.Note('pool', 'camera refused: ' .. tostring(why))
+	OPX.Toast.Locale('pool.camera', nil, 'error')
+	clear(true)
+end
 local function draw()
 	if not subscribed or not buffer.state then return end
 	positions = B.Sample(buffer, OPX.Now())
@@ -70,62 +91,113 @@ local function draw()
 	local state = buffer.state
 	local aiming = owned and input.aiming or not owned and state.aiming
 	local angle, power = owned and input.angle or state.angle, owned and input.power or state.power
-	if not R.Draw(spec, positions, aiming and state.phase == 'ready', angle, power) then clear(true) end
+	if not R.Draw(spec, positions, aiming and state.phase == 'ready', angle, power) then clear(true); return end
+	local captured = Open77.input.isCaptured() ~= false
+	if owned and (input.aiming or following) and not captured then
+		local ok, why = C.Update(spec, positions, input.angle, following or input.overview, input.height, OPX.Now())
+		if not ok then cameraFailure(why); return end
+		if not input.aiming or state.phase ~= 'ready' then G.Clear() end
+	else releaseView() end
+end
+local function axis(name, old)
+	local value = Model.Number(Open77.input.axis(name), -1e15, 1e15)
+	return value and old and math.max(-5000, math.min(5000, value-old)) or 0, value
 end
 local function press()
 	if not spec then return end
 	local now = OPX.Now()
-	local mouse = Open77.input.axis('mouseDeltaX')
-	local delta = Model.Number(mouse, -1e15, 1e15) and lastMouse and math.max(-5000, math.min(5000, mouse-lastMouse)) or 0
-	lastMouse = Model.Number(mouse, -1e15, 1e15)
+	local delta, wheel
+	delta, lastMouse = axis('mouseDeltaX', lastMouse)
+	wheel, lastWheel = axis('mouseWheel', lastWheel)
 	local captured = Open77.input.isCaptured() ~= false or lastMouse == nil
 	local can = owned and buffer.state and buffer.state.phase == 'ready' and not waiting
 		and buffer.cursor >= buffer.state.readyAt and distance() <= 3.5 and available() and not R.Failed()
 	local buttons = { right = Open77.input.isDown('mouse2'), left = Open77.input.isDown('mouse1'),
-		cancel = Open77.input.isDown('ESC'), leave = Open77.input.isDown('BACKSPACE'), rack = Open77.input.isDown('R') }
+		cancel = Open77.input.isDown('ESC'), leave = Open77.input.isDown('BACKSPACE'), rack = Open77.input.isDown('R'),
+		overview = Open77.input.isDown('V'), precise = Open77.input.isDown('SHIFT') }
+	if owned and (distance() > 3.5 or not available() or now-lastPacket > 1500) then clear(true); return end
+	if owned and not captured and (input.aiming or following) then
+		local ok, why = C.Check()
+		if not ok then cameraFailure(why); return end
+	end
+	-- Do not resume an interrupted charge or a held click after closing a menu.
+	if captured then autoAim, following, shotSeen = false, false, false end
+	if following and can and (shotSeen or not waiting) then
+		following, shotSeen, autoAim = false, false, true
+	end
+	if autoAim and can and positions and not captured then
+		input.aiming, autoAim, input.previous = true, false, buttons
+		if not input.aligned then
+			local _, x, y = distance()
+			local px, py = Model.Local(spec, x, y)
+			input.angle, input.aligned = math.atan(positions[1][2]-py, positions[1][1]-px), true
+		end
+	end
 	local was = input.aiming
 	local cfg = M.Settings
 	local event = I.Step(input, now/1000, buttons, can, captured, delta,
-		Model.Number(cfg.SENSITIVITY, 0.0001, 0.02) or 0.0025, Model.Number(cfg.CHARGE_SECONDS, 0.5, 5) or 2.4)
-	if not was and input.aiming and positions then
+		Model.Number(cfg.SENSITIVITY, 0.0001, 0.02) or 0.0018, Model.Number(cfg.CHARGE_SECONDS, 0.5, 5) or 1.8)
+	if not was and input.aiming and positions and not input.aligned then
 		local _, x, y = distance()
 		local px, py = Model.Local(spec, x, y)
-		input.angle = math.atan(positions[1][2]-py, positions[1][1]-px)
+		input.angle, input.aligned = math.atan(positions[1][2]-py, positions[1][1]-px), true
 	end
-	if owned and (distance() > 3.5 or not available() or now-lastPacket > 1500) then clear(true); return end
-	if not controls(input.aiming, owned) then
-		if not reported then reported = true; OPX.Note('pool', 'input control lease refused'); OPX.Toast.Locale('pool.models', nil, 'error') end
-		clear(true); return
-	end
-	-- Leave works while rolling too; it does not imply an accepted new shot.
-	if owned and not captured and buttons.leave and not can then clear(true); return end
+	if input.aiming then input.height = math.max(0.25, math.min(1.2, input.height+wheel*0.08)) end
+	if owned and not captured and buttons.leave then clear(true); return end
 	if event then
 		if event.kind == 'leave' then clear(true); return end
-		if event.kind == 'shoot' or event.kind == 'rack' then waiting = { revision = buffer.state.revision, at = now } end
+		if event.kind == 'shoot' or event.kind == 'rack' then
+			waiting = { revision = buffer.state.revision, at = now }
+			if event.kind == 'shoot' then following, shotSeen = true, false end
+		end
 		if event.kind ~= 'aim' then request(event.kind, event) end
+	end
+	if not controls(not captured and (input.aiming or following), owned) then
+		if not reported then reported = true; OPX.Note('pool', 'input control lease refused'); OPX.Toast.Locale('pool.models', nil, 'error') end
+		clear(true); return
 	end
 	if subscribed and owned and now-lastAim >= 100 then
 		lastAim = now
 		request('aim', { visible = input.aiming, angle = input.angle, power = input.power })
 	end
 end
+local function guide()
+	if owned and input.aiming and positions and positions[1][3] and buffer.state and buffer.state.phase == 'ready'
+		and Open77.input.isCaptured() == false and M.Settings.AIM_GUIDE ~= false then
+		G.Draw(spec, positions, input.angle, OPX.Now())
+	else G.Clear() end
+end
 local function strip()
-	if not owned or not prompts or Open77.input.isCaptured() then if prompts then prompts.HideAll('pool') end; return end
+	if not owned or Open77.input.isCaptured() then
+		if prompts then prompts.HideAll('pool') end
+		hideHud(); return
+	end
 	local ready = buffer.state and buffer.state.phase == 'ready' and not waiting
-	prompts.Show('pool', 'practice', { title = spec.label, rows = {
+	if prompts then prompts.Show('pool', 'practice', { title = spec.label, rows = {
 		{ keys = 'RMB', label = locale(ready and 'pool.aim' or 'pool.rolling') },
-		{ keys = 'LMB', label = locale('pool.charge'), value = locale('pool.power', { power = math.floor(input.power*100) }) },
+		{ keys = 'LMB', label = locale('pool.charge') },
+		{ keys = 'SHIFT', label = locale('pool.precise') },
+		{ keys = 'V', label = locale('pool.overview') },
 		{ keys = 'R', label = locale('pool.rack') }, { keys = 'BACKSPACE', label = locale('pool.leave') },
-	} })
+	} }) end
+	if input.aiming or following then
+		hudVisible = true
+		OPX.UI.Send('overlay', 'pool:frame', { title = spec.label, power = input.power,
+			charging = input.chargedAt ~= nil,
+			phase = following and 'rolling' or 'aim', powerLabel = locale('pool.powerLabel'),
+			hint = locale(following and 'pool.rolling' or input.chargedAt and 'pool.release' or 'pool.charge'),
+			view = locale(input.overview and 'pool.tableView' or 'pool.cueView') })
+	else hideHud() end
 end
 local function frame() press(); draw() end
-M.Client = { Receive = receive, Watch = watch, Draw = draw, Input = press, Frame = frame }
+M.Client = { Receive = receive, Watch = watch, Draw = draw, Input = press, Frame = frame, Strip = strip, Guide = guide }
 function M.Init()
 	spec, buffer, input, positions = nil, B.New(), I.New(), nil
-	jobs, lastPacket, subscribed, lastMouse, lastAim, waiting, owned, held, reported, lastControls = {}, 0, false, nil, 0, nil, false, 'free', false, 0
+	jobs, lastPacket, subscribed, lastMouse, lastWheel, lastAim, waiting, owned, held, reported, lastControls = {}, 0, false, nil, nil, 0, nil, false, 'free', false, 0
+	autoAim, following, shotSeen, hudVisible = false, false, false, false
 end
 function M.Start()
-	R.Reset()
+	R.Reset(); G.Reset()
 	spec = Model.Table()
 	if not spec then return end
 	target, prompts = OPX.Api.Get('target'), OPX.Api.Get('prompts')
@@ -141,7 +213,8 @@ function M.Start()
 	AddEventHandler(OPX.Event(OPX.Channel.LOCAL, 'character', 'unloaded'), function() clear(true) end)
 	jobs[1] = OPX.Scheduler.Every('pool.watch', 1000, watch)
 	jobs[2] = OPX.Scheduler.Every('pool.frame', 0, frame)
-	jobs[3] = OPX.Scheduler.Every('pool.strip', 100, strip)
+	jobs[3] = OPX.Scheduler.Every('pool.strip', 50, strip)
+	jobs[4] = OPX.Scheduler.Every('pool.guide', 100, guide)
 end
 function M.Stop()
 	for _, job in ipairs(jobs or {}) do OPX.Scheduler.Cancel(job) end

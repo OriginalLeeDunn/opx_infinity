@@ -11,6 +11,7 @@ import MenuView from '@/modules/menu/MenuView.vue'
 import NotifyRoot from '@/modules/notify/NotifyRoot.vue'
 import PanelView from '@/modules/panel/PanelView.vue'
 import ProgressRoot from '@/modules/progress/ProgressRoot.vue'
+import PoolHud from '@/modules/pool/PoolHud.vue'
 import RadioHolo from '@/modules/radio/RadioHolo.vue'
 import SlotbarRoot from '@/modules/inventory/SlotbarRoot.vue'
 import PromptsRoot from '@/modules/prompts/PromptsRoot.vue'
@@ -50,6 +51,7 @@ registerModule({ id: 'hud', surface: 'overlay', component: HudRoot, hideWhileLoa
 registerModule({ id: 'notify', surface: 'notice', component: NotifyRoot, hideWhileLoading: true })
 registerModule({ id: 'prompts', surface: 'overlay', component: PromptsRoot, hideWhileLoading: true })
 registerModule({ id: 'progress', surface: 'overlay', component: ProgressRoot, hideWhileLoading: true })
+registerModule({ id: 'pool', surface: 'overlay', component: PoolHud, hideWhileLoading: true })
 
 // THE INVENTORY IS TWO REGISTRATIONS for the same reason the chat is: two
 // concerns on two layers. `InventoryView` below is the bag the player drives and

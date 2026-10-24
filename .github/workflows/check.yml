@@ -24,6 +24,8 @@ jobs:
         run: node tests/ui-notify-lifecycle.mjs
       - name: Check modal keyboard ownership
         run: node tests/ui-spawn-focus.mjs
+      - name: Pool gauge lifecycle
+        run: node tests/ui-pool-lifecycle.mjs
       - name: Garment generator encoding regressions
         run: node tests/tool-garments.mjs
       - name: Image CDN catalogue regressions

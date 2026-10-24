@@ -817,6 +817,8 @@ server_script "modules/pool/server/physics.lua"
 server_script "modules/pool/server/main.lua"
 client_script "modules/pool/client/input.lua"
 client_script "modules/pool/client/render.lua"
+client_script "modules/pool/client/camera.lua"
+client_script "modules/pool/client/guide.lua"
 client_script "modules/pool/client/main.lua"
 
 shared_script "modules/salvage/module.lua"
@@ -1160,6 +1162,9 @@ permissions {
   -- `permission_denied` and a clean boot, which is what they were checked
   -- against. A client permission is verified in the game or not at all.
   "camera.preview",
+  -- Pool cue-ball and table views; a bounded straight aiming guide.
+  "camera.script",
+  "world.debug",
 
   -- THE PLAYABLE THIRD-PERSON STYLE (client op77.78): framing, FOV, shoulder,
   -- blend. `modules/camera/client/main.lua` calls
