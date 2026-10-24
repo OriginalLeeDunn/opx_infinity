@@ -36,13 +36,18 @@ local M = OPX.Modules.Declare{
 	-- Only what is really called. `medical` is deliberately absent: it may come
 	-- to name this module one day, and two optionals naming each other are a
 	-- cycle the dependency walk refuses by name.
-	optional = { 'progress', 'target', 'menu', 'downed' },
+	optional = { 'progress', 'target', 'menu', 'form', 'downed' },
 }
 
 local NET = OPX.Channel.NET
 local LOCAL = OPX.Channel.LOCAL
 
 M.Event = {
+	STYLE = OPX.Event(NET, 'ripperdoc', 'style'),
+	STYLE_DATA = OPX.Event(NET, 'ripperdoc', 'styleData'),
+	STYLE_APPLY = OPX.Event(NET, 'ripperdoc', 'styleApply'),
+	STYLE_RESULT = OPX.Event(NET, 'ripperdoc', 'styleResult'),
+	STYLE_RESTORE = OPX.Event(NET, 'ripperdoc', 'styleRestore'),
 	-- Client to server. Every field is re-read; `source` is the only truth.
 	-- `(patientId)`: the doc asks for the chart of a patient in a chair.
 	CHART = OPX.Event(NET, 'ripperdoc', 'chart'),

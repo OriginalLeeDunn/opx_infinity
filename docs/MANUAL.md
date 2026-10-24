@@ -759,6 +759,39 @@ fronts launder by batch under a daily cap; gang-gated crafting labs heat up; dru
 use, addict and overdose; a street deal is the platform's two-player `give`. Gang gates
 use `OPX.JobGate.EvaluateGroups`. Survey every entry with `/opx.underworld.capture`.
 
+### Inventory: paired weapons (op77.152+)
+
+Equip a right-hand weapon with the ordinary inventory Use action. On a second
+weapon, choose **Equip / holster left hand**. Ammunition items offer the same
+left-hand action to choose which weapon to replenish. `WEAPONS.DUAL_WIELD`
+controls availability; `WEAPONS.SLOT` remains 1–3 and the left partner uses
+`SLOT + 3`. The native game decides pair compatibility. Choosing an equipped
+weapon while paired holsters both weapons; finish holstering before selecting
+a replacement. Single-weapon use and hotbar bindings keep their existing behavior.
+
+Every item retains its own serial and owned ammunition. Before creating a pair,
+OPX saves shots fired by the primary weapon. Pair initialization waits for native
+completion at every dependent step and replaces native creation ammo with owned
+rounds. Shared ammunition totals are reconciled once across the two items, never
+credited to both; a client observation cannot increase ownership. A transfer
+waits for a complete pair readback and secondary-then-primary removal. Native
+initialization failure clears the pair. The HUD displays both magazines, reload
+state and a shared reserve only once, replacing completed snapshots atomically.
+
+Both client and server need Open77 **2.50.0+op77.152** and the matching bundled
+`open77_weapons` resource (an older bundle may still advertise version 0.1.0).
+New refusals: `dual_wield_unavailable`, `primary_required`,
+`weapon_in_other_hand`. The native `dual_wield_pair_unavailable` refusal
+uses `weapon_pair_unavailable`, explaining that another pair is needed; other
+failures use `weapon_refused`. The failed step and native reason are logged
+server-side. Error toasts include a localized suggestion to contact an
+administrator if the refusal seems mistaken. Older builds retain single-weapon support.
+Open77 documents inconsistent native reload allocation when the shared reserve
+is too low; OPX does not infer ownership grants from magazine increases.
+
+Upstream contracts: [dual wielding](https://open2077.net/docs/dual-wielding) and
+[cyberarm styles](https://open2077.net/docs/cyberware-customization).
+
 ### Ripperdoc
 
 `ripperdoc` (`modules/ripperdoc`, `config/ripperdoc.lua`) puts chrome in and takes it
@@ -787,6 +820,31 @@ given back, `submitted` is replayed with the same operation id when the patient 
 
 Contract `ripperdoc` (server): `Body(citizenId)`, `Clinics()`, `Chrome()`,
 `Operation(player)`; bus event `opx:on:ripperdoc:operated`.
+
+Cyberarm appearance is a free, owner-only service at a surveyed clinic chair.
+Use the target row **Customize my cyberarms**, or `/opx.ripperdoc.style`, with
+native Gorilla Arms installed. Choose an installed model and enter two six-digit
+sRGB hex colors. The server checks the character, clinic, bucket, installed arms,
+record syntax and RGB bounds, then projects the selection only to its owner.
+The character's `cyberarmStyle` metadata is written after native acceptance.
+Failed application, an expired acknowledgement or a character switch keeps the
+previous saved selection. Removing arm implants releases the cosmetic override;
+the saved selection remains available for a later installation.
+
+`STYLES.ENABLED` disables new customization requests. `STYLES.RECORDS` is an
+optional `record = true` allowlist; empty means any installed cosmetic identifier
+with valid syntax. The local native catalogue and setter validate installed
+models; this free service never treats catalogue membership as implant ownership
+or authorizes an ability or purchase. Saved RGB is restored after character load
+and native body reset, with bounded retries for body readiness. An unavailable
+saved model is retained and reported rather than substituted.
+
+Requires Cyberpunk 2077 2.5 and Open77 **2.50.0+op77.152** or later. The devkit
+catalogue currently available during implementation is op77.148 and cannot verify
+these newer functions; availability is checked at runtime against the documented
+op77.152 API. Model replacement waits for holstered cyberarms. RGB colors are
+local to the owner: this release has no remote-player RGB projection API.
+Native appearance, streaming and reconnect behavior still require live testing.
 
 ### Netrunner
 
@@ -1691,6 +1749,14 @@ carries a labelled hand copy of the tokens.
 
 ---
 
+Interaction candidate collection, including stale-owner cleanup and group sorting,
+is paced before the target predicate slicer runs. Closing the eye invalidates the
+in-flight collection. `tests/audit-target-budget.lua` exercises the full 128-row
+registry and checks both ordering and cancellation; the main suite measures the
+page callback and its worker resumes. Appearance warnings about missing looks
+require an actually nearby player, so joining an empty server is not reported as
+failed replication.
+
 ## Tests
 
 `tests/run.lua` boots the real manifest against a stub platform in `tests/host.lua`
@@ -1720,7 +1786,9 @@ git archive --format=tar HEAD open77.lua config core lib locales modules web \
 ```
 
 Archive from the **commit**, not the working tree, so what is deployed is what is
-recorded. `opx_lib` must be installed and listed in the server's `resources.load`
+recorded. When upgrading the base game, review `simulation.expectedGameBuild`
+in the preserved host configuration as well: Cyberpunk 2077 2.5 uses `25000`;
+leaving `23100` rejects verified 2.5 clients even with an updated server binary. `opx_lib` must be installed and listed in the server's `resources.load`
 before `opx_infinity`, or the platform refuses to start this resource.
 
 Never `DROP DATABASE` — the grants live with it and the server authenticates as a

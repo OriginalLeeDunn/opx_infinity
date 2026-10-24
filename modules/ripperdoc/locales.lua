@@ -6,6 +6,16 @@
 -- LABEL and a chrome's LABEL are the operator's own words and never translated.
 
 local EN = {
+	['ripperdoc.style.title'] = 'CYBERARM STYLE',
+	['ripperdoc.style.scope'] = 'Free cosmetic service. Holster your arms to change models. Colors are local to your game.',
+	['ripperdoc.style.model'] = 'Arm model',
+	['ripperdoc.style.primary'] = 'Primary RGB (six hex digits)',
+	['ripperdoc.style.secondary'] = 'Secondary RGB (six hex digits)',
+	['ripperdoc.style.saved'] = 'Cyberarm style saved.',
+	['ripperdoc.style.unavailable'] = 'Enter a surveyed clinic with Gorilla Arms installed. Open77 op77.152 or later is required.',
+	['ripperdoc.style.invalid'] = 'Choose an allowed model and two six-digit RGB colors.',
+	['ripperdoc.style.row'] = 'Customize my cyberarms',
+
 	['ripperdoc.title'] = 'RIPPERDOC',
 	['ripperdoc.row.chart'] = 'Ripperdoc: open the chart',
 	['ripperdoc.row.stash'] = 'Parts stash',
@@ -109,6 +119,16 @@ local EN = {
 }
 
 local FR = {
+	['ripperdoc.style.title'] = 'STYLE DES CYBERBRAS',
+	['ripperdoc.style.scope'] = 'Service cosmétique gratuit. Rangez vos bras pour changer de modèle. Les couleurs sont locales à votre jeu.',
+	['ripperdoc.style.model'] = 'Modèle des bras',
+	['ripperdoc.style.primary'] = 'RGB principal (six chiffres hexadécimaux)',
+	['ripperdoc.style.secondary'] = 'RGB secondaire (six chiffres hexadécimaux)',
+	['ripperdoc.style.saved'] = 'Style des cyberbras sauvegardé.',
+	['ripperdoc.style.unavailable'] = 'Rejoignez une clinique configurée avec des bras de gorille installés. Open77 op77.152 minimum requis.',
+	['ripperdoc.style.invalid'] = 'Choisissez un modèle autorisé et deux couleurs RGB à six chiffres.',
+	['ripperdoc.style.row'] = 'Personnaliser mes cyberbras',
+
 	['ripperdoc.title'] = 'CHARCUDOC',
 	['ripperdoc.row.chart'] = 'Charcudoc : ouvrir le dossier',
 	['ripperdoc.row.stash'] = 'Réserve de pièces',

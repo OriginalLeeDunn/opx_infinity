@@ -3,10 +3,10 @@
 
 OPX.Locale.Register('fr', {
 	['error.unavailable'] = "Ce n'est pas disponible pour le moment.",
-	['error.badRequest'] = "Cette requête n'a pas pu être lue.",
-	['error.payloadRefused'] = 'Cette réponse était trop volumineuse pour être affichée.',
+	['error.badRequest'] = "Cette action n'a pas pu être effectuée. Vous pouvez réessayer.",
+	['error.payloadRefused'] = 'Cette information ne peut pas être affichée pour le moment.',
 	['error.rpc_timeout'] = 'Cela a pris trop de temps. Réessayez.',
-	['error.rpc_failed'] = "Cela n'a pas abouti.",
+	['error.rpc_failed'] = 'Impossible de terminer cette action pour le moment. Réessayez dans un instant.',
 	['error.tooFast'] = 'Doucement.',
 	['error.noPermission'] = 'Vous ne pouvez pas faire cela.',
 	['error.incapacitated'] = 'Pas pendant que vous êtes à terre.',
@@ -17,7 +17,8 @@ OPX.Locale.Register('fr', {
 	['notify.kind.info'] = 'INFO',
 	['notify.kind.success'] = 'FAIT',
 	['notify.kind.warning'] = 'ATTENTION',
-	['notify.kind.error'] = 'ÉCHEC',
+	['notify.kind.error'] = 'ACTION IMPOSSIBLE',
+	['notify.errorHelp'] = 'Si cela vous semble être une erreur, contactez un administrateur.',
 })
 
 -- The creator surface: what an export answers another resource when it refuses.

@@ -67,6 +67,7 @@ local ROSTER_RADIUS = 60.0
 local HEAL_MS = 30000
 local rosterAtMs = 0
 local rosterWarned = false
+local rosterNear = nil
 -- When each undrawable peer was last asked about.
 local healedAt = {}
 
@@ -207,6 +208,7 @@ local function reportRoster()
 	local players = Open77.players
 	local nearby = type(players) == 'table' and players.nearby or nil
 	if type(nearby) ~= 'function' then
+		rosterNear = nil
 		if not rosterWarned then
 			rosterWarned = true
 			Open77.log.warn('[appearance] Open77.players.nearby is not on this client: the remote ' ..
@@ -216,6 +218,7 @@ local function reportRoster()
 	end
 	local called, list, reason = pcall(nearby, ROSTER_RADIUS, { includeSelf = false, limit = 32 })
 	if not called or type(list) ~= 'table' then
+		rosterNear = nil
 		Open77.log.warn(('[appearance] the roster could not be read: %s')
 			:format(tostring(called and reason or list)))
 		return false
@@ -251,6 +254,7 @@ local function reportRoster()
 			end
 		end
 	end
+	rosterNear = near
 	Open77.log.info(('[appearance] roster: %d near, %d with an entity, %d dressed by this ' ..
 		'client, %d undrawn'):format(near, bodied, dressed, undrawn))
 	return true
@@ -277,6 +281,7 @@ function M.Presence.Check()
 	-- with nobody in it: the server says how many looks it holds, and this says
 	-- whether any of them ever reached this client.
 	if replayAnsweredAtMs ~= 0 and not verdictSaid and next(drawn) == nil and
+		type(rosterNear) == 'number' and rosterNear > 0 and
 		Runtime.NowMs() - replayAnsweredAtMs > VERDICT_MS then
 		verdictSaid = true
 		Open77.log.warn('[appearance] the look request was answered and no look has arrived: ' ..
@@ -294,6 +299,7 @@ function M.Presence.Renew()
 	drawn = {}
 	healedAt = {}
 	replayAnsweredAtMs, verdictSaid = 0, false
+	rosterNear = nil
 end
 
 --- Withdraws this player's body until the next publication.
@@ -334,6 +340,7 @@ function M.Presence.Init()
 	drawn = {}
 	healedAt = {}
 	replayAnsweredAtMs, verdictSaid = 0, false
+	rosterNear = nil
 end
 
 --- Registers the look traffic.

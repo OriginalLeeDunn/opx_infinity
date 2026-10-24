@@ -546,11 +546,16 @@ function Model.New(alive)
 	-- @author dop42
 	-- @param context table
 	-- @return table[]
-	function registry.Candidates(context)
-		registry.Sweep()
-		local out = {}
-		for _, row in pairs(rows) do
-			if registry.Matches(row, context) then out[#out + 1] = row end
+	function registry.Candidates(context, checkpoint)
+		if not checkpoint then registry.Sweep() end
+		local out, walked = {}, 0
+		for token, row in pairs(rows) do
+			if registry.Matches(row, context) then out[#out + 1] = row
+			elseif checkpoint and not alive(row.owner, row.generation) then rows[token] = nil end
+			if checkpoint then
+				walked = walked + 1
+				if walked % 8 == 0 and checkpoint() == false then return nil end
+			end
 		end
 
 		-- A GROUP IS SORTED WHOLE, AT THE RANK OF ITS BEST ROW.
@@ -568,19 +573,46 @@ function Model.New(alive)
 		-- other -- `''` -- so an owner that wants its own row above every folder
 		-- still says so with `order` and nothing else.
 		local rank = {}
-		for _, row in ipairs(out) do
+		for index, row in ipairs(out) do
 			local best = rank[row.group]
 			if best == nil or row.order < best then rank[row.group] = row.order end
+			if checkpoint and index % 16 == 0 and checkpoint() == false then return nil end
 		end
 
-		table.sort(out, function(left, right)
+		local function before(left, right)
 			local a, b = rank[left.group], rank[right.group]
 			if a ~= b then return a < b end
 			if left.group ~= right.group then return left.group < right.group end
 			if left.order ~= right.order then return left.order < right.order end
 			if left.label ~= right.label then return left.label < right.label end
 			return left.sequence < right.sequence
-		end)
+		end
+		if not checkpoint then
+			table.sort(out, before)
+			return out
+		end
+
+		-- table.sort cannot yield from its comparator. Merge in bounded runs so
+		-- even a dense staff registry fits the client's per-resume budget.
+		if checkpoint() == false then return nil end
+		local scratch, width, work = {}, 1, 0
+		while width < #out do
+			for first = 1, #out, width * 2 do
+				local left, right = first, first + width
+				local middle, last = math.min(first + width - 1, #out), math.min(first + width * 2 - 1, #out)
+				for index = first, last do
+					if right > last or (left <= middle and before(out[left], out[right])) then
+						scratch[index] = out[left]; left = left + 1
+					else
+						scratch[index] = out[right]; right = right + 1
+					end
+					work = work + 1
+					if work % 32 == 0 and checkpoint() == false then return nil end
+				end
+			end
+			out, scratch = scratch, out
+			width = width * 2
+		end
 		return out
 	end
 

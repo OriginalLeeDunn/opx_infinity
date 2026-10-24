@@ -64,7 +64,7 @@ const TAGS: Record<string, string> = {
   info: 'NOTICE',
   success: 'CONFIRMED',
   warning: 'CAUTION',
-  error: 'FAILED'
+  error: 'UNAVAILABLE'
 }
 
 const tag = computed(() => {
@@ -112,6 +112,9 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
            tag standing in as the header line is why this order is tag-then-title. -->
       <span v-if="title" class="title">{{ title }}</span>
       <span v-if="message" class="message">{{ message }}</span>
+      <span v-if="kind === 'error' && has('notify.errorHelp')" class="help op-copy">
+        {{ t('notify.errorHelp') }}
+      </span>
     </div>
 
     <!-- Driven, not a CSS animation: the bar has to track the deadline Lua is also
@@ -213,6 +216,11 @@ const barScale = computed(() => `scaleX(${Math.max(0, Math.min(1, props.progress
 .message {
   font: 400 var(--op-fs-body) / 1.35 var(--op-font-body);
   opacity: 0.82;
+  overflow-wrap: anywhere;
+}
+
+.help {
+  opacity: 0.75;
   overflow-wrap: anywhere;
 }
 

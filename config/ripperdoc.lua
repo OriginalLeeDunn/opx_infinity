@@ -26,6 +26,11 @@
 OPX.Config.MODULES.ripperdoc = {
 	enabled = true,
 
+	-- Free cosmetic service for the owner's installed Gorilla Arms at a clinic.
+	-- An empty RECORDS table accepts installed catalogue identifiers; populate
+	-- it with record=true entries to restrict the models available on this server.
+	STYLES = { ENABLED = true, RECORDS = {} },
+
 	-- ── the doc ────────────────────────────────────────────────────────────
 
 	-- primary: the WORKED job counts; any: every membership counts for the grade

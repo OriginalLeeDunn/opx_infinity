@@ -9,6 +9,7 @@ import HudStatus from './HudStatus.vue'
 import HudVehicle from './HudVehicle.vue'
 import HudVitals from './HudVitals.vue'
 import HudVoice from './HudVoice.vue'
+import HudWeapons from './HudWeapons.vue'
 import { anchorOf } from './anchors'
 import type { Anchor } from './anchors'
 
@@ -145,6 +146,7 @@ onMounted(() => {
          top-right). It therefore carries its own perspective and its own tilt sign; every
          other block gets both from the `.at` it sits in. -->
     <HudVoice :segments="layout.voiceSegments" />
+    <HudWeapons />
   </div>
 </template>
 

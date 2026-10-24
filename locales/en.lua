@@ -7,14 +7,14 @@
 
 OPX.Locale.Register('en', {
 	['error.unavailable'] = 'That is not available right now.',
-	['error.badRequest'] = 'That request could not be read.',
-	['error.payloadRefused'] = 'That answer was too large to display.',
+	['error.badRequest'] = 'This action could not be completed. Please try again.',
+	['error.payloadRefused'] = 'This information cannot be displayed right now.',
 	-- The two codes the PAGE invents when Lua never answers, or answers a failure
 	-- with no code of its own (`ui/src/bridge/rpc.ts`). They were registered in
 	-- neither catalogue, and `useLocale` answers the key on a miss -- so a request
 	-- that timed out printed the literal string `error.rpc_timeout` in the view.
 	['error.rpc_timeout'] = 'That took too long. Try again.',
-	['error.rpc_failed'] = 'That did not go through.',
+	['error.rpc_failed'] = 'This action could not be completed right now. Please try again in a moment.',
 	['error.tooFast'] = 'Slow down.',
 	['error.noPermission'] = 'You may not do that.',
 	['error.incapacitated'] = 'Not while you are down.',
@@ -25,7 +25,8 @@ OPX.Locale.Register('en', {
 	['notify.kind.info'] = 'NOTICE',
 	['notify.kind.success'] = 'CONFIRMED',
 	['notify.kind.warning'] = 'CAUTION',
-	['notify.kind.error'] = 'FAILED',
+	['notify.kind.error'] = 'UNABLE TO COMPLETE',
+	['notify.errorHelp'] = 'If you think this is a mistake, contact an administrator.',
 })
 
 -- The creator surface: what an export answers another resource when it refuses.

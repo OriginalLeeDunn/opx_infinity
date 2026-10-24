@@ -380,6 +380,7 @@ end
 
 local weapons = section(Config.WEAPONS, 'WEAPONS')
 Options.WEAPONS = weapons.ENABLED ~= false
+Options.DUAL_WIELD = weapons.DUAL_WIELD ~= false
 Options.WEAPON_SLOT = bounded('WEAPONS.SLOT', weapons.SLOT, 1, 3, 1)
 Options.REMOVE_UNBACKED = weapons.REMOVE_UNBACKED ~= false
 Options.WEAPON_SCAN_MS = bounded('WEAPONS.SCAN_MS', weapons.SCAN_MS, 1000, 600000, 5000)
