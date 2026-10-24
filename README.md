@@ -30,7 +30,7 @@
 ## What it is
 
 `opx_infinity` is the whole OPX//77 framework in **a single Open77 resource**: a core
-runtime, 36 gameplay modules, one Vue WebUI page and one test suite. It replaced
+runtime, gameplay modules, one Vue WebUI page and one test suite. It replaced
 twenty-one `opx77_*` resources in September 2026. Modules talk to each other through
 in-process contracts; other resources reach it through a curated set of exports and
 public server events.
@@ -89,9 +89,12 @@ the [docs site](https://opx77-framework.github.io/opx77_doc/docs/opx_infinity).
 You need an **Open77 dedicated server**, a **MySQL** database, and the OPX repositories:
 [`opx_lib`](https://github.com/opx77-framework/opx_lib) (the client library) and this
 one, plus [`opx_pool_assets`](https://github.com/opx77-framework/opx_pool_assets)
-for the cooked billiards assets. Table-decoration cleanup additionally needs the
+(**0.3.1+**) for the cooked billiards assets. Full-rack rendering needs Open77
+**op77.152+**. Pool mesh links and table-decoration cleanup need the
 [Open77 ArchiveXL port for Cyberpunk 2.5](https://github.com/Open2077/archive-xl).
-Its distribution must be verified separately; see the asset repository guide. The full guide is [Install](https://opx77-framework.github.io/opx77_doc/docs/getting-started/install).
+Install the compatible loader in each actual game client and enable it in the
+Open77 profile; see [Pool assets and ArchiveXL](https://opx77-framework.github.io/opx77_doc/docs/getting-started/pool-assets).
+The committed WebUI needs no npm build. The full guide is [Install](https://opx77-framework.github.io/opx77_doc/docs/getting-started/install).
 
 1. **Copy the resources** into the server's resource root. The folder name must
    equal the resource name. The server only needs
@@ -110,8 +113,8 @@ Its distribution must be verified separately; see the asset repository guide. Th
    through the launcher to mount the asset package. Keep the server’s configured
    mod review/consent policy. Do not request an indexed `archivexl` package unless
    that ID actually exists in the current platform catalogue. Do not add a
-   DLL-preloading resource to a secured world. Cleanup remains unverified until
-   the compatible loader has been distributed and tested.
+   DLL-preloading resource to a secured world. Verify client ArchiveXL logs and
+   in-game ball rendering/cleanup after a fresh launcher boot.
 
    ```jsonc
    // server.jsonc
@@ -125,14 +128,21 @@ Its distribution must be verified separately; see the asset repository guide. Th
    }
    ```
 
-3. **Connect the database.** Tables are created at first boot; there is nothing to import.
+3. **Connect the database.** Create a MySQL/MariaDB database and dedicated account
+   first. Tables are created at boot; there is nothing to import. Set credentials
+   in the environment of the actual service or hosting panel, not an unrelated SSH shell.
 
    ```jsonc
    // server.jsonc
-   "database": { "enabled": true, "connectionString": "Server=...;Database=...;User ID=...;Password=..." }
+   "database": { "enabled": true, "connectionString": "", "connectionStringEnvironmentVariable": "OP77_DATABASE_CONNECTION" }
    ```
 
-4. **Grant staff rights** in the ACL file named by `accessControl.file` (usually
+   Set `OP77_DATABASE_CONNECTION` to a MySqlConnector connection string.
+   Restart the dedicated server after database/HTTP changes. For Cyberpunk 2.5,
+   verify `simulation.expectedGameBuild` is `25000`.
+
+4. **Grant staff rights** to your exported public identity (`identity.dump`),
+   preserving its `userId` and `publicKey`, in the ACL file named by `accessControl.file` (usually
    `acl.jsonc`). A command namespace needs **both** its opener and its `.*` actions:
 
    ```text
@@ -150,6 +160,13 @@ Its distribution must be verified separately; see the asset repository guide. Th
 Server toasts (`OPX.Notify`, `OPX.NotifyLocale`) are drawn by this resource's own
 overlay, in the configured theme. The platform's `open77_notifications` package is not
 needed for them.
+
+For pictures, follow [Images and Fivemanage](https://opx77-framework.github.io/opx77_doc/docs/getting-started/images):
+upload from `opx_images`, set the account key in server-only `config/images.lua`,
+and enable the Open77 HTTP allow-list. Logical image names stay unchanged.
+Before updating an existing installation, follow
+[Upgrade safely](https://opx77-framework.github.io/opx77_doc/docs/getting-started/upgrade)
+to preserve local settings, surveyed points and database receipts.
 
 ## Configuration
 

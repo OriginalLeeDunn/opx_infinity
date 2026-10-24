@@ -195,8 +195,8 @@ the operator cannot recolour.
 
 Archive from the **commit**, not the working tree, then restart and read the journal
 back in the same change — a green suite says nothing about the running server. See
-[docs/MANUAL.md, "Deploying"](docs/MANUAL.md#deploying). Never `DROP DATABASE`; empty
-tables instead, after a `mysqldump`.
+[docs/MANUAL.md, "Deploying"](docs/MANUAL.md#deploying). Preserve local configuration and take an on-host database backup first. Never
+`DROP DATABASE` or empty tables as an upgrade step.
 
 ## Licence
 
