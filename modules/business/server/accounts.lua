@@ -96,14 +96,14 @@ local function serial(names, body)
 	release()
 	if not ok then
 		Open77.log.error('[business] a treasury movement raised: ' .. safe(answer))
-		return Result.Err('accounts.failed', tostring(answer))
+		return Result.Err('accounts.unknown', 'treasury operation interrupted; reconcile its receipt')
 	end
 	return answer
 end
 
 local function integerOf(value) return math.tointeger(tonumber(value)) end
 
-local function announce(kind, key, delta, balance, reason, opId, actor)
+local function publishMovement(kind, key, delta, balance, reason, opId, actor)
 	OPX.Publish(M.Event.ON_ACCOUNT, nil, { kind = kind, key = key, delta = delta,
 		balance = balance, reason = reason })
 	OPX.Audit.Log({
@@ -112,6 +112,11 @@ local function announce(kind, key, delta, balance, reason, opId, actor)
 		data = { opId = opId, by = actor },
 		owner = 'business',
 	})
+end
+
+-- Optional listeners cannot turn a committed credit into a refundable failure.
+local function announce(...)
+	if not pcall(publishMovement, ...) then Open77.log.error('[business] committed movement notification failed') end
 end
 
 --- Checks the arguments every movement shares, answering the op or a refusal.
@@ -149,6 +154,7 @@ local function move(op, sign)
 		if not prior.ok then return Result.Err('accounts.failed', prior.detail) end
 		if prior.value ~= nil then return fromReceipt(prior.value, op, sign) end
 
+		op.attempt = M.Accounts.Mint('attempt')
 		local wrote = sign > 0 and Store.Credit(op) or Store.Debit(op)
 		local after = Store.Receipt(op.id)
 		if not after.ok then
@@ -161,16 +167,41 @@ local function move(op, sign)
 		end
 		local row = after.value
 		if row == nil then
-			if not wrote.ok then return Result.Err('accounts.failed', wrote.detail) end
+			if not wrote.ok then
+				return Result.Err(wrote.error == 'transaction-raised' and 'accounts.unknown' or 'accounts.failed', op.id)
+			end
 			if sign < 0 then return Result.Err('insufficient_funds') end
 			return Result.Err('accounts.failed', 'no receipt')
 		end
-		if not wrote.ok then return fromReceipt(row, op, sign) end
+		if not wrote.ok or row.attempt_token ~= op.attempt then return fromReceipt(row, op, sign) end
 
 		local balance = integerOf(row.balance_after) or 0
 		announce(op.kind, op.group, sign * op.amount, balance, op.reason, op.id, op.actor)
 		return Result.Ok({ balance = balance, opId = op.id })
 	end)
+end
+
+--- Pays a loaded character from company funds in one wallet transaction.
+function M.Accounts.PayCitizen(kind, key, citizenId, moneyType, amount, reason, opId, changes)
+	local op, refused = prepare(kind, key, amount, reason, opId, citizenId, 'pay')
+	if not op then return refused end
+	local character = OPX.Api.Get('character')
+	if not character or type(character.AtomicMoney) ~= 'function' then return Result.Err('accounts.failed') end
+	local function preparePayment(context)
+		context.publish = function()
+			local receipt = Store.Receipt(context.id)
+			if receipt.ok and receipt.value then
+				announce(kind, key, -op.amount, tonumber(receipt.value.balance_after), op.reason, op.id, citizenId)
+			end
+		end
+		return function(attempt) return Store.WalletStatements(attempt, kind, key, op.amount, false) end
+	end
+	if changes then
+		local inventory = OPX.Api.Get('inventory')
+		if not inventory or type(inventory.AtomicTrade) ~= 'function' then return Result.Err('accounts.failed') end
+		return inventory.AtomicTrade(citizenId, moneyType, op.amount, changes, op.reason, op.id, preparePayment)
+	end
+	return character.AtomicMoney(citizenId, moneyType, op.amount, 'add', op.reason, op.id, preparePayment)
 end
 
 --- One account's balance.
@@ -260,6 +291,7 @@ function M.Accounts.Transfer(fromKind, fromKey, toKind, toKey, amount, reason, o
 		if prior == nil then return Result.Err('accounts.failed', 'receipt read') end
 		if prior.out ~= nil then return answer(prior, true) end
 
+		plan.attempt = M.Accounts.Mint('attempt')
 		local wrote = Store.Move(plan)
 		local after = receipts()
 		if after == nil then
@@ -268,10 +300,12 @@ function M.Accounts.Transfer(fromKind, fromKey, toKind, toKey, amount, reason, o
 			return Result.Err('accounts.unknown', op.id)
 		end
 		if after.out == nil then
-			if not wrote.ok then return Result.Err('accounts.failed', wrote.detail) end
+			if not wrote.ok then
+				return Result.Err(wrote.error == 'transaction-raised' and 'accounts.unknown' or 'accounts.failed', op.id)
+			end
 			return Result.Err('insufficient_funds')
 		end
-		if not wrote.ok then return answer(after, true) end
+		if not wrote.ok or after.out.attempt_token ~= plan.attempt then return answer(after, true) end
 
 		local paid = answer(after, false)
 		if paid.ok then
@@ -320,7 +354,9 @@ function M.Accounts.Note(kind, key, amount, reason, opId, actor)
 	local balance = M.Accounts.Balance(kind, key)
 	op.balance = balance.ok and balance.value.balance or nil
 	local wrote = Store.Note(op)
-	if not wrote.ok then return Result.Err('accounts.failed', wrote.detail) end
+	if not wrote.ok then
+		return Result.Err(wrote.error == 'transaction-raised' and 'accounts.unknown' or 'accounts.failed', op.id)
+	end
 	if (math.tointeger(wrote.value) or 0) > 0 then
 		announce(op.kind, op.group, op.amount, op.balance, op.reason, op.id, op.actor)
 	end
@@ -331,4 +367,9 @@ end
 -- @author dop42
 function M.Accounts.Reset()
 	busy = {}
+end
+
+--- Announces an already committed wallet/company transfer without writing again.
+function M.Accounts.WalletCommitted(kind, key, delta, balance, reason, opId, actor)
+	announce(kind, key, delta, balance, reason, opId, actor)
 end

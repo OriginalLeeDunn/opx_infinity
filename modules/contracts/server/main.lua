@@ -10,7 +10,7 @@
 --   reserve the operation in the ledger (`contracts:<id>:<phase>`, a primary
 --   key, so a replay finds the first receipt and moves nothing)
 --   -> move the money
---   -> commit the operation (or cancel it, and nothing moved)
+--   -> commit the operation; unknown replies stay reserved and replay by id
 --
 -- and a terminal outcome is written as `settling` BEFORE any payment, so a
 -- restart halfway through a settlement settles again rather than forgetting
@@ -37,6 +37,8 @@ local Result = OPX.Result
 local contracts = {}
 -- Gig ids with an action in flight: the in-memory claim.
 local claims = {}
+-- Ambiguous legacy operations require staff review; never guess a payment.
+local quarantined = {}
 -- Objective types by name.
 local types = {}
 -- The NPCs this module stands up, by id as a decimal string.
@@ -321,6 +323,7 @@ end
 -- @return boolean
 -- @return string|nil
 local function operate(contract, phase, citizenId, amount, run)
+	if quarantined[contract.id] then return false, 'orphaned' end
 	amount = math.tointeger(amount) or 0
 	if amount <= 0 then return true end
 	local op = { id = ('contracts:%d:%s'):format(contract.id, phase), contractId = contract.id,
@@ -328,15 +331,18 @@ local function operate(contract, phase, citizenId, amount, run)
 	local reserved = M.Storage.Reserve(op)
 	if not reserved.ok then return false, 'storage' end
 	if not reserved.value.fresh then
+		if not reserved.value.durable then quarantined[contract.id] = true; return false, 'orphaned' end
 		if reserved.value.state == 'committed' then return true end
-		if reserved.value.state ~= 'cancelled' then return false, 'in_flight' end
-		-- A cancelled attempt moved nothing: take it again.
-		local rearmed = M.Storage.Rearm(op.id)
-		if not rearmed.ok or rearmed.value ~= true then return false, 'in_flight' end
+		if reserved.value.state == 'orphaned' then quarantined[contract.id] = true; return false, 'orphaned' end
+		if reserved.value.state == 'cancelled' then
+			-- Only versioned, definitely cancelled operations can be rearmed.
+			local rearmed = M.Storage.Rearm(op.id)
+			if not rearmed.ok or rearmed.value ~= true then return false, 'in_flight' end
+		elseif reserved.value.state ~= 'reserved' then return false, 'in_flight' end
 	end
-	local called, ok, why = pcall(run)
-	if not called then ok, why = false, ok end
-	local settled = M.Storage.Settle(op.id, ok and 'committed' or 'cancelled')
+	local called, ok, why = pcall(run, op.id)
+	if not called then ok, why = false, 'money.pending' end
+	local settled = ok and M.Storage.Settle(op.id, 'committed') or { ok = true }
 	if not settled.ok then
 		Open77.log.error(('[contracts] %s moved=%s but the ledger was not updated: %s')
 			:format(op.id, tostring(ok), safe(settled.detail or settled.error)))
@@ -353,10 +359,10 @@ local function operate(contract, phase, citizenId, amount, run)
 end
 
 --- Pays a character, online or not.
-local function pay(citizenId, amount, reason)
+local function pay(citizenId, amount, reason, opId)
 	local api = characterApi()
 	if api == nil or type(api.AddMoneyOffline) ~= 'function' then return false, 'no_character' end
-	local answer = api.AddMoneyOffline(citizenId, Access.CURRENCY, amount, reason)
+	local answer = api.AddMoneyOffline(citizenId, Access.CURRENCY, amount, reason, opId)
 	if type(answer) == 'table' and answer.ok == true then return true end
 	return false, type(answer) == 'table' and answer.error or 'not_paid'
 end
@@ -433,6 +439,7 @@ local ENDINGS = {
 --- every payment is a ledger operation and a done one is not repeated.
 -- @return boolean whether the gig is closed
 local function finish(contract)
+	if quarantined[contract.id] then return false end
 	local outcome = contract.outcome
 	local id = contract.id
 	local reason = ('contracts:%d:%s'):format(id, tostring(outcome))
@@ -441,21 +448,21 @@ local function finish(contract)
 	if outcome == State.PAID then
 		local merc, cut = Access.Split(contract.reward, contract.cutPct)
 		local phase = contract.funded == M.Funded.MINT and Phase.MINT or Phase.COMMIT
-		ok = operate(contract, phase, contract.mercCid, merc, function()
-			return pay(contract.mercCid, merc, reason)
+		ok = operate(contract, phase, contract.mercCid, merc, function(opId)
+			return pay(contract.mercCid, merc, reason, opId)
 		end) and ok
 		-- THE CUT GOES BACK TO A PLAYER FIXER, who fronted the escrow; an NPC
 		-- fixer's cut, and an external poster's with nobody to receive it, is
 		-- destroyed: a sink, not a transfer.
 		if contract.posterKind ~= M.Poster.NPC and contract.posterCid ~= nil then
-			ok = operate(contract, Phase.CUT, contract.posterCid, cut, function()
-				return pay(contract.posterCid, cut, reason .. ':cut')
+			ok = operate(contract, Phase.CUT, contract.posterCid, cut, function(opId)
+				return pay(contract.posterCid, cut, reason .. ':cut', opId)
 			end) and ok
 		end
 	else
 		if contract.funded == M.Funded.PLAYER and contract.payerCid ~= nil then
-			ok = operate(contract, Phase.REFUND, contract.payerCid, contract.reward, function()
-				return pay(contract.payerCid, contract.reward, reason .. ':refund')
+			ok = operate(contract, Phase.REFUND, contract.payerCid, contract.reward, function(opId)
+				return pay(contract.payerCid, contract.reward, reason .. ':refund', opId)
 			end) and ok
 		end
 		local failedMerc = outcome == State.FAILED and contract.mercCid ~= nil
@@ -463,15 +470,31 @@ local function finish(contract)
 		if fine > 0 then
 			-- From an ONLINE merc who can pay it; nobody is put in debt by a gig. A
 			-- merc who cannot is recorded as fined zero and the op is closed.
-			ok = operate(contract, Phase.PENALTY, contract.mercCid, fine, function()
-				local player = sourceOf(contract.mercCid)
+			ok = operate(contract, Phase.PENALTY, contract.mercCid, fine, function(opId)
 				local api = characterApi()
-				if player == nil or api == nil then return true end
-				local taken = api.RemoveMoney(player, Access.CURRENCY, fine, reason .. ':fine')
-				if not taken then return true end
-				tell(player, 'contracts.fined', { amount = money(fine) }, 'warning')
+				if not api then return false, 'no_character' end
+				if api.IsMoneyPending(contract.mercCid, opId) then return false, 'money.pending' end
+				local receipt = api.MoneyReceipt(opId)
+				if not receipt.ok then return false, 'money.pending' end
+				if receipt.value then
+					local row = receipt.value
+					if row.citizen_id ~= contract.mercCid or row.action ~= 'remove'
+						or row.money_type ~= Access.CURRENCY or tonumber(row.amount) ~= fine then
+						return false, 'orphaned'
+					end
+				else
+					if api.IsMoneyPending(contract.mercCid, opId) then return false, 'money.pending' end
+					local player = sourceOf(contract.mercCid)
+					if player == nil then return true end
+					local taken, why = api.RemoveMoney(player, Access.CURRENCY, fine, reason .. ':fine', opId)
+					if not taken then
+						if why == 'money.insufficient' or why == 'money.vetoed' then return true end
+						return false, why
+					end
+					tell(player, 'contracts.fined', { amount = money(fine) }, 'warning')
+				end
 				if contract.funded == M.Funded.PLAYER and contract.payerCid ~= nil then
-					return pay(contract.payerCid, fine, reason .. ':fine')
+					return pay(contract.payerCid, fine, reason .. ':fine', opId .. ':pay')
 				end
 				return true
 			end) and ok
@@ -607,15 +630,16 @@ local function create(spec, who)
 	if who.funded == M.Funded.PLAYER then
 		local api = characterApi()
 		local total = spec.reward + Access.POST_FEE
-		local escrowed, why = operate(record, Phase.RESERVE, who.payerCid, total, function()
+		local escrowed, why = operate(record, Phase.RESERVE, who.payerCid, total, function(opId)
 			-- THE SAME CHARACTER, checked after every yield above: a connection
 			-- that switched character meanwhile is not the payer any more.
 			if citizenOf(who.player) ~= who.payerCid then return false, 'character_changed' end
 			return api.RemoveMoney(who.player, Access.CURRENCY, total,
-				('contracts:%d:escrow'):format(record.id))
+				('contracts:%d:escrow'):format(record.id), opId)
 		end)
 		if not escrowed then
-			M.Storage.Forget(record.id)
+			-- Unknown dispatches retain their locking row for receipt recovery.
+			contracts[record.id] = record
 			if why == 'money.insufficient' then return false, 'not_enough_money' end
 			return false, 'escrow_failed'
 		end
@@ -1243,21 +1267,62 @@ end
 
 -- ── boot and the sweep ──────────────────────────────────────────────────────
 
+--- Recover only escrow proved by the durable wallet ledger. No proof means
+--- no refund; a legacy reservation remains available for manual investigation.
+local function recoverLocking(record)
+	local opId = ('contracts:%d:%s'):format(record.id, Phase.RESERVE)
+	local info = M.Storage.OpInfo(opId)
+	if not info.ok then return false end
+	if info.value and (tonumber(info.value.durable_version) ~= 1 or info.value.state == 'orphaned') then
+		quarantined[record.id] = true
+		Open77.log.error(('[contracts] gig %d escrow quarantined: legacy/unknown payment'):format(record.id))
+		return false
+	end
+	local api = characterApi()
+	if not api or type(api.MoneyReceipt) ~= 'function' then return false end
+	-- Check before the yielding read: recovery may complete while an earlier
+	-- receipt snapshot is in flight, clearing Pending after that snapshot.
+	if api.IsMoneyPending(record.payerCid, opId) then return false end
+	local receipt = api.MoneyReceipt(opId)
+	if not receipt.ok then return false end
+	if receipt.value then
+		local row = receipt.value
+		if not info.value or row.citizen_id ~= record.payerCid or row.action ~= 'remove'
+			or row.money_type ~= Access.CURRENCY or tonumber(row.amount) ~= tonumber(info.value.amount) or tonumber(row.amount) < record.reward then
+			quarantined[record.id] = true
+			return false
+		end
+		local marked = M.Storage.Settle(opId, 'committed')
+		if not marked.ok then return false end
+		return settle(record, State.CANCELLED, nil, nil)
+	end
+	if api.IsMoneyPending(record.payerCid, opId) then return false end
+	if info.value and info.value.state == 'committed' then
+		quarantined[record.id] = true
+		return false
+	end
+	local forgotten = M.Storage.Forget(record.id)
+	if not forgotten.ok then return false end
+	contracts[record.id] = nil
+	return true
+end
+
 --- Loads every open gig and finishes what a dead process left half done.
 local function reconcile()
 	local pending = M.Storage.Pending()
 	if pending.ok then
 		for _, op in ipairs(pending.value) do
-			-- A RESERVED OPERATION IS AN UNKNOWN: the money may or may not have
-			-- moved. It is never guessed at -- not repaid, not retried -- but
-			-- marked `orphaned` and put in front of staff with every number.
-			M.Storage.Settle(op.id, 'orphaned')
-			OPX.Audit.Log({ event = 'contracts.orphaned', severity = 'error',
-				message = ('%s: %d %s for %s may or may not have moved; check by hand')
-					:format(op.id, op.amount, Access.CURRENCY, tostring(op.citizenId)),
-				citizenId = op.citizenId, data = op })
-			Open77.log.error(('[contracts] ledger %s was left mid-payment (%d for %s); marked ' ..
-				'orphaned for staff'):format(op.id, op.amount, safe(op.citizenId)))
+			if not op.durable then quarantined[op.contractId] = true end
+			-- Legacy reservations lack a durable wallet proof and require staff.
+			if not op.durable then
+				M.Storage.Settle(op.id, 'orphaned')
+				OPX.Audit.Log({ event = 'contracts.orphaned', severity = 'error',
+					message = ('%s: %d %s for %s may or may not have moved; check by hand')
+						:format(op.id, op.amount, Access.CURRENCY, tostring(op.citizenId)),
+					citizenId = op.citizenId, data = op })
+				Open77.log.error(('[contracts] ledger %s was left mid-payment (%d for %s); marked ' ..
+					'orphaned for staff'):format(op.id, op.amount, safe(op.citizenId)))
+			end
 		end
 	end
 
@@ -1274,18 +1339,11 @@ local function reconcile()
 	end
 	for _, record in ipairs(read.value) do
 		if record.state == State.LOCKING then
-			local taken = M.Storage.Committed(('contracts:%d:%s'):format(record.id, Phase.RESERVE))
-			if taken.ok and taken.value == true then
-				-- The escrow was taken and the gig never reached the board.
-				settle(record, State.CANCELLED, nil, nil)
-			else
-				M.Storage.Forget(record.id)
-				contracts[record.id] = nil
-			end
+			recoverLocking(record)
 		elseif record.state == State.ACCEPTED then
 			-- Taken, but the objective never started: back on the board.
 			move(record, State.POSTED, { mercCid = false }, nil, { reason = 'restart' })
-		elseif record.state == State.SETTLING then
+		elseif record.state == State.SETTLING and not quarantined[record.id] then
 			finish(record)
 		end
 	end
@@ -1298,10 +1356,12 @@ local function sweep()
 	local now, nowMs = wall(), OPX.Now()
 	for _, id in ipairs(sortedIds()) do
 		local contract = contracts[id]
-		if contract ~= nil and not claims[id] then
+		if contract ~= nil and not claims[id] and not quarantined[id] then
 			local state = contract.state
 			local late = contract.deadlineAt <= now
-			if state == State.POSTED and late then
+			if state == State.LOCKING then
+				detached(id, function() recoverLocking(contract) end)
+			elseif state == State.POSTED and late then
 				detached(id, function() settle(contract, State.EXPIRED, nil, nil) end)
 			elseif (state == State.ACCEPTED or state == State.IN_PROGRESS) and late then
 				detached(id, function()
@@ -1438,9 +1498,11 @@ end
 --- Declares the tables and the tunables. Never yields.
 -- @author dop42
 function M.Init()
+	quarantined = {}
 	contracts, claims, npcs, holding, posting, windows, fixerClock, retried, accepting = {}, {}, {}, {}, {},
 		{}, {}, {}, {}
 	OPX.Schema.Add(M.Storage.SCHEMA)
+	OPX.Schema.AddColumns(M.Storage.COLUMNS)
 	OPX.Tune.Declare{
 		CONTRACT_FIXER_CUT = { value = Access.CUT_DEFAULT, type = 'integer', min = 0, max = 100,
 			unit = '%', apply = 'live', label = 'Default fixer cut', group = 'Contracts', order = 1,

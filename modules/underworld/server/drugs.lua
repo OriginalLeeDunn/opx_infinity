@@ -315,34 +315,12 @@ function Drugs.Offer(player, payload)
 		return M.Answer(player, false, 'deal_refused')
 	end
 	deals[state.id] = { seller = player, buyer = target, sellerCitizen = seller.citizenId,
-		buyerCitizen = buyer.citizenId, item = item, count = count, price = price, at = OPX.Now() }
+		buyerCitizen = buyer.citizenId, item = item, count = count, price = price, at = OPX.Now(),
+		currency = street().currency, moneyType = built().dirty.cleanType, dirtyItem = built().dirty.item }
 	dealOf[player] = state.id
 	M.Answer(player, true, 'deal_offered', { count = count, price = price })
 	M.Answer(target, true, 'deal_invited', { count = count, price = price })
 	return true
-end
-
---- Takes from one side; answers whether it went.
-local function take(target, name, count)
-	local removed = inventory().RemoveItem(target, name, count)
-	return type(removed) == 'table' and removed.ok == true
-end
-
-local function give(target, name, count)
-	local added = inventory().AddItem(target, name, count)
-	return type(added) == 'table' and added.ok == true
-end
-
---- Takes or gives the price.
-local function moveMoney(target, amount, out)
-	if street().currency == 'clean' then
-		local api = character()
-		local fn = out and api.RemoveMoney or api.AddMoney
-		local called, ok = pcall(fn, target, built().dirty.cleanType, amount, 'underworld:deal')
-		return called and ok == true
-	end
-	if out then return take(target, built().dirty.item, amount) end
-	return give(target, built().dirty.item, amount)
 end
 
 --- The swap, once the hand-over completed. Yields.
@@ -362,36 +340,26 @@ function Drugs.Complete(id)
 		local expected = target == deal.seller and seller or buyer
 		if live ~= nil and live.data == expected.data then M.Answer(target, success, code, params) end
 	end
-	-- Both sides give first; value is created on each side only after.
-	if not take(deal.sellerCitizen, deal.item, deal.count) then
-		answer(deal.seller, false, 'not_enough_items')
-		answer(deal.buyer, false, 'deal_failed')
+	local api = inventory()
+	if not api or type(api.AtomicPeerTrade) ~= 'function' then
+		answer(deal.seller, false, 'unavailable')
+		answer(deal.buyer, false, 'unavailable')
 		return false
 	end
-	if not moveMoney(deal.buyerCitizen, deal.price, true) then
-		give(deal.sellerCitizen, deal.item, deal.count)
-		answer(deal.buyer, false, street().currency == 'clean' and 'not_enough_money' or 'not_enough_dirty')
-		answer(deal.seller, false, 'buyer_short')
+	local changes = { { name = deal.item, count = deal.count } }
+	local clean = (deal.currency or street().currency) == 'clean'
+	if not clean then changes[#changes + 1] = { name = deal.dirtyItem or built().dirty.item, count = deal.price, reverse = true } end
+	local minted = Storage.NewEconomicId()
+	if not minted.ok then return false end
+	local moved = api.AtomicPeerTrade(deal.sellerCitizen, deal.buyerCitizen, deal.moneyType or built().dirty.cleanType,
+		clean and deal.price or 0, changes, 'underworld:deal', 'underworld:deal:' .. minted.value)
+	if not moved.ok then
+		-- A pending result is owned by the core reconciler, never compensated.
+		answer(deal.seller, false, moved.error or 'deal_failed')
+		answer(deal.buyer, false, moved.error or 'deal_failed')
 		return false
 	end
-	if not give(deal.buyerCitizen, deal.item, deal.count) then
-		moveMoney(deal.buyerCitizen, deal.price, false)
-		give(deal.sellerCitizen, deal.item, deal.count)
-		answer(deal.buyer, false, 'cannot_carry')
-		answer(deal.seller, false, 'deal_failed')
-		return false
-	end
-	if not moveMoney(deal.sellerCitizen, deal.price, false) then
-		-- The seller's bag refused the cash: it goes to their row instead.
-		local refunded = Op.Refund(nil, deal.sellerCitizen, street().currency == 'clean'
-			and { money = { { type = built().dirty.cleanType, amount = deal.price } } }
-			or { items = { { name = built().dirty.item, count = deal.price } } })
-		if #refunded > 0 then
-			OPX.Audit.Log({ event = 'underworld.refundLost', severity = 'warn', citizenId = deal.sellerCitizen,
-				message = 'deal ' .. id, data = { lost = table.concat(refunded, ', ') } })
-		end
-	end
-	if street().currency ~= 'clean' then
+	if not clean then
 		Storage.Ledger(deal.buyerCitizen, 'deal:paid', -deal.price)
 		Storage.Ledger(deal.sellerCitizen, 'deal:received', deal.price)
 	end

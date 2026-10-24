@@ -902,6 +902,10 @@ function M.Api()
 		-- character's own row decides, as it always did.
 		PlaceCharacter = M.PlaceCharacter,
 
+		AtomicMoney = M.AtomicMoney,
+		PreparePeerCredit = M.Money.AttachCredit,
+		MoneyReceipt = M.Storage.MoneyReceipt,
+		IsMoneyPending = function(citizenId, opId) return M.Money.Pending[citizenId] == opId end,
 		AddMoney = M.AddMoney,
 		-- The one money door that reaches a character nobody is playing. Answers
 		-- a Result, unlike the three above, because it yields and reaches the

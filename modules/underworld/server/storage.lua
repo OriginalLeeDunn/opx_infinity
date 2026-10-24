@@ -21,6 +21,11 @@ local M = OPX.Modules.Get('underworld')
 
 M.Storage = {}
 local Storage = M.Storage
+Storage.COLUMNS = {
+ { TABLE = 'opx77_underworld_escrow', COLUMN = 'quarantined', DEFINITION = 'TINYINT UNSIGNED NOT NULL DEFAULT 0' },
+ { TABLE = 'opx77_underworld_batches', COLUMN = 'durable_version', DEFINITION = 'TINYINT UNSIGNED NOT NULL DEFAULT 0' },
+ { TABLE = 'opx77_underworld_batches', COLUMN = 'deposit_op', DEFINITION = 'VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL UNIQUE' },
+}
 
 Storage.SCHEMA = {
 	[[
@@ -39,6 +44,7 @@ CREATE TABLE IF NOT EXISTS opx77_underworld_escrow (
     op_id VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
     citizen_id VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     payload TEXT NOT NULL,
+    quarantined TINYINT UNSIGNED NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB
 ]],
@@ -60,6 +66,8 @@ CREATE TABLE IF NOT EXISTS opx77_underworld_batches (
     deposited_at DATETIME NOT NULL,
     ready_at DATETIME NOT NULL,
     collected TINYINT(1) NOT NULL DEFAULT 0,
+    durable_version TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    deposit_op VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL UNIQUE,
     KEY opx77_underworld_batches_citizen (citizen_id, front_id, collected)
 ) ENGINE=InnoDB
 ]],
@@ -79,7 +87,7 @@ local INSERT_ESCROW = [[
 INSERT INTO opx77_underworld_escrow (op_id, citizen_id, payload) VALUES (@op, @citizen, @payload)
 ]]
 local DELETE_ESCROW = 'DELETE FROM opx77_underworld_escrow WHERE op_id = @op'
-local SELECT_ESCROW = 'SELECT op_id, citizen_id, payload FROM opx77_underworld_escrow LIMIT 500'
+local SELECT_ESCROW = 'SELECT op_id, citizen_id, payload FROM opx77_underworld_escrow WHERE quarantined = 0 LIMIT 500'
 
 local SELECT_REGISTERS = [[
 SELECT store_id, charges, TIMESTAMPDIFF(SECOND, last_at, UTC_TIMESTAMP()) AS age
@@ -104,7 +112,7 @@ SELECT COALESCE(SUM(dirty), 0) FROM opx77_underworld_batches
 WHERE citizen_id = @citizen AND deposited_at >= UTC_DATE()
 ]]
 local SELECT_BATCHES = [[
-SELECT id, dirty, clean, payout, TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), ready_at) AS remaining
+SELECT id, dirty, clean, payout, durable_version, TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), ready_at) AS remaining
 FROM opx77_underworld_batches
 WHERE citizen_id = @citizen AND front_id = @front AND collected = 0 ORDER BY id LIMIT 50
 ]]
@@ -219,11 +227,11 @@ end
 -- @author dop42
 -- @return table[] { opId, citizenId, payload }
 function Storage.EscrowLeft()
-	if not Storage.Ready() then return {} end
+	if not Storage.Ready() then return nil end
 	local rows = OPX.Storage.Query(SELECT_ESCROW, {})
 	if not rows.ok then
 		warn('read the escrow', rows)
-		return {}
+		return nil
 	end
 	local out = {}
 	for _, row in ipairs(type(rows.value) == 'table' and rows.value or {}) do
@@ -307,7 +315,7 @@ function Storage.Batches(citizenId, frontId)
 		if type(row) == 'table' and tonumber(row.id) ~= nil then
 			out[#out + 1] = { id = tonumber(row.id), dirty = math.floor(tonumber(row.dirty) or 0),
 				clean = math.floor(tonumber(row.clean) or 0), payout = tostring(row.payout),
-				remaining = math.floor(tonumber(row.remaining) or 0) }
+				remaining = math.floor(tonumber(row.remaining) or 0), durable = tonumber(row.durable_version) == 1 }
 		end
 	end
 	return out
@@ -334,4 +342,61 @@ end
 -- @author dop42
 function Storage.Uncollect(id)
 	enqueue('undo a collect', UNCOLLECT_BATCH, { id = id })
+end
+
+function Storage.NewEconomicId() return OPX.Storage.Scalar('SELECT UUID()') end
+
+function Storage.QuarantineEscrow(id)
+	return OPX.Storage.Update('UPDATE opx77_underworld_escrow SET quarantined = 1 WHERE op_id = @id', { id = id })
+end
+
+function Storage.Minted(citizenId, kind, seconds)
+	local read = OPX.Storage.Scalar('SELECT COALESCE(SUM(amount), 0) FROM opx77_underworld_ledger '
+		.. 'WHERE citizen_id = @citizen AND source LIKE @kind AND amount > 0 '
+		.. 'AND ts >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL @seconds SECOND)',
+		{ citizen = citizenId, kind = kind .. ':%', seconds = seconds })
+	return read.ok and tonumber(read.value) or nil
+end
+
+function Storage.MintStatements(op, source, kind, amount, cap, seconds, at, till)
+	local statements = {
+		{ query = 'INSERT INTO opx77_underworld_ledger (citizen_id, source, amount, x, y, z) '
+			.. 'SELECT citizen_id, ?, ?, ?, ?, ? FROM opx77_money_ledger WHERE op_id = ? AND attempt_token = ?',
+			values = { source, amount, at and at.x or 0, at and at.y or 0, at and at.z or 0, op.id, op.attempt } },
+	}
+	if till then
+		statements[#statements + 1] = {
+			query = 'INSERT INTO opx77_underworld_registers (store_id, charges, last_at) '
+				.. 'SELECT ?, ?, DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? SECOND) FROM opx77_money_ledger '
+				.. 'WHERE op_id = ? AND attempt_token = ? ON DUPLICATE KEY UPDATE charges = VALUES(charges), last_at = VALUES(last_at)',
+			values = { till.id, till.charges, till.age, op.id, op.attempt },
+		}
+	end
+	return statements, { query = '(SELECT COALESCE(SUM(amount), 0) FROM opx77_underworld_ledger '
+		.. 'WHERE citizen_id = ? AND source LIKE ? AND amount > 0 '
+		.. 'AND ts >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? SECOND) FOR UPDATE) <= ?',
+		values = { op.citizenId, kind .. ':%', seconds, cap - amount }, error = 'mint_cap' }
+end
+
+function Storage.BatchStatements(op, front, dirty, clean, payout, seconds, cap)
+	return {
+		{ query = 'INSERT INTO opx77_underworld_batches '
+			.. '(citizen_id, front_id, dirty, clean, payout, deposited_at, ready_at, durable_version, deposit_op) '
+			.. 'SELECT citizen_id, ?, ?, ?, ?, UTC_TIMESTAMP(), DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? SECOND), 1, op_id '
+			.. 'FROM opx77_money_ledger WHERE op_id = ? AND attempt_token = ?',
+			values = { front, dirty, clean, payout, seconds, op.id, op.attempt } },
+	}, { query = '(SELECT COALESCE(SUM(dirty), 0) FROM opx77_underworld_batches '
+		.. 'WHERE citizen_id = ? AND deposited_at >= UTC_DATE() FOR UPDATE) <= ?',
+		values = { op.citizenId, cap - dirty }, error = 'daily_cap' }
+end
+
+function Storage.CollectionStatements(op, id, front, clean, payout)
+	return {
+		{ query = 'UPDATE opx77_underworld_batches SET collected = 1 WHERE id = ? AND citizen_id = ? '
+			.. 'AND EXISTS (SELECT 1 FROM opx77_money_ledger WHERE op_id = ? AND attempt_token = ?)',
+			values = { id, op.citizenId, op.id, op.attempt } },
+	}, { query = 'EXISTS (SELECT 1 FROM opx77_underworld_batches WHERE id = ? AND citizen_id = ? '
+		.. 'AND front_id = ? AND clean = ? AND payout = ? AND durable_version = 1 '
+		.. 'AND collected = 0 AND ready_at <= UTC_TIMESTAMP() FOR UPDATE)',
+		values = { id, op.citizenId, front, clean, payout }, error = 'nothing_ready' }
 end

@@ -76,6 +76,7 @@ local real, control = Host.Environment('server')
 for _, path in ipairs(Host.LoadOrder('open77.lua', 'server')) do
 	assert(loadfile(path, 't', real))()
 end
+dofile('tests/money-store.lua').Install(real)
 control.Pump(240)
 assert(real.OPX.Modules.IsRunning('salvage'), 'salvage failed manifest boot')
 local catalog = real.OPX.Api.Get('inventory').GetItem('electronic_waste')
@@ -98,15 +99,15 @@ print('salvage manifest integration passed')
 
 -- Real progress, inventory and crafting contracts, with only the SQL boundary
 -- replaced by a deterministic shelf. SQL persistence itself has separate tests.
-local sourceId, durable = 901, 'SALVAGE01'
+local sourceId, durable = 901, real.OPX.CitizenId.Generate()
 control.Admit(sourceId, 'salvage-account')
-local char = real.OPX.Api.Get('character')
-char.GetPlayer = function(id)
-	if id == sourceId then return { PlayerData = { citizenId = durable, userId = 'salvage-account', money = {} } } end
-end
-char.GetPlayerByCitizenId = function(id) if id == durable then return char.GetPlayer(sourceId) end end
+local character = real.OPX.Modules.Get('character')
+local player = character.CreatePlayer({ source = sourceId, userId = 'salvage-account', citizenId = durable,
+	charInfo = { firstName = 'Test', lastName = 'Salvage' }, money = { EDDIES = 0, BANK = 0 } }, false)
+character.RegisterPlayer(player)
 local invmodule = real.OPX.Modules.Get('inventory')
-invmodule.Containers.Transient(invmodule.KIND.CHARACTER, durable, 10, 10000)
+local bag = invmodule.Containers.Transient(invmodule.KIND.CHARACTER, durable, 10, 10000)
+bag.transient = nil
 invmodule.Players.Attach(sourceId)
 control.Stand(sourceId, -2456.16, -909.03, 9.26)
 real.OPX.Modules.Get('salvage').Server.Collect(sourceId, 'mechanic_recovery')
@@ -121,16 +122,23 @@ assert(inv.GetItemCount(sourceId, 'electronic_waste').value == 1, 'real recovery
 control.Stand(sourceId, -2043.13, -602.83, 2.84)
 local row
 crafting.Storage.Shelf = function() return real.OPX.Result.Ok({ cooking = row and 1 or 0, tail = 0 }) end
-crafting.Storage.Place = function(owner, bench, recipe)
-	row = { id = 1, citizenId = owner, bench = bench, recipe = recipe, remaining = 30 }
-	return real.OPX.Result.Ok(1)
+local boundary = character.Storage.UnitMoney
+boundary.OnGuard = function(guard)
+	if guard.error == 'queue_full' then return not row end
+	if guard.error == 'no_such_order' then return row and row.remaining <= 0 end
+	return true
 end
+boundary.OnCommit = function(op, effects)
+	for _, effect in ipairs(effects or {}) do
+		if effect.query:find('INSERT INTO opx77_crafting_orders', 1, true) then
+			local values = effect.values
+			row = { id = 1, citizenId = values[1], bench = values[2], recipe = values[3], remaining = 30, token = values[5] }
+		elseif effect.query:find('DELETE FROM opx77_crafting_orders', 1, true) then row = nil end
+	end
+end
+crafting.Storage.Placed = function(owner, token) return real.OPX.Result.Ok(row and row.citizenId == owner and row.token == token and row.id or nil) end
 crafting.Storage.Find = function(owner, id)
 	return real.OPX.Result.Ok(row and row.citizenId == owner and row.id == id and row or nil)
-end
-crafting.Storage.Claim = function(owner, id)
-	if row and row.citizenId == owner and row.id == id and row.remaining <= 0 then row = nil; return real.OPX.Result.Ok(true) end
-	return real.OPX.Result.Ok(false)
 end
 local result
 real.CreateThread(function() result = real.OPX.Api.Get('crafting').Order(sourceId, 'salvage:mechanic_recovery', 'circuits') end)

@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS opx77_vehicles (
     body JSON NULL DEFAULT NULL,
     paint JSON NULL DEFAULT NULL,
     metadata JSON NOT NULL,
+    purchase_op VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL,
+    UNIQUE KEY uq_opx77_vehicle_purchase (purchase_op),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_opx77_vehicles_owner (citizen_id, state),
@@ -53,6 +55,7 @@ CREATE TABLE IF NOT EXISTS opx77_vehicles (
 -- damage, because it is a fact about the car the garage puts away and gives
 -- back, and the module that writes this row is the one that knows when.
 M.Storage.COLUMNS = {
+	{ TABLE = 'opx77_vehicles', COLUMN = 'purchase_op', DEFINITION = 'VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL UNIQUE' },
 	{ TABLE = 'opx77_vehicles', COLUMN = 'fuel', DEFINITION = 'FLOAT NULL DEFAULT NULL' },
 }
 
@@ -293,4 +296,28 @@ function M.Storage.CountByOwner(citizenId)
 		{ citizen = citizenId })
 	if not row.ok then return row end
 	return Result.Ok(tonumber(row.value and row.value.total) or 0)
+end
+
+--- Ownership is an effect of the exact wallet attempt, never a second commit.
+function M.Storage.PurchaseStatements(entity, op, limit)
+	local statements = {
+		{ query = 'INSERT INTO opx77_vehicles (plate, citizen_id, record, appearance, garage, state, health, body, paint, metadata, purchase_op) '
+			.. "SELECT ?, ?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, op_id FROM opx77_money_ledger "
+			.. 'WHERE op_id = ? AND attempt_token = ?', values = {
+				entity.plate, entity.citizenId, entity.record, entity.appearance or '', entity.garage, entity.state,
+				entity.health, Storage.Nullable(entity.damage), Storage.Nullable(entity.paint), json.encode(entity.metadata or {}), op.id, op.attempt } },
+	}
+	local guard
+	if limit > 0 then
+		guard = { query = '(SELECT COUNT(*) FROM opx77_vehicles WHERE citizen_id = ? FOR UPDATE) < ?',
+			values = { entity.citizenId, limit }, error = 'vehicle.limit' }
+	end
+	return statements, guard
+end
+
+function M.Storage.ByPurchase(id)
+	local read = Storage.Single('SELECT plate, citizen_id, record, appearance, garage, state, health, body, paint, metadata, fuel '
+		.. 'FROM opx77_vehicles WHERE purchase_op = @id', { id = id })
+	if not read.ok then return read end
+	return Result.Ok(read.value and toEntity(read.value))
 end

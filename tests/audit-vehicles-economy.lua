@@ -1,3 +1,4 @@
+do
 -- Real production modules under small deterministic contract stubs.
 local checks = 0
 local function check(value, message) assert(value, message); checks = checks + 1 end
@@ -62,6 +63,17 @@ check(guard() == true)
 occupants[1] = 7
 local allowed, code = guard()
 check(allowed == false and code == 'vehicle.occupied')
+-- A slow active registration cannot be overtaken after the old 30s heuristic.
+do
+ local waiting, oldWait = { C = { since = 0 } }, Wait
+ set(vehicles.Register, 'registering', waiting)
+ now = 61000
+ Wait = function() now = now + 50 end
+ local delayed = vehicles.Register('C', 'Vehicle.Car')
+ check(not delayed.ok and delayed.error == 'vehicle.registering', 'slow active registration was expired')
+ check(waiting.C ~= nil, 'a refused contender cleared another writer')
+ Wait = oldWait
+end
 -- Accept checks deadline itself even if timeout worker has not resumed.
 active = { Event = { SETTLED = 'settled' }, KIND = { GARAGE = 'garage', AVPAD = 'avpad' }, Access = { Coordinate = tonumber, Integer = math.tointeger,
  FiniteNumber = tonumber, OFFER_TIMEOUT_MS = 20 }, Storage = {} }
@@ -142,3 +154,129 @@ end
 local rejected = garages.Use(7, point.key)
 check(guarded and not rejected.ok and rejected.error == 'garages.tooFar')
 print(('vehicles economy: %d checks passed'):format(checks))
+
+end
+
+do
+--- Actual purchase/payout orchestration; explicit SQL-effect fixture, not InnoDB.
+local Host = dofile('tests/host.lua')
+local rows, payouts, company, receipts = {}, {}, {}, {}
+local companyDown = false
+local db = Host.Database({
+ scalar = function() return 0 end,
+ insert = function() return 1 end,
+ query = function(sql)
+  if sql:find('opx77_dealership_payouts', 1, true) then
+   local pending = {}; for _, row in ipairs(payouts) do if not row.paid then pending[#pending + 1] = row end end
+   return pending
+  end
+  return {}
+ end,
+ single = function(sql, p)
+  if sql:find('purchase_op = @id', 1, true) then return rows[p.id] end
+  if sql:find('opx77_company_ledger', 1, true) then return receipts[p.op] end
+  return nil
+ end,
+ update = function(sql, p)
+  if sql:find('SET paid = 1', 1, true) then
+   for _, row in ipairs(payouts) do if row.op_id == p.id and row.phase == p.phase then row.paid = true end end
+  end
+  return 1
+ end,
+ transaction = function(plan)
+  if plan[1].query:find('INSERT INTO opx77_company_ledger', 1, true) then
+   if companyDown then return false end
+   local v = plan[1].values
+   assert(not receipts[v[1]], 'duplicate company debit reached transaction')
+   local key = v[2] .. ':' .. v[3]
+   company[key] = (company[key] or 0) + v[4]
+   receipts[v[1]] = { kind = v[2], group_key = v[3], delta = v[4], balance_after = company[key], attempt_token = v[7] }
+   return true
+  end
+  for _, stmt in ipairs(plan) do
+   local q, v = stmt.query, stmt.values
+   if q:find('INSERT INTO opx77_vehicles', 1, true) then
+    assert(q:find('attempt_token = ?', 1, true), 'ownership is not attempt gated')
+    assert(not rows[v[11]], 'replayed ownership was inserted')
+    rows[v[11]] = { plate = v[1], citizen_id = v[2], record = v[3], appearance = v[4], garage = v[5],
+     state = v[6], health = v[7], body = v[8], paint = v[9], metadata = v[10] }
+   elseif q:find('INSERT INTO opx77_dealership_payouts', 1, true) then
+    assert(q:find('attempt_token = ?', 1, true), 'obligation is not attempt gated')
+    payouts[#payouts + 1] = { phase = v[1], citizen_id = v[2], kind = v[3], group_key = v[4],
+     money_type = v[5], amount = v[6], plate = v[7], op_id = v[8] }
+   end
+  end
+  return true
+ end,
+})
+db.unitMoneyGuard = function(guard)
+ assert(guard.query:find('FOR UPDATE', 1, true), 'purchase cap not locked')
+ local n = 0; for _, row in pairs(rows) do if row.citizen_id == guard.values[1] then n = n + 1 end end
+ return n < guard.values[2]
+end
+local env, control = Host.Environment('server', db)
+for _, file in ipairs(Host.LoadOrder('open77.lua', 'server')) do assert(loadfile(file, 't', env))() end
+dofile('tests/money-store.lua').Install(env, db)
+control.Pump(240)
+local OPX = env.OPX
+local C, V, D = OPX.Modules.Get('character'), OPX.Modules.Get('vehicles'), OPX.Modules.Get('dealership')
+D.Stop()
+control.Pump(30)
+local function person(id, cash)
+ control.Admit(id, 'vehicle-economy-' .. id)
+ local p = C.CreatePlayer({ source = id, userId = 'vehicle-economy-' .. id,
+  citizenId = OPX.CitizenId.Generate(), money = { EDDIES = cash, BANK = 0 } }, false)
+ C.RegisterPlayer(p); return p
+end
+local buyer, seller = person(761, 1000), person(762, 0)
+local settleSales = D.SettleSales
+D.SettleSales = function() return 0 end
+local actual, lose = C.Storage.MoneyChange, true
+C.Storage.MoneyChange = function(op, build)
+ local result = actual(op, build)
+ if result.ok and lose then lose = false; error('reply lost after transaction') end
+ return result
+end
+local sale = { sellerCitizen = seller.PlayerData.citizenId, kind = 'job', group = 'fixer' }
+local payment = { amount = 100, moneyType = 'EDDIES', reason = 'audit purchase', opId = 'vehicle-audit-one',
+ participant = function(op, entity) return D.Storage.SaleStatements(op, entity, sale, 'EDDIES', 10, 90) end }
+local answer = V.Purchase(761, 'Vehicle.v_standard2_archer_hella_player', { garage = 'impound' }, payment)
+assert(not answer.ok and answer.error == 'money.pending')
+assert(rows['vehicle-audit-one'] and #payouts == 2, 'unknown purchase lost its vehicle or obligations')
+assert(C.Storage.Balance(buyer.PlayerData.citizenId, 'EDDIES').value == 900)
+assert(buyer.PlayerData.money.EDDIES == 1000, 'unknown reply published early')
+control.Pump(30)
+assert(buyer.PlayerData.money.EDDIES == 900 and not C.Money.Pending[buyer.PlayerData.citizenId])
+C.Storage.MoneyChange = actual
+local replay = V.Purchase(761, 'Vehicle.v_standard2_archer_hella_player', {}, payment)
+assert(replay.ok and replay.value.plate == rows['vehicle-audit-one'].plate)
+assert(buyer.PlayerData.money.EDDIES == 900 and #payouts == 2, 'purchase replay duplicated a side')
+local ceiling = V.Settings.PER_CHARACTER
+V.Settings.PER_CHARACTER = 1
+local refused = V.Purchase(761, 'Vehicle.v_standard2_archer_hella_player', {}, {
+ amount = 50, moneyType = 'EDDIES', reason = 'cap test', opId = 'vehicle-audit-cap' })
+assert(not refused.ok and refused.error == 'vehicle.limit' and not rows['vehicle-audit-cap'])
+assert(buyer.PlayerData.money.EDDIES == 900, 'cap refusal charged buyer')
+V.Settings.PER_CHARACTER = ceiling
+-- Lose commission acknowledgement after its durable payment. No redirection.
+local api = OPX.Api.Get('character')
+local originalPay, lostCommission = api.AddMoney, true
+api.AddMoney = function(...)
+ local paid, why = originalPay(...)
+ if paid and lostCommission then lostCommission = false; error('commission reply lost') end
+ return paid, why
+end
+D.SettleSales = settleSales
+companyDown = true
+D.SettleSales()
+assert(seller.PlayerData.money.EDDIES == 10 and not company['job:fixer'])
+D.SettleSales()
+assert(seller.PlayerData.money.EDDIES == 10 and not company['job:fixer'], 'unknown commission redirected or duplicated')
+companyDown = false
+D.SettleSales(); D.SettleSales()
+assert(seller.PlayerData.money.EDDIES == 10 and company['job:fixer'] == 90)
+for _, row in ipairs(payouts) do assert(row.paid, 'durable obligation not reconciled') end
+api.AddMoney = originalPay
+print('vehicle economy: atomic ownership, unknown reply, replay, locked cap and fixed payout recovery passed')
+
+end

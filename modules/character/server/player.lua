@@ -112,6 +112,7 @@ end
 function M.Ledger.Busy(citizenId)
 	local entry = ledger[citizenId]
 	if entry == nil or entry.busy <= 0 then return false end
+	if M.Money and (M.Money.Active[citizenId] or M.Money.Pending[citizenId]) then return true end
 	if OPX.Now() - (entry.since or 0) > LEDGER_STALE_MS then
 		Open77.log.error(('[character] the offline ledger held %s for over %d ms; releasing it')
 			:format(tostring(citizenId), LEDGER_STALE_MS))
@@ -269,6 +270,7 @@ function M.CreatePlayer(entity, offline)
 	end
 
 	function Functions.SetPlayerData(key, value)
+		if key == 'money' then return false, 'money.useLedger' end
 		if key == 'citizenId' or key == 'userId' or key == 'source' then
 			error(('PlayerData.%s is identity and cannot be set'):format(key), 2)
 		end
@@ -478,44 +480,9 @@ function M.GetCharacter(citizenId)
 	return Result.Ok({ entity = fetched.value, offline = true })
 end
 
--- THE MOST AN ACCOUNT HOLDS, either way: 2^53 - 1, the largest integer every
--- step of the trip survives -- Lua, the JSON column, the client's number. There
--- was no ceiling at all. `/opx.money <id> EDDIES 9000000000000000000` twice
--- wrapped the 64-bit sum to about -4.4e17, and `1e308` twice made the balance
--- `inf`, which no JSON encoder writes: the character stopped saving.
-local MAX_BALANCE = 9007199254740991
-
---- Answers a positive, finite, rounded amount no larger than an account holds, or nil.
--- NaN arrives from a client through JSON and passes every comparison, including
--- the one that would stop the player spending it.
-local function amountOf(value)
-	local n = tonumber(value)
-	if not OPX.Math.IsFinite(n) then return nil end
-	n = math.floor(n + 0.5)
-	if n <= 0 or n > MAX_BALANCE then return nil end
-	return n
-end
-
---- Whether a balance is one an account may hold.
-local function holdable(balance)
-	return balance <= MAX_BALANCE and balance >= -MAX_BALANCE
-end
-
---- Whether a Player is still the one in the roster under its connection.
--- THE MONEY HOOKS MAY YIELD (`OPX.Hooks.Trigger` runs whatever a module hung on
--- them, and `character:loading` already reads the database from one), so the
--- world can move between the checks a mutator makes and the write it then does.
--- A Player that logged out during the hook has already been saved by its logout:
--- a balance changed on it afterwards is changed on a table nobody writes again,
--- and the shop that was told "paid" handed its goods over for nothing.
-local function stillLoaded(player)
-	return not player.Offline and M.Players[player.PlayerData.source] == player
-		and OPX.UserIdOf(player.PlayerData.source) == player.PlayerData.userId
-end
-
 --- Announces a balance change to its four audiences: the owning client, the
 --- other modules, the audit log and PlayerData itself.
-local function announceMoney(player, moneyType, amount, action, reason)
+function M.AnnounceMoney(player, moneyType, amount, action, reason)
 	local data = player.PlayerData
 	player.Functions.UpdatePlayerData()
 
@@ -553,39 +520,11 @@ end
 -- @param amount number
 -- @param reason string|nil
 -- @return boolean, string|nil A locale key naming the refusal.
-function M.AddMoney(identifier, moneyType, amount, reason)
+function M.AddMoney(identifier, moneyType, amount, reason, opId, prepare)
 	local player = resolve(identifier)
 	if not player then return false, 'error.notLoggedIn' end
-	-- No money column is ever written for a Player outside the roster.
-	if player.Offline then return false, 'money.offline' end
-	if not M.IsMoneyType(moneyType) then
-		Open77.log.error(('[character] AddMoney: %q is not a money type on this server')
-			:format(tostring(moneyType)))
-		return false, 'money.badType'
-	end
-
-	local value = amountOf(amount)
-	if not value then
-		OPX.Audit.Security('money.badAmount',
-			('AddMoney refused %s'):format(tostring(amount)),
-			{ citizenId = player.PlayerData.citizenId, moneyType = moneyType },
-			player.PlayerData.source)
-		return false, 'money.badAmount'
-	end
-
-	if not OPX.Hooks.Trigger('money:beforeAdd', {
-		player = player, moneyType = moneyType, amount = value, reason = reason,
-	}) then
-		return false, 'money.vetoed'
-	end
-	if not stillLoaded(player) then return false, 'error.notLoggedIn' end
-
-	local money = player.PlayerData.money
-	-- Asked after the hook, on the balance the write will actually move.
-	if not holdable(money[moneyType] + value) then return false, 'money.tooLarge' end
-	money[moneyType] = money[moneyType] + value
-	announceMoney(player, moneyType, value, 'add', reason)
-	return true
+	local answer = M.Money.Change(player, moneyType, amount, 'add', reason, opId, prepare)
+	return answer.ok, answer.error, answer.ok and answer.value or answer.detail
 end
 
 --- Removes money, refusing rather than truncating when short.
@@ -596,52 +535,11 @@ end
 -- @param amount number
 -- @param reason string|nil
 -- @return boolean, string|nil A locale key naming the refusal.
-function M.RemoveMoney(identifier, moneyType, amount, reason)
+function M.RemoveMoney(identifier, moneyType, amount, reason, opId, prepare)
 	local player = resolve(identifier)
 	if not player then return false, 'error.notLoggedIn' end
-	if player.Offline then return false, 'money.offline' end
-	if not M.IsMoneyType(moneyType) then
-		Open77.log.error(('[character] RemoveMoney: %q is not a money type on this server')
-			:format(tostring(moneyType)))
-		return false, 'money.badType'
-	end
-
-	local value = amountOf(amount)
-	if not value then
-		OPX.Audit.Security('money.badAmount',
-			('RemoveMoney refused %s'):format(tostring(amount)),
-			{ citizenId = player.PlayerData.citizenId, moneyType = moneyType },
-			player.PlayerData.source)
-		return false, 'money.badAmount'
-	end
-
-	local money = player.PlayerData.money
-	if money[moneyType] - value < 0
-		and not OPX.Config.SHARED.MONEY.ALLOW_NEGATIVE[moneyType] then
-		return false, 'money.insufficient'
-	end
-
-	if not OPX.Hooks.Trigger('money:beforeRemove', {
-		player = player, moneyType = moneyType, amount = value, reason = reason,
-	}) then
-		return false, 'money.vetoed'
-	end
-
-	-- ASKED AGAIN AFTER THE HOOK, which may yield (see `stillLoaded`). Two
-	-- purchases in flight both passed the balance test above before either had
-	-- subtracted; without this second look both subtract, and a balance of 100
-	-- pays for two 100 items and ends at -100.
-	if not stillLoaded(player) then return false, 'error.notLoggedIn' end
-	if money[moneyType] - value < 0
-		and not OPX.Config.SHARED.MONEY.ALLOW_NEGATIVE[moneyType] then
-		return false, 'money.insufficient'
-	end
-	-- Only reachable on a currency allowed to go negative.
-	if not holdable(money[moneyType] - value) then return false, 'money.tooLarge' end
-
-	money[moneyType] = money[moneyType] - value
-	announceMoney(player, moneyType, value, 'remove', reason)
-	return true
+	local answer = M.Money.Change(player, moneyType, amount, 'remove', reason, opId, prepare)
+	return answer.ok, answer.error, answer.ok and answer.value or answer.detail
 end
 
 --- Sets a balance outright, zero included.
@@ -652,30 +550,11 @@ end
 -- @param amount number
 -- @param reason string|nil
 -- @return boolean, string|nil A locale key naming the refusal.
-function M.SetMoney(identifier, moneyType, amount, reason)
+function M.SetMoney(identifier, moneyType, amount, reason, opId, prepare)
 	local player = resolve(identifier)
 	if not player then return false, 'error.notLoggedIn' end
-	if player.Offline then return false, 'money.offline' end
-	if not M.IsMoneyType(moneyType) then return false, 'money.badType' end
-
-	local n = tonumber(amount)
-	if not OPX.Math.IsFinite(n) then return false, 'money.badAmount' end
-	n = math.floor(n + 0.5)
-	if not holdable(n) then return false, 'money.tooLarge' end
-	if n < 0 and not OPX.Config.SHARED.MONEY.ALLOW_NEGATIVE[moneyType] then
-		return false, 'money.negative'
-	end
-
-	if not OPX.Hooks.Trigger('money:beforeSet', {
-		player = player, moneyType = moneyType, amount = n, reason = reason,
-	}) then
-		return false, 'money.vetoed'
-	end
-	if not stillLoaded(player) then return false, 'error.notLoggedIn' end
-
-	player.PlayerData.money[moneyType] = n
-	announceMoney(player, moneyType, n, 'set', reason)
-	return true
+	local answer = M.Money.Change(player, moneyType, amount, 'set', reason, opId, prepare)
+	return answer.ok, answer.error, answer.ok and answer.value or answer.detail
 end
 
 --- Answers one balance, or the whole money table.
@@ -693,95 +572,27 @@ end
 --- Adds money to a character whether or not anybody is playing it. Coroutine only.
 -- @author dop42
 --
--- THE ONLINE CHARACTER IS PAID THROUGH `AddMoney`, not through the row: an
--- autosave a minute later would write the loaded balance straight back over a
--- row edited underneath it, and the payment would simply undo itself. So this
--- is `AddMoney` for somebody who is here, and an atomic increment in SQL for
--- somebody who is not -- one statement, `JSON_SET` over the balance it read in
--- the same breath, so two offline payments never read the same old balance.
---
--- The row is held in the ledger above for the length of the write. A login
--- that read it first reads it again before it registers; a logout still saving
--- is waited for. A deleted character answers `character.notFound`, the same as
--- one that never existed. The `money:beforeAddOffline` hook may veto it: the
--- three online hooks are handed a live Player, which there is none of here, so
--- a hook written against them would index nil on this path.
+-- Loaded and offline characters share the same SQL journal. Autosaves never
+-- rewrite money; the loaded wallet is updated only after its durable receipt.
+-- The per-citizen ledger serializes login/logout against these writes. Offline
+-- hooks receive a citizen id; online hooks receive the corresponding Player.
 -- @param citizenId CitizenId
 -- @param moneyType MoneyType
 -- @param amount number positive; rounded
 -- @param reason string|nil
 -- @return Result { balance, offline }
-function M.AddMoneyOffline(citizenId, moneyType, amount, reason)
+function M.AddMoneyOffline(citizenId, moneyType, amount, reason, opId)
 	local parsed = OPX.CitizenId.Parse(citizenId)
 	if not parsed.ok then return Result.Err('character.notFound', tostring(citizenId)) end
-	citizenId = parsed.value
-	if not M.IsMoneyType(moneyType) then return Result.Err('money.badType', tostring(moneyType)) end
-	local value = amountOf(amount)
-	if not value then return Result.Err('money.badAmount', tostring(amount)) end
-	if OPX.BootError then return Result.Err('error.unavailable', OPX.BootError) end
+	local player = M.GetPlayerByCitizenId(parsed.value)
+	return M.Money.Change(player or parsed.value, moneyType, amount, 'add', reason, opId, nil, true)
+end
 
-	-- Whoever else is on the row goes first; a login is not one of them, and
-	-- sees this write through `seq` instead.
-	if not M.Ledger.Settle(citizenId) then
-		return Result.Err('error.unavailable', 'the row is being written')
-	end
-
-	-- Asked AFTER the wait and with nothing between it and `Enter` that yields:
-	-- a character that came online meanwhile is paid in memory, and one that did
-	-- not cannot start writing from memory before this has finished.
-	local online = M.GetPlayerByCitizenId(citizenId)
-	if online ~= nil then
-		local ok, code = M.AddMoney(online, moneyType, value, reason)
-		if not ok then return Result.Err(code) end
-		return Result.Ok({ balance = online.PlayerData.money[moneyType], offline = false })
-	end
-
-	if not OPX.Hooks.Trigger('money:beforeAddOffline', {
-		citizenId = citizenId, moneyType = moneyType, amount = value, reason = reason,
-	}) then
-		return Result.Err('money.vetoed')
-	end
-
-	-- AND ASKED AGAIN AFTER THE HOOKS, WHICH MAY YIELD (`Hooks.Trigger` says so):
-	-- a login that finished meanwhile has a character in the roster that will
-	-- save the balance it loaded, and the increment below would land under it
-	-- and be written over. Nothing between this and `Enter` yields.
-	if not M.Ledger.Settle(citizenId) then
-		return Result.Err('error.unavailable', 'the row is being written')
-	end
-	online = M.GetPlayerByCitizenId(citizenId)
-	if online ~= nil then
-		local ok, code = M.AddMoney(online, moneyType, value, reason)
-		if not ok then return Result.Err(code) end
-		return Result.Ok({ balance = online.PlayerData.money[moneyType], offline = false })
-	end
-
-	M.Ledger.Enter(citizenId)
-	local written = M.Storage.AddMoney(citizenId, moneyType, value)
-	local balance = written.ok and M.Storage.Balance(citizenId, moneyType) or nil
-	M.Ledger.Leave(citizenId)
-	if not written.ok then return written end
-
-	OPX.Audit.Log({
-		event = 'money.addOffline',
-		message = reason,
-		citizenId = citizenId,
-		data = { moneyType = moneyType, amount = value,
-			balance = balance and balance.ok and balance.value or nil },
-	})
-	OPX.Publish(M.Event.ON_MONEY, nil, {
-		citizenId = citizenId,
-		moneyType = moneyType,
-		amount = value,
-		action = 'add',
-		reason = reason ~= nil and OPX.Audit.Safe(reason, 128) or nil,
-		balance = balance and balance.ok and balance.value or nil,
-		offline = true,
-	})
-	return Result.Ok({
-		balance = balance and balance.ok and balance.value or nil,
-		offline = true,
-	})
+--- Trusted server participant in the same durable transaction as the wallet.
+function M.AtomicMoney(identifier, moneyType, amount, action, reason, opId, prepare)
+	local player = resolve(identifier)
+	if not player then return Result.Err('error.notLoggedIn') end
+	return M.Money.Change(player, moneyType, amount, action, reason, opId, prepare)
 end
 
 --- Sets one key of a loaded character's free-form metadata.

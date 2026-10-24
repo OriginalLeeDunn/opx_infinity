@@ -128,40 +128,33 @@ function Dirty.Item() return built.dirty.item end
 -- @param at table|nil where
 -- @return integer what was paid (0: nothing)
 -- @return string|nil why not all of it: mint_cap, cannot_carry
-function Dirty.Mint(player, citizenId, amount, kind, source, at)
-	amount = math.floor(tonumber(amount) or 0)
-	if amount <= 0 then return 0, nil end
-	local caps = type(settings().MINT_CAPS) == 'table' and settings().MINT_CAPS or {}
-	local windowMs = math.floor(Model.Bounded(caps.WINDOW_MINUTES, 1, 100000, 60) * 60000)
-	minted[citizenId] = minted[citizenId] or {}
-	local list = minted[citizenId][kind] or {}
-	minted[citizenId][kind] = list
-	local left = Model.CapLeft(list, OPX.Now(), windowMs, caps[kind])
-	local why = nil
-	if amount > left then amount, why = math.floor(left), 'mint_cap' end
-	if amount <= 0 then return 0, 'mint_cap' end
-
-	-- Hold cap capacity before the inventory write can yield.
-	local reservation = { at = OPX.Now(), amount = amount }
-	list[#list + 1] = reservation
-	local paid = false
-	if built.dirty.mode == 'clean' then
-		local api = character()
-		local called, ok = pcall(api.AddMoney, citizenId, built.dirty.cleanType, amount, 'underworld:' .. source)
-		paid = called and ok == true
-	else
-		local added = inventory().AddItem(citizenId, built.dirty.item, amount)
-		paid = type(added) == 'table' and added.ok == true
+function Dirty.Mint(player, citizenId, amount, kind, source, at, operation)
+	local op = operation or { player = player, citizenId = citizenId, kind = 'mint', spec = {}, at = at }
+	local plan = op.mintPlan
+	if not plan then
+		amount = math.floor(tonumber(amount) or 0)
+		if amount <= 0 then return 0 end
+		local caps = type(settings().MINT_CAPS) == 'table' and settings().MINT_CAPS or {}
+		local seconds = math.floor(Model.Bounded(caps.WINDOW_MINUTES, 1, 100000, 60) * 60)
+		local cap = math.floor(tonumber(caps[kind]) or 9007199254740991)
+		local used = Storage.Minted(citizenId, kind, seconds)
+		if used == nil then return 0, 'unavailable' end
+		local paid = math.max(0, math.min(amount, cap - used))
+		if paid <= 0 then return 0, 'mint_cap' end
+		local ledgerSource = tostring(source)
+		if ledgerSource:sub(1, #kind + 1) ~= kind .. ':' then ledgerSource = kind .. ':' .. ledgerSource end
+		plan = { amount = paid, short = paid < amount and 'mint_cap' or nil, cap = cap, seconds = seconds,
+			source = OPX.Text.Bytes(ledgerSource, 48), kind = kind }
+		op.mintPlan = plan
 	end
-	if not paid then
-		for index, entry in ipairs(list) do
-			if entry == reservation then table.remove(list, index); break end
-		end
-		return 0, 'cannot_carry'
-	end
-	if built.dirty.mode ~= 'clean' then Storage.Ledger(citizenId, source, amount, at) end
-	OPX.Publish(M.Event.ON_DIRTY, player, { citizenId = citizenId, amount = amount, source = source })
-	return amount, why
+	local changes = built.dirty.mode == 'clean' and {} or { { name = built.dirty.item, count = plan.amount } }
+	local delta = built.dirty.mode == 'clean' and plan.amount or 0
+	local result = Op.Atomic(op, changes, built.dirty.cleanType, delta, function(attempt)
+		return Storage.MintStatements(attempt, plan.source, plan.kind, plan.amount, plan.cap, plan.seconds, at, op.spec.till)
+	end)
+	if not result.ok then return 0, result.error end
+	OPX.Publish(M.Event.ON_DIRTY, player, { citizenId = citizenId, amount = plan.amount, source = source })
+	return plan.amount, plan.short
 end
 
 -- ── alarms ──────────────────────────────────────────────────────────────────
@@ -417,7 +410,7 @@ end
 local function dealSpec(player, state, spot, loaded)
 	local market = type(settings().BLACKMARKET) == 'table' and settings().BLACKMARKET or {}
 	return {
-		loaded = loaded, anchor = spot, reach = state.entry.reach,
+		durable = true, loaded = loaded, anchor = spot, reach = state.entry.reach,
 		label = locale('underworld.bar.deal'),
 		durationMs = Model.Integer(market.DEAL_MS, 250, 60000) or 3000,
 		animation = type(market.ANIMATION) == 'string' and market.ANIMATION or '',
@@ -460,8 +453,8 @@ function M.Buy(player, payload)
 	spec.inputs = clean and { money = { { type = built.dirty.cleanType, amount = price } } }
 		or { items = { { name = built.dirty.item, count = price } } }
 	spec.commit = function(op)
-		local added = inventory().AddItem(op.citizenId, line.item, count)
-		if type(added) ~= 'table' or not added.ok then return false, 'cannot_carry' end
+		local added = Op.Atomic(op, { { name = line.item, count = count } }, built.dirty.cleanType, 0)
+		if not added.ok then return false, added.error end
 		return true, 'bought', { item = line.item, count = count, price = price, clean = clean,
 			dealer = state.entry.id }
 	end
@@ -494,7 +487,7 @@ function M.Sell(player, payload)
 	spec.check = function() return state.npc == nil and 'no_dealer' or nil end
 	spec.inputs = { items = { { name = line.item, count = count } } }
 	spec.commit = function(op)
-		local paid, short = Dirty.Mint(op.player, op.citizenId, price, 'fence', 'fence:' .. state.entry.id, op.at)
+		local paid, short = Dirty.Mint(op.player, op.citizenId, price, 'fence', 'fence:' .. state.entry.id, op.at, op)
 		if paid <= 0 then return false, short or 'unavailable' end
 		return true, short == 'mint_cap' and 'sold_capped' or 'sold', { item = line.item, count = count, paid = paid }
 	end
@@ -538,7 +531,7 @@ function M.Rob(player, payload)
 	local robberies = type(settings().ROBBERIES) == 'table' and settings().ROBBERIES or {}
 	local state = stores[id]
 	local spec = {
-		kind = 'robbery', loaded = loaded, lock = 'store:' .. id, reach = entry.reach,
+		kind = 'robbery', durable = true, loaded = loaded, lock = 'store:' .. id, reach = entry.reach,
 		anchor = { x = entry.x, y = entry.y, z = entry.z, bucket = entry.bucket },
 		label = locale('underworld.bar.rob'), durationMs = entry.durationMs,
 		animation = type(robberies.ANIMATION) == 'string' and robberies.ANIMATION or '',
@@ -555,7 +548,6 @@ function M.Rob(player, payload)
 	end
 	spec.claim = function()
 		state.charges = state.charges - 1
-		saveTill(id)
 	end
 	spec.release = function()
 		state.charges = math.min(entry.max, state.charges + 1)
@@ -566,8 +558,9 @@ function M.Rob(player, payload)
 		Alert.Raise('robbery', entry.label, entry, entry.alert, op.id)
 	end
 	spec.commit = function(op)
+		op.spec.till = op.spec.till or { id = id, charges = state.charges, age = math.max(0, math.floor((OPX.Now() - state.lastAt) / 1000)) }
 		local amount = Model.Roll(op.id, 'reward', entry.rewardMin, entry.rewardMax)
-		local paid, short = Dirty.Mint(op.player, op.citizenId, amount, 'robbery', 'robbery:' .. id, op.at)
+		local paid, short = Dirty.Mint(op.player, op.citizenId, amount, 'robbery', 'robbery:' .. id, op.at, op)
 		if paid <= 0 then return false, short or 'unavailable' end
 		robbedAt[op.citizenId] = OPX.Now()
 		return true, short == 'mint_cap' and 'robbed_capped' or 'robbed', { store = id, paid = paid }
@@ -672,7 +665,7 @@ function M.Launder(player, payload)
 	local laundering = type(settings().LAUNDERING) == 'table' and settings().LAUNDERING or {}
 	local clean = Model.Clean(amount, entry.rate)
 	local spec = {
-		kind = 'launder', loaded = loaded, anchor = frontAnchor(entry), reach = entry.reach,
+		kind = 'launder', durable = true, loaded = loaded, anchor = frontAnchor(entry), reach = entry.reach,
 		label = locale('underworld.bar.launder'),
 		durationMs = Model.Integer(laundering.DEPOSIT_MS, 250, 60000) or 4000,
 		animation = type(laundering.ANIMATION) == 'string' and laundering.ANIMATION or '',
@@ -685,9 +678,10 @@ function M.Launder(player, payload)
 	end
 	spec.release = unclaim
 	spec.commit = function(op)
-		local filed = Storage.InsertBatch(citizen, entry.id, amount, clean, entry.payout,
-			math.floor(entry.batchMs / 1000))
-		if not filed then return false, 'unavailable' end
+		local filed = Op.Atomic(op, {}, built.dirty.cleanType, 0, function(attempt)
+			return Storage.BatchStatements(attempt, entry.id, amount, clean, entry.payout, math.floor(entry.batchMs / 1000), entry.dailyCap)
+		end)
+		if not filed.ok then return false, filed.error end
 		unclaim()
 		return true, 'deposited', { front = entry.id, dirty = amount, clean = clean }
 	end
@@ -715,19 +709,22 @@ function M.Collect(player, payload)
 	local ok, failure = pcall(function()
 		local batches = Storage.Batches(loaded.citizenId, entry.id) or {}
 		for _, batch in ipairs(batches) do
-			if batch.remaining <= 0 and Storage.Collect(batch.id, loaded.citizenId) then
-				-- Marked collected FIRST, paid SECOND: a payout refused puts the
-				-- mark back rather than paying a batch twice.
-				local called, paid = pcall(character().AddMoney, loaded.citizenId, batch.payout, batch.clean,
-					'underworld:launder:' .. entry.id)
-				if called and paid == true then
+			if batch.remaining <= 0 and batch.durable then
+				local result = character().AtomicMoney(loaded.citizenId, batch.payout, batch.clean, 'add',
+					'underworld:launder:' .. entry.id, 'underworld:collect:' .. batch.id, function()
+						return function(attempt)
+							return Storage.CollectionStatements(attempt, batch.id, entry.id, batch.clean, batch.payout)
+						end
+					end)
+				if result.ok then
 					total = total + batch.clean
 					OPX.Audit.Log({ event = 'underworld.collect', citizenId = loaded.citizenId, source = player,
 						message = ('batch %d at %s: %d %s'):format(batch.id, entry.id, batch.clean, batch.payout),
 						data = { batch = batch.id, front = entry.id, clean = batch.clean } })
-				else
-					Storage.Uncollect(batch.id)
 				end
+			elseif batch.remaining <= 0 then
+				OPX.Audit.Log({ event = 'underworld.batchQuarantined', severity = 'error', citizenId = loaded.citizenId,
+					message = 'Legacy laundering batch requires manual review', data = { batch = batch.id } })
 			end
 		end
 	end)
@@ -844,6 +841,7 @@ function M.Init()
 	Op.Init()
 	if M.Drugs and M.Drugs.Init then M.Drugs.Init() end
 	OPX.Schema.Add(Storage.SCHEMA)
+	OPX.Schema.AddColumns(Storage.COLUMNS)
 end
 
 --- Publishes the server contract.

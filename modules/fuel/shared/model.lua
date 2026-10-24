@@ -58,6 +58,7 @@ function Model.Settings(raw)
 	return {
 		capacity = bounded(raw.CAPACITY, 1.0, MAX_CAPACITY, 60.0),
 		initialPercent = bounded(raw.INITIAL_PERCENT, 0, 100, 100),
+		requireOpenStation = consumption.REQUIRE_OPEN_STATION ~= false,
 		tickMs = math.floor(bounded(consumption.TICK_MS, 100, 60000, 1000)),
 		per100km = bounded(consumption.LITRES_PER_100KM, 0, MAX_RATE, 9.0),
 		idlePerMinute = bounded(consumption.IDLE_LITRES_PER_MINUTE, 0, MAX_RATE, 0.05),

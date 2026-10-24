@@ -1018,92 +1018,6 @@ local function stored(fn, ...)
 	return false, type(result) == 'table' and tostring(result.error) or 'refused'
 end
 
---- Puts back what a sale took when the pay refused, and answers how many crates
---- could not be put back anywhere.
---
--- THE PUT-BACK USED TO BE TRUSTED. Every inventory call it made yields, and the
--- world moves meanwhile: the owner locks the truck from the seat (`locked`), the
--- bag fills from a trade (`no_room`). Each refusal was dropped on the floor, so a
--- sale the wallet refused could leave the player with no crates AND no money and
--- not one line anywhere saying so.
---
--- Now a crate that will not go back where it came from tries the bag, then every
--- other trunk the sale took from, ONE AT A TIME so a bag with room for two of
--- five still keeps two. What fits nowhere is written to the journal at error and
--- to the audit, with the site, the count and what it would have paid, so staff
--- can refund it from one line.
--- @return integer crates lost
-local function restore(inventory, player, taken, tag, sale, dropoff, each, citizenId)
-	--- One destination as a function of a count: the bag, or a trunk by id.
-	local function into(vehicle)
-		if vehicle == nil then
-			return function(count) return stored(inventory.AddItem, citizenId, Access.ITEM, count, tag) end
-		end
-		-- No `player`: this is a put-back into the trunk the item came out of a
-		-- second ago, and not the player reaching into somebody's boot.
-		return function(count)
-			return stored(inventory.AddToTrunk, vehicle, Access.ITEM, count, tag)
-		end
-	end
-	local function name(vehicle)
-		return vehicle == nil and 'the bag' or ('the trunk of ' .. safe(vehicle))
-	end
-
-	local lost = 0
-	for _, source in ipairs(taken) do
-		local home = into(source.vehicle)
-		local back, why = home(source.count)
-		if not back then
-			-- Every other place this player's crates were, in the order the sale
-			-- found them, the bag first because nothing locks it.
-			local fallbacks = {}
-			if source.vehicle ~= nil then fallbacks[#fallbacks + 1] = { vehicle = nil } end
-			for _, other in ipairs(taken) do
-				if other.vehicle ~= nil and other.vehicle ~= source.vehicle then
-					fallbacks[#fallbacks + 1] = { vehicle = other.vehicle }
-				end
-			end
-			local missing = 0
-			for _ = 1, source.count do
-				local placed = home(1)
-				local where = source.vehicle
-				local index = 1
-				while not placed and index <= #fallbacks do
-					where = fallbacks[index].vehicle
-					placed = into(where)(1)
-					index = index + 1
-				end
-				if placed and where ~= source.vehicle then
-					Open77.log.warn(('[hauling] player %d: a crate of %s from %s went back into ' ..
-						'%s instead (%s)'):format(player, safe(sale.site), name(source.vehicle),
-						name(where), safe(why)))
-				elseif not placed then
-					missing = missing + 1
-				end
-			end
-			if missing > 0 then
-				lost = lost + missing
-				Open77.log.error(('[hauling] CRATES LOST: player %d sold %d crate(s) of %s at %s, ' ..
-					'was not paid, and they could not be put back in %s or anywhere else (%s). ' ..
-					'Refund %d %s'):format(player, missing, safe(sale.site), safe(dropoff.key),
-					name(source.vehicle), safe(why), each * missing, safe(Access.CURRENCY)))
-				OPX.Audit.Log({
-					event = 'hauling.crateLost',
-					severity = 'error',
-					message = ('%d crate(s) of %s lost after an unpaid sale'):format(missing,
-						tostring(sale.site)),
-					data = { site = sale.site, dropoff = dropoff.key, count = missing,
-						from = source.vehicle ~= nil and tostring(source.vehicle) or 'bag',
-						refund = each * missing, currency = Access.CURRENCY, error = why },
-					source = player,
-					citizenId = citizenOf(player),
-				})
-			end
-		end
-	end
-	return lost
-end
-
 --- Begins the sale bar at a seller NPC.
 local function beginSale(player, npcId)
 	local whole = math.type(npcId) == 'integer' and npcId or nil
@@ -1170,60 +1084,49 @@ local function completeSale(player, sale)
 	local seller = citizenOf(player)
 	local tag = { site = sale.site }
 	local stock = stockFor(player, sale.site, dropoff, here.bucket)
-	local taken, sold = {}, 0
-	for _, source in ipairs(stock) do
+	local changes, sold = {}, 0
+	for _, stockSource in ipairs(stock) do
 		local current = standing(player)
-		local allowed = mayWork(player, sale.site)
-		if citizenOf(player) ~= seller or not allowed or current == nil
+		if citizenOf(player) ~= seller or not mayWork(player, sale.site) or current == nil
 			or current.bucket ~= sale.bucket
 			or (Access.GapSquared(current, dropoff) or math.huge) > Access.VEHICLE_REACH_SQ then
-			break
+			return false, 'too_far'
 		end
-		if source.vehicle ~= nil then
-			local parked = vehicleAt(source.vehicle)
+		if stockSource.vehicle ~= nil then
+			local parked = vehicleAt(stockSource.vehicle)
 			if parked == nil or parked.bucket ~= sale.bucket
 				or (Access.GapSquared(parked, dropoff) or math.huge) > dropoff.radius * dropoff.radius then
-				break
+				return false, 'too_far'
 			end
 		end
-		-- Through `stored`: a raise here, after an earlier source was already
-		-- taken, would end the handler with those crates gone and nothing paid.
-		local removed = source.vehicle == nil
-			and stored(inventory.RemoveItem, seller or player, Access.ITEM, source.count, tag)
-			or stored(inventory.RemoveFromTrunk, source.vehicle, Access.ITEM, source.count, tag,
-				player)
-		if removed then
-			taken[#taken + 1] = source
-			sold = sold + source.count
-		end
+		changes[#changes + 1] = { name = Access.ITEM, count = -stockSource.count,
+			metadata = tag, vehicleId = stockSource.vehicle }
+		sold = sold + stockSource.count
 	end
 	if sold <= 0 then return false, 'no_crates' end
-
-	-- THE TUNABLE IS READ HERE, at the sale. It was declared `apply = 'live'` and
-	-- read by nobody, so the panel moved a number that paid nothing different.
 	local tuned = OPX.Tune.Get('HAUL_PAY_PER_CRATE')
 	tuned = type(tuned) == 'number' and math.tointeger(tuned) or nil
 	local each = Access.Pay(sale.site, tuned)
 	local pay = each * sold
 	local reason = ('hauling:%s:%s'):format(tostring(sale.site), tostring(dropoff.key))
-	local moved = seller ~= nil and citizenOf(player) ~= seller
-	local called, paid, why
-	if moved and type(character.AddMoneyOffline) == 'function' then
-		-- The character who sold is no longer on this connection: paid by citizen
-		-- id, in memory if they are loaded elsewhere and in their row if not.
-		local answer
-		called, answer = pcall(character.AddMoneyOffline, seller, Access.CURRENCY, pay, reason)
-		paid = called and type(answer) == 'table' and answer.ok == true
-		why = called and type(answer) == 'table' and answer.error or answer
-	else
-		called, paid, why = pcall(character.AddMoney, player, Access.CURRENCY, pay, reason)
+	if type(inventory.AtomicTrade) ~= 'function' then return false, 'no_inventory' end
+	local called, paid = pcall(inventory.AtomicTrade, seller or player, Access.CURRENCY, pay, changes, reason, nil, function()
+		local at = standing(player)
+		if citizenOf(player) ~= seller or not mayWork(player, sale.site) or not at or at.bucket ~= sale.bucket
+			or (Access.GapSquared(at, dropoff) or math.huge) > Access.VEHICLE_REACH_SQ then return nil, 'too_far' end
+		for _, change in ipairs(changes) do
+			if change.vehicleId then
+				local parked = vehicleAt(change.vehicleId)
+				if not parked or parked.bucket ~= sale.bucket
+					or (Access.GapSquared(parked, dropoff) or math.huge) > dropoff.radius * dropoff.radius then return nil, 'too_far' end
+			end
+		end
+		return function() return {} end
+	end)
+	if not called or type(paid) ~= 'table' or not paid.ok then
+		return false, type(paid) == 'table' and paid.error == 'money.pending' and 'money.pending' or 'not_paid'
 	end
-	if not called or paid ~= true then
-		Open77.log.warn(('[hauling] player %d sold %d crate(s) at %s and was not paid: %s')
-			:format(player, sold, safe(dropoff.key), safe(called and why or paid)))
-		local lost = restore(inventory, player, taken, tag, sale, dropoff, each, seller or player)
-		return false, lost > 0 and 'not_paid_lost' or 'not_paid'
-	end
+	local moved = citizenOf(player) ~= seller
 	Open77.log.info(('[hauling] player %d sold %d crate(s) of %s at %s for %d')
 		:format(player, sold, safe(sale.site), safe(dropoff.key), pay))
 	OPX.Publish(M.Event.ON_SOLD, player, {

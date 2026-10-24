@@ -1,41 +1,9 @@
---- One helper for every valued illegal action: reserve, a server bar, commit or
---- cancel -- each exactly once.
+--- Illegal actions validate, claim and run a cancellable progress bar.
 -- @author dop42
---
--- THE SHAPE, and the order is the design (the platform's world-interaction
--- pattern, and `modules/hauling/server/claim.lua`'s rule about yields):
---
---   1. VALIDATE, with nothing yielding: a loaded character, alive, on foot, not
---      already in an op, standing within reach of the anchor in its bucket, and
---      the caller's own business rules (`spec.check`) -- a host read is a plain
---      call, never a database round trip.
---   2. CLAIM, table arithmetic only: the player's op slot, the spot's lock
---      (`spec.lock`, one robbery per till), and the caller's own shared state
---      (`spec.claim`: a stock unit, a till charge). Two requests in one tick
---      cannot both pass this, because nothing between the read in 1 and the
---      write here can yield.
---   3. RESERVE, which yields: the inputs leave the bag and the purse NOW, before
---      the bar, into an escrow row. A bag that no longer holds them refuses the
---      op here and nothing has happened. The escrow row is what a crash leaves
---      behind, and `Op.Recover` refunds it at the next start.
---   4. A BAR THE SERVER TIMES (`modules/progress`): the client's "finished" is
---      believed only after the server's own clock, and the cancel key is X.
---      While it runs, a watch step stops it when the player moves off, goes
---      down, gets in a vehicle or changes bucket; a disconnect ends it `left`.
---   5. REVALIDATE, then COMMIT ONCE: the inputs are destroyed for good (the
---      escrow is closed) and only then is the value created (`spec.commit`).
---      A commit that cannot create its value hands the inputs back. The result
---      is kept by op id, so a second settle of the same op changes nothing.
---   6. OR CANCEL ONCE: the escrow goes back where it came from -- the bag, or
---      the character's row if they left -- and the claim is released.
---
--- A LEDGER LINE PER MOVEMENT OF DIRTY MONEY: into escrow (-), back out of it
--- (+), and whatever the commit mints. Summed per citizen, the ledger is what
--- they hold, which is the property `/opx.underworld.ledger` reads.
---
--- RANDOMNESS is the op's: `Model.Roll(op.id, salt, ...)`. The id is drawn from
--- a per-boot nonce and a counter, so a client never sees it before the commit.
-
+-- No item or wallet value moves before completion. The completed operation
+-- stages every input/output in one AtomicTrade receipt. Unknown replies retain
+-- logical claims and replay that receipt; cancellation needs no compensation.
+-- Legacy escrow lacks this proof and is quarantined for manual review.
 local M = OPX.Modules.Get('underworld')
 local Model = M.Model
 local Storage = M.Storage
@@ -51,7 +19,7 @@ local RESULTS_KEPT = 64
 
 local serial, nonce = 0, 0
 local watchJob = nil
--- Ops are refused until the previous run's escrow has been refunded.
+-- Ops are refused until legacy escrow has been quarantined successfully.
 local recovered = false
 
 -- ── reading a player ────────────────────────────────────────────────────────
@@ -127,7 +95,7 @@ function Op.Standing(player, anchor, reach)
 	return nil, at
 end
 
--- ── the escrow ──────────────────────────────────────────────────────────────
+-- ── the atomic trade ──────────────────────────────────────────────────────────────
 
 --- Whether the connection still carries the same character.
 local function sameCharacter(op)
@@ -137,80 +105,59 @@ local function sameCharacter(op)
 end
 
 --- How many dirty eddies a list of items carries.
-local function dirtyIn(items)
-	local item, total = M.Built.dirty.item, 0
-	for _, entry in ipairs(items or {}) do
-		if entry.name == item then total = total + entry.count end
-	end
-	return total
-end
-
---- Puts items and money back on a character, online or not. Answers what could
---- not be put back, for the journal.
--- @author dop42
--- @param player integer|nil the connection, when it still carries them
--- @param citizenId string
--- @param payload table { items, money }
--- @return string[] what was lost
-function Op.Refund(player, citizenId, payload)
-	local lost = {}
-	local bag, purse = inventory(), character()
-	-- A previous inventory write may yield across a character switch.
-	local target = citizenId
-	for _, entry in ipairs(type(payload) == 'table' and payload.items or {}) do
-		local added = bag ~= nil and bag.AddItem(target, entry.name, entry.count) or nil
-		if type(added) ~= 'table' or not added.ok then
-			lost[#lost + 1] = ('%dx %s'):format(entry.count, entry.name)
-		end
-	end
-	for _, entry in ipairs(type(payload) == 'table' and payload.money or {}) do
-		local ok = false
-		if purse ~= nil then
-			if player ~= nil then
-				local called, added = pcall(purse.AddMoney, citizenId, entry.type, entry.amount, 'underworld:refund')
-				ok = called and added == true
-			end
-			if not ok and type(purse.AddMoneyOffline) == 'function' then
-				local added = purse.AddMoneyOffline(citizenId, entry.type, entry.amount, 'underworld:refund')
-				ok = type(added) == 'table' and added.ok == true
-			end
-		end
-		if not ok then lost[#lost + 1] = ('%d %s'):format(entry.amount, entry.type) end
-	end
-	return lost
-end
-
---- Takes an op's inputs out of the bag and the purse. Yields. Answers nil, or
---- the code and nothing taken.
+--- Checks inputs without removing them; the completed trade owns all writes.
 local function reserve(op)
-	local inputs = op.spec.inputs or {}
-	local taken = { items = {}, money = {} }
+	-- Inputs remain owned until the completed progress commits an atomic trade.
+	-- These are courtesy checks; the transaction checks the staged bag again.
 	local bag, purse = inventory(), character()
-	for _, entry in ipairs(inputs.items or {}) do
-		local removed = bag ~= nil and bag.RemoveItem(op.citizenId, entry.name, entry.count) or nil
-		if type(removed) ~= 'table' or not removed.ok then
-			Op.Refund(op.player, op.citizenId, taken)
+	for _, entry in ipairs((op.spec.inputs or {}).items or {}) do
+		local count = bag and bag.GetItemCount(op.citizenId, entry.name)
+		if type(count) ~= 'table' or not count.ok or count.value < entry.count then
 			return entry.name == M.Built.dirty.item and 'not_enough_dirty' or 'not_enough_items'
 		end
-		taken.items[#taken.items + 1] = { name = entry.name, count = entry.count }
 	end
-	for _, entry in ipairs(inputs.money or {}) do
-		local called, removed = false, false
-		if purse ~= nil then called, removed = pcall(purse.RemoveMoney, op.citizenId, entry.type, entry.amount,
-			'underworld:' .. op.kind) end
-		if not called or removed ~= true then
-			Op.Refund(op.player, op.citizenId, taken)
-			return 'not_enough_money'
+	for _, entry in ipairs((op.spec.inputs or {}).money or {}) do
+		local amount = purse and purse.GetMoney(op.citizenId, entry.type)
+		if type(amount) ~= 'number' or amount < entry.amount then return 'not_enough_money' end
+	end
+end
+
+--- All inputs and outputs of a completed operation share one durable receipt.
+function Op.Atomic(op, outputs, moneyType, delta, participant)
+	local api, purse = inventory(), character()
+	if not api or type(api.AtomicTrade) ~= 'function' or not purse then return OPX.Result.Err('unavailable') end
+	if not op.moneyId then
+		local id = Storage.NewEconomicId()
+		if not id.ok then return id end
+		op.moneyId = 'underworld:' .. id.value
+	end
+	local changes = {}
+	for _, entry in ipairs((op.spec.inputs or {}).items or {}) do
+		changes[#changes + 1] = { name = entry.name, count = -entry.count }
+	end
+	delta = delta or 0
+	moneyType = moneyType or M.Built.dirty.cleanType
+	for _, entry in ipairs((op.spec.inputs or {}).money or {}) do
+		if entry.type ~= moneyType then return OPX.Result.Err('unavailable') end
+		delta = delta - entry.amount
+	end
+	for _, entry in ipairs(outputs or {}) do changes[#changes + 1] = entry end
+	-- A receipt may finish while the owner is offline. Reconcile it without
+	-- requiring the character or their bag to be loaded a second time.
+	if purse.IsMoneyPending(op.citizenId, op.moneyId) then return OPX.Result.Err('money.pending') end
+	if not purse.IsMoneyPending(op.citizenId, op.moneyId) then
+		local prior = purse.MoneyReceipt(op.moneyId)
+		if not prior.ok then return OPX.Result.Err('money.pending') end
+		if prior.value then
+			local row = prior.value
+			local action = delta == 0 and 'touch' or delta > 0 and 'add' or 'remove'
+			if row.citizen_id ~= op.citizenId or row.money_type ~= moneyType or row.action ~= action
+				or tonumber(row.amount) ~= math.abs(delta) then return OPX.Result.Err('money.opIdConflict') end
+			return OPX.Result.Ok({ replay = true })
 		end
-		taken.money[#taken.money + 1] = { type = entry.type, amount = entry.amount }
 	end
-	op.escrow = taken
-	if #taken.items > 0 or #taken.money > 0 then
-		Storage.EscrowOpen(op.id, op.citizenId, taken)
-		local dirty = dirtyIn(taken.items)
-		if dirty > 0 then Storage.Ledger(op.citizenId, 'escrow:' .. op.kind, -dirty, op.at) end
-	end
-	return nil
+	return api.AtomicTrade(op.citizenId, moneyType, delta, changes, 'underworld:' .. op.kind, op.moneyId,
+		participant and function() return participant end or nil)
 end
 
 -- ── the life of an op ───────────────────────────────────────────────────────
@@ -233,55 +180,45 @@ local function tell(op, ok, code, result)
 	if not called then Open77.log.warn(('[underworld] the %s answer raised: %s'):format(op.kind, tostring(failure))) end
 end
 
---- Ends an op without its value, once: the escrow goes back, the claim is let go.
+--- Cancels before dispatch: no economic value moved, only the claim is released.
 -- @author dop42
 -- @param op table
 -- @param reason string
 function Op.Cancel(op, reason)
-	if op.state == 'done' or op.state == 'cancelled' then return false end
+	if op.state == 'done' or op.state == 'cancelled' or op.state == 'pending' or op.state == 'committing' then return false end
 	op.state = 'cancelled'
 	release(op)
 	if type(op.spec.release) == 'function' then pcall(op.spec.release, op) end
-	if op.escrow ~= nil then
-		local online = sameCharacter(op) and op.player or nil
-		local lost = Op.Refund(online, op.citizenId, op.escrow)
-		Storage.EscrowClose(op.id)
-		local dirty = dirtyIn(op.escrow.items)
-		if dirty > 0 then Storage.Ledger(op.citizenId, 'refund:' .. op.kind, dirty, op.at) end
-		if #lost > 0 then
-			OPX.Audit.Log({ event = 'underworld.refundLost', severity = 'warn', citizenId = op.citizenId,
-				message = ('%s: %s'):format(op.id, table.concat(lost, ', ')), data = { op = op.id, kind = op.kind } })
-		end
-	end
+
 	remember(op, { ok = false, code = reason })
 	tell(op, false, reason)
 	return true
 end
 
---- Commits an op, once: escrow destroyed first, value created last.
+--- Commits the completed operation; unknown results retain its logical claim.
 local function commit(op)
 	op.state = 'committing'
-	if op.escrow ~= nil then Storage.EscrowClose(op.id) end
 	local called, ok, code, result = pcall(op.spec.commit, op)
 	if not called or ok ~= true then
 		if not called then
 			Open77.log.warn(('[underworld] the %s commit raised: %s'):format(op.kind, tostring(ok)))
 		end
-		-- Nothing was created: what was destroyed goes back.
-		op.state = 'refunding'
-		local escrow = op.escrow
-		op.escrow = nil
+		if (called and code == 'money.pending') or (not called and op.moneyId) then
+			op.state = 'pending'
+			if not op.recovering then
+				op.recovering = true
+				CreateThread(function()
+					while op.state == 'pending' do
+						Wait(1000)
+						commit(op)
+					end
+				end)
+			end
+			return
+		end
+		-- Definite refusal: no inputs were consumed, so only the logical claim is released.
 		release(op)
 		if type(op.spec.release) == 'function' then pcall(op.spec.release, op) end
-		if escrow ~= nil then
-			local lost = Op.Refund(sameCharacter(op) and op.player or nil, op.citizenId, escrow)
-			local dirty = dirtyIn(escrow.items)
-			if dirty > 0 then Storage.Ledger(op.citizenId, 'refund:' .. op.kind, dirty, op.at) end
-			if #lost > 0 then
-				OPX.Audit.Log({ event = 'underworld.refundLost', severity = 'warn', citizenId = op.citizenId,
-					message = ('%s: %s'):format(op.id, table.concat(lost, ', ')), data = { op = op.id } })
-			end
-		end
 		op.state = 'cancelled'
 		code = called and code or 'unavailable'
 		remember(op, { ok = false, code = code })
@@ -341,6 +278,7 @@ end
 -- @return table|nil op
 function Op.Begin(player, spec)
 	if not recovered then return false, 'unavailable' end
+	if spec.inputs and spec.durable ~= true then return false, 'unavailable' end
 	if byPlayer[player] ~= nil then return false, 'busy' end
 	local progress = OPX.Api.Get('progress')
 	if progress == nil or type(progress.Start) ~= 'function' then return false, 'no_bar' end
@@ -419,32 +357,21 @@ function Op.Of(player) return byPlayer[player] end
 -- @author dop42
 function Op.Locked(key) return locks[key] ~= nil end
 
---- Refunds every escrow row a previous run left open. Yields; run once at start.
+--- Quarantines old escrow without proven atomic debits. Yields once at start.
 -- @author dop42
 function Op.Recover()
 	local rows = Storage.EscrowLeft()
+	if rows == nil then return false end
 	for _, row in ipairs(rows) do
-		local payload = type(row.payload) == 'table' and row.payload or {}
-		local api = character()
-		local online = nil
-		if api ~= nil and type(api.GetPlayerByCitizenId) == 'function' then
-			local read, loaded = pcall(api.GetPlayerByCitizenId, row.citizenId)
-			if read and type(loaded) == 'table' and type(loaded.PlayerData) == 'table' then
-				online = loaded.PlayerData.source
-			end
-		end
-		local lost = Op.Refund(online, row.citizenId, payload)
-		Storage.EscrowClose(row.opId)
-		local dirty = dirtyIn(type(payload.items) == 'table' and payload.items or {})
-		if dirty > 0 then Storage.Ledger(row.citizenId, 'recover', dirty) end
-		OPX.Audit.Log({ event = 'underworld.recover', severity = #lost > 0 and 'warn' or 'info',
-			citizenId = row.citizenId, message = ('escrow %s refunded%s'):format(row.opId,
-				#lost > 0 and (' except ' .. table.concat(lost, ', ')) or ''), data = { op = row.opId } })
-	end
-	if #rows > 0 then
-		Open77.log.info(('[underworld] refunded %d escrow(s) a previous run left open'):format(#rows))
+		-- Old escrow had no atomic proof tying it to a saved item/wallet debit.
+		-- Refunding it automatically could duplicate already-restored inventory.
+		local marked = Storage.QuarantineEscrow(row.opId)
+		if not marked.ok then return false end
+		OPX.Audit.Log({ event = 'underworld.escrowQuarantined', severity = 'error',
+			citizenId = row.citizenId, message = 'Legacy escrow requires manual review', data = { op = row.opId } })
 	end
 	recovered = true
+	return true
 end
 
 --- Resets the state. Never yields.
@@ -468,22 +395,12 @@ function Op.Start()
 	end)
 end
 
---- Lets every open op go WITHOUT refunding it here: a refund is a bag write a
---- stopping resource cannot promise to finish, and the escrow row it would
---- refund is already in the database, where `Op.Recover` finds it at the next
---- start. Refunding twice is the one thing worse than refunding late.
--- @author dop42
+--- Stops logical operations; committed core transactions reconcile themselves.
 function Op.Stop()
 	if watchJob ~= nil then pcall(OPX.Scheduler.Cancel, watchJob) end
 	watchJob = nil
-	local open = 0
 	for _, op in pairs(ops) do
-		if op.escrow ~= nil then open = open + 1 end
 		op.state = 'cancelled'
 	end
 	ops, byPlayer, locks = {}, {}, {}
-	if open > 0 then
-		Open77.log.info(('[underworld] stopping with %d op(s) in escrow: refunded at the next start')
-			:format(open))
-	end
 end

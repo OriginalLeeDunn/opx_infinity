@@ -28,6 +28,7 @@ local bag = {
 }
 local accounts = {
 	Withdraw = function() coroutine.yield(); return { ok = true } end,
+	PayCitizen = function(_, _, citizen) coroutine.yield(); paid[#paid + 1] = citizen; return { ok = true } end,
 }
 local M = { Access = { Build = function() return { currency = 'BANK' } end }, Kind = {}, Stage = {} }
 local env = setmetatable({ OPX = {
@@ -44,23 +45,23 @@ assert(coroutine.resume(task))
 current = 'replacement'
 assert(coroutine.resume(task))
 assert(paid[1] == 'original', 'payment followed a recycled player id')
-local takeSlot = upvalue(M.Deliver, 'takeSlot')
+local takeSlot = upvalue(M.Server.Fail, 'takeSlot')
 assert(takeSlot(7, 3, 'shard', { serial = 'original' }))
 assert(removed[1].name == 'shard' and removed[1].metadata.serial == 'original',
 	'slot removal lost its expected item')
 
 M = { Model = {}, Storage = {} }
 assert(loadfile('modules/underworld/server/op.lua', 't', env))()
-task = coroutine.create(function()
-	assert(#M.Op.Refund(7, 'original', { items = { { name = 'a', count = 1 }, { name = 'b', count = 1 } },
-		money = { { type = 'BANK', amount = 5 } } }) == 0)
-end)
-assert(coroutine.resume(task))
-current = 'replacement-again'
-assert(coroutine.resume(task))
-assert(coroutine.resume(task))
-assert(added[1] == 'original' and added[2] == 'original' and paid[2] == 'original',
-	'refund followed a recycled player id after its first item')
+local paidBefore, addedBefore = #paid, #added
+local quarantined = nil
+M.Storage.EscrowLeft = function() return { { opId = 'unproved-legacy', citizenId = 'original',
+ payload = { items = { { name = 'a', count = 1 }, { name = 'b', count = 1 } },
+  money = { { type = 'BANK', amount = 5 } } } } } end
+M.Storage.QuarantineEscrow = function(id) quarantined = id; return { ok = true } end
+assert(M.Op.Recover())
+assert(quarantined == 'unproved-legacy' and #paid == paidBefore and #added == addedBefore,
+ 'ambiguous legacy escrow caused an automatic payment/refund')
+assert(M.Op.Refund == nil, 'unsafe split escrow refund API remains reachable')
 print('audit-services: PASS')
 
 -- An outsourced offer is claimed before the account write yields: a second
@@ -116,7 +117,7 @@ local loaded = { citizenId = 'original', data = {} }
 local config = { dirty = { item = 'dirty', mode = 'item' }, dealers = { list = {} }, stores = { list = {} },
 	fronts = { byId = { front = { id = 'front', perTxMax = 100, dailyCap = 100, rate = 0.5,
 		batchMs = 1000, payout = 'BANK' } } }, launderAmounts = {} }
-local ledgerRows = 0
+local ledgerRows, minted, mintBusy = 0, 0, false
 M = { Settings = { MINT_CAPS = { corner = 10 } }, Event = {}, Command = { LEDGER = 'ledger', SITES = 'sites', CAPTURE = 'capture' },
 	Model = { ID_MAX = 32, ID = '^[%w_]+$', Build = function() return config, {}, {} end,
 		Integer = function(n, low, high) return type(n) == 'number' and n >= low and n <= high and n or nil end,
@@ -128,17 +129,24 @@ M = { Settings = { MINT_CAPS = { corner = 10 } }, Event = {}, Command = { LEDGER
 			return cap - used
 		end,
 	},
-	Storage = { SCHEMA = {}, DepositedToday = function() coroutine.yield(); return 0 end,
+	Storage = { SCHEMA = {}, COLUMNS = {}, Minted = function() return minted end, DepositedToday = function() coroutine.yield(); return 0 end,
 		Ledger = function() ledgerRows = ledgerRows + 1 end,
 		CitizenOf = function(id) return id end,
 		LedgerOf = function() coroutine.yield(); return {}, 0 end,
 	},
-	Op = { Character = function() return loaded end, Snapshot = function() return {} end,
+	Op = { Atomic = function(op)
+		if mintBusy then return { ok = false, error = 'busy' } end
+		mintBusy = true
+		coroutine.yield()
+		minted, ledgerRows, mintBusy = minted + op.mintPlan.amount, ledgerRows + 1, false
+		return { ok = true }
+	end, Character = function() return loaded end, Snapshot = function() return {} end,
 		Standing = function() return nil end, Init = function() end,
 		Begin = function(_, spec) return false, spec.check({}, false) or 'no_bar' end,
 	},
 }
-env.OPX.Schema = { Add = function() end }
+env.OPX.Schema = { Add = function() end, AddColumns = function() end }
+env.OPX.Text = { Bytes = function(value) return value end }
 env.OPX.Publish = function() end
 env.TriggerClientEvent = function() end
 assert(loadfile('modules/underworld/server/main.lua', 't', env))()
@@ -185,12 +193,18 @@ assert(coroutine.resume(task))
 assert(replies == 0, 'ledger survived staff ACL revocation')
 print('audit-services: mint cap, deposit lock and ledger PASS')
 
--- The seller's first bag operation yields before the buyer is charged. All
--- remaining legs still name the original citizens after both slots change.
+-- One atomic peer request keeps its original citizens across source changes.
 local identities = { [7] = { citizenId = 'seller', data = {} }, [8] = { citizenId = 'buyer', data = {} } }
 local moves = {}
-bag.RemoveItem = function(target) moves[#moves + 1] = target; coroutine.yield(); return { ok = true } end
-bag.AddItem = function(target) moves[#moves + 1] = target; coroutine.yield(); return { ok = true } end
+bag.RemoveItem = function() error('split peer debit remains') end
+bag.AddItem = function() error('split peer credit remains') end
+bag.AtomicPeerTrade = function(seller, buyer, moneyType, price, changes)
+	assert(moneyType == 'BANK' and price == 10 and #changes == 1 and changes[1].name == 'drug')
+	moves[#moves + 1], moves[#moves + 2] = seller, buyer
+	coroutine.yield()
+	return { ok = true }
+end
+M.Storage.NewEconomicId = function() return { ok = true, value = 'peer-fixed-id' } end
 api.RemoveMoney = function(target) moves[#moves + 1] = target; return true end
 api.AddMoney = function(target) moves[#moves + 1] = target; return true end
 M.Built = { street = { currency = 'clean', alert = {} }, dirty = { cleanType = 'BANK' } }
@@ -204,5 +218,5 @@ task = coroutine.create(function() assert(M.Drugs.Complete('swap')) end)
 assert(coroutine.resume(task))
 identities[7], identities[8] = { citizenId = 'newSeller', data = {} }, { citizenId = 'newBuyer', data = {} }
 while coroutine.status(task) ~= 'dead' do assert(coroutine.resume(task)) end
-assert(table.concat(moves, ',') == 'seller,buyer,buyer,seller', 'street settlement moved replacement characters assets')
+assert(table.concat(moves, ',') == 'seller,buyer', 'street settlement moved replacement characters assets')
 print('audit-services: street settlement PASS')

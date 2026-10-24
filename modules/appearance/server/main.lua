@@ -447,7 +447,7 @@ end
 -- @param identifier Player|Source|CitizenId
 -- @param clothing any
 -- @return Result
-function M.SaveClothing(identifier, clothing)
+function M.SaveClothing(identifier, clothing, billing)
 	local player = character and character.ResolvePlayer(identifier) or nil
 	if not player then return Result.Err('error.notLoggedIn', tostring(identifier)) end
 
@@ -466,19 +466,35 @@ function M.SaveClothing(identifier, clothing)
 		return Result.Err('clothing.tooLarge', tostring(#encoded))
 	end
 
-	local written = M.Storage.SaveClothing(data.citizenId, encoded)
-	if not written.ok then return written end
-	data.clothing = canonical
-
-	-- The write yielded: a player who switched character meanwhile is not sent
-	-- this one's clothes.
-	if not player.Offline and character.GetPlayer(data.source) == player then
-		republish(player)
-		TriggerClientEvent(M.Event.CLOTHING_SAVED, data.source, canonical)
+	local baseline = data.clothing
+	if billing and billing.baseline and baseline ~= billing.baseline then return Result.Err('clothing.stale') end
+	local amount, currency = 0, nil
+	for _, quote in ipairs(billing and billing.quotes or {}) do
+		local value = type(quote) == 'table' and math.tointeger(quote.amount)
+		if not value or value < 0 or type(quote.moneyType) ~= 'string' then return Result.Err('clothing.unpaid') end
+		if currency and currency ~= quote.moneyType then return Result.Err('clothing.unpaid') end
+		currency, amount = quote.moneyType, amount + value
 	end
-	TriggerEvent(M.Event.IN_CLOTHING, data.source, data.citizenId, canonical)
-
-	OPX.Audit.Player(player, 'clothing.saved', nil, { bytes = #encoded })
+	if type(character.AtomicMoney) ~= 'function' then return Result.Err('error.unavailable') end
+	local saved = character.AtomicMoney(player, currency or 'EDDIES', amount, amount > 0 and 'remove' or 'touch',
+		'appearance:clothing', nil, function(op)
+			if data.clothing ~= baseline then return nil, 'clothing.stale' end
+			op.apply = function() data.clothing = canonical end
+			op.publish = function()
+				if billing and billing.commit then billing.commit() end
+				if not player.Offline and character.GetPlayer(data.source) == player then
+					for _, quote in ipairs(billing and billing.quotes or {}) do
+						if quote.publish then pcall(quote.publish) end
+					end
+					republish(player)
+					TriggerClientEvent(M.Event.CLOTHING_SAVED, data.source, canonical)
+				end
+				TriggerEvent(M.Event.IN_CLOTHING, data.source, data.citizenId, canonical)
+				OPX.Audit.Player(player, 'clothing.saved', nil, { bytes = #encoded })
+			end
+			return function(attempt) return M.Storage.ClothingStatements(attempt, encoded) end
+		end)
+	if not saved.ok then return saved end
 	return Result.Ok(canonical)
 end
 
@@ -907,7 +923,7 @@ local function runCharge(fn, owner, source, ...)
 		return false, 'clothing.unpaid'
 	end
 	if paid ~= true then return false, type(code) == 'string' and code or 'clothing.unpaid' end
-	return true, nil, type(undo) == 'function' and undo or nil
+	return true, nil, (type(undo) == 'function' or type(undo) == 'table') and undo or nil
 end
 
 local function admitSave(source, player, canonical)
@@ -922,7 +938,11 @@ local function admitSave(source, player, canonical)
 	-- Cancel kept the money and dropped the clothes; now the grant carries a
 	-- `bill`, run only by the save that keeps it. A room left by Cancel saves
 	-- nothing and costs nothing.
-	local undos = {}
+	local undos, quotes, committed = {}, {}, {}
+	local function accept(value)
+		if type(value) == 'table' then quotes[#quotes + 1] = value
+		elseif type(value) == 'function' then undos[#undos + 1] = value end
+	end
 	local function settle(code)
 		for index = #undos, 1, -1 do pcall(undos[index]) end
 		return nil, code
@@ -931,12 +951,13 @@ local function admitSave(source, player, canonical)
 		if type(grant.bill) ~= 'function' then return true end
 		local paid, code, undo = runCharge(grant.bill, grant.owner, source)
 		if not paid then return false, code end
-		if undo ~= nil then undos[#undos + 1] = undo end
+		accept(undo)
 		return true
 	end
 	local function done()
-		if #undos == 0 then return {} end
-		return { undo = function() for index = #undos, 1, -1 do pcall(undos[index]) end end }
+		return { quotes = quotes, baseline = stored,
+			commit = function() for _, callback in ipairs(committed) do callback() end end,
+			undo = function() for index = #undos, 1, -1 do pcall(undos[index]) end end }
 	end
 
 	for index = 1, #held.looks do
@@ -944,7 +965,9 @@ local function admitSave(source, player, canonical)
 		if fitsLook(grant.wear, stored, canonical) then
 			local paid, code = bill(grant)
 			if not paid then return settle(code) end
-			table.remove(held.looks, index)
+			committed[#committed + 1] = function()
+				for key, candidate in ipairs(held.looks) do if candidate == grant then table.remove(held.looks, key); break end end
+			end
 			return done()
 		end
 	end
@@ -984,13 +1007,13 @@ local function admitSave(source, player, canonical)
 		if not prepaid[moved[index]] then slots[#slots + 1] = moved[index] end
 	end
 	if #slots == 0 then
-		spend()
+		committed[#committed + 1] = spend
 		return done()
 	end
 	local paid, code, undo = runCharge(priced.charge, priced.owner, source, slots)
 	if not paid then return settle(code) end
-	if undo ~= nil then undos[#undos + 1] = undo end
-	spend()
+	accept(undo)
+	committed[#committed + 1] = spend
 	return done()
 end
 
@@ -1105,11 +1128,11 @@ local function registerEvents()
 				OPX.Audit.Player(player, 'clothing.refused', nil, { reason = refusal })
 				return M.RefuseSave(src, refusal, operation)
 			end
-			local saved = M.SaveClothing(player, canonical)
+			local saved = M.SaveClothing(player, canonical, admitted)
 			if not saved.ok then
 				-- Charged and not written: the money goes back, or the player paid
 				-- for clothes that do not survive the session.
-				if admitted.undo ~= nil then pcall(admitted.undo) end
+				if saved.error ~= 'money.pending' and admitted.undo ~= nil then pcall(admitted.undo) end
 				Open77.log.warn(('[appearance] %d: clothing not saved: %s (%s)')
 					:format(src, tostring(saved.error), tostring(saved.detail)))
 				M.RefuseSave(src, saved.error, operation)

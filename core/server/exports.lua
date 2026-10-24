@@ -335,8 +335,8 @@ local function moneyDoor(verb)
 	end
 end
 
-publish('AddMoney', 'write', moneyDoor('AddMoney'))
-publish('RemoveMoney', 'write', moneyDoor('RemoveMoney'))
+publish('AddMoney', 'write', moneyDoor('AddMoney'), true)
+publish('RemoveMoney', 'write', moneyDoor('RemoveMoney'), true)
 
 publish('AddMoneyOffline', 'write', function(caller, citizenId, moneyType, amount, reason)
 	local character = OPX.Api.Get('character')

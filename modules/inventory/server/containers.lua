@@ -198,6 +198,7 @@ end
 -- @param slot integer
 -- @return boolean
 function Containers.Hold(container, slot)
+	if container.economicLock then return false end
 	container.held = container.held or {}
 	if container.held[slot] then return false end
 	container.held[slot] = true
@@ -543,6 +544,7 @@ end
 -- A direct call and not a hook registry: the weapons half is the only thing that
 -- reacts to a change, and it is loaded before any operation can run.
 local function commit(first, second)
+	if first.staged then return end
 	local distinct = second ~= nil and second.id ~= first.id
 	local now = OPX.Now()
 	announce(first)
@@ -613,6 +615,7 @@ end
 -- @return boolean
 -- @return string|nil
 function Containers.Add(container, name, count, metadata)
+	if container and container.economicLock then return false, 'busy' end
 	if not container then return false, 'not_found' end
 	local entry = Catalog.Get(name)
 	if not entry then return false, 'unknown_item' end
@@ -647,6 +650,7 @@ end
 -- @return boolean
 -- @return string|nil
 function Containers.Remove(container, name, count, metadata)
+	if container and container.economicLock then return false, 'busy' end
 	if not container then return false, 'not_found' end
 	count = Common.Integer(count, 1, Options.MAX_STACK)
 	if not count then return false, 'bad_count' end
@@ -689,6 +693,7 @@ end
 -- @return boolean
 -- @return string|nil
 function Containers.Clear(container)
+	if container and container.economicLock then return false, 'busy' end
 	if not container then return false, 'not_found' end
 	container.items = {}
 	commit(container)
@@ -703,6 +708,7 @@ end
 -- @return boolean
 -- @return string|nil
 function Containers.TakeFromSlot(container, slot, count)
+	if container and container.economicLock then return false, 'busy' end
 	if not container then return false, 'not_found' end
 	local entry = container.items[slot]
 	if not entry then return false, 'empty_slot' end
@@ -731,6 +737,7 @@ end
 -- @return boolean
 -- @return string|nil
 function Containers.SetMetadata(container, slot, metadata)
+	if container and container.economicLock then return false, 'busy' end
 	local entry = Containers.GetSlot(container, slot)
 	if not entry then return false, 'empty_slot' end
 	entry.metadata = Common.Copy(metadata)
@@ -750,7 +757,8 @@ end
 -- @param count integer|nil
 -- @return boolean
 -- @return string|nil
-function Containers.Move(from, fromSlot, to, toSlot, count)
+local function moveStaged(from, fromSlot, to, toSlot, count)
+	if (from and from.economicLock) or (to and to.economicLock) then return false, 'busy' end
 	if not from or not to then return false, 'not_found' end
 	local source = from.items[fromSlot]
 	if not source then return false, 'empty_slot' end
@@ -867,6 +875,108 @@ function Containers.Move(from, fromSlot, to, toSlot, count)
 	return true, nil
 end
 
+--- Copies an economic participant without registering or announcing it.
+function Containers.EconomicClone(container)
+	local baseline = Common.Copy(container.items)
+	return { id = container.id, kind = container.kind, owner = container.owner,
+		slots = container.slots, maxWeight = container.maxWeight, items = Common.Copy(baseline),
+		held = Common.Copy(container.held), transient = container.transient, staged = true }, baseline
+end
+
+--- Installs a committed post-state, preserving observations of unchanged weapons.
+function Containers.EconomicApply(container, staged, baseline, observations)
+	local changed = false
+	for slot, entry in pairs(staged.items) do
+		local old, live = baseline[slot], container.items[slot]
+		local observation = type(entry.metadata) == 'table' and observations and observations[entry.metadata.serial]
+		if observation then old, live = observation.before, observation.live end
+		if old and live and old.name == entry.name and live.name == entry.name
+			and type(entry.metadata) == 'table' and type(old.metadata) == 'table' and type(live.metadata) == 'table'
+			and entry.metadata.serial == old.metadata.serial then
+			for _, field in ipairs({ 'ammo', 'durability', 'serial' }) do
+				if entry.metadata[field] == old.metadata[field] and entry.metadata[field] ~= live.metadata[field] then
+					entry.metadata[field] = live.metadata[field]
+					changed = true
+				end
+			end
+		end
+	end
+	if changed and not container.transient then M.Storage.MarkDirty(container.id) end
+	container.items, container.touchedAt = staged.items, OPX.Now()
+end
+
+--- Moves between containers durably before publishing either side. Yields.
+function Containers.Move(from, fromSlot, to, toSlot, count)
+	if not from or not to then return false, 'not_found' end
+	if from.id == to.id or (from.transient and to.transient) then
+		return moveStaged(from, fromSlot, to, toSlot, count)
+	end
+	if from.economicLock or to.economicLock then return false, 'busy' end
+	local leaving = from.items[fromSlot]
+	if leaving then
+		local refused = M.Weapons.BeforeLeave(from, leaving)
+		if refused then return false, refused end
+		local returning = toSlot and to.items[toSlot]
+		if returning and not stacksWith(returning, leaving.name, leaving.metadata) then
+			refused = M.Weapons.BeforeLeave(to, returning)
+			if refused then return false, refused end
+		end
+	end
+	local token = {}
+	from.economicLock, to.economicLock = token, token
+	local function release()
+		for _, container in ipairs({ from, to }) do
+			if container.economicLock == token then container.economicLock = nil end
+			if container.unloadWhenClean then CreateThread(function() Containers.Unload(container.id) end) end
+		end
+	end
+	local first, why = M.Storage.EconomicFence(from, token)
+	if first == nil then release(); return false, why end
+	local second
+	second, why = M.Storage.EconomicFence(to, token)
+	if second == nil then release(); return false, why end
+	local stagedFrom, beforeFrom = Containers.EconomicClone(from)
+	local stagedTo, beforeTo = Containers.EconomicClone(to)
+	local ok, refused = moveStaged(stagedFrom, fromSlot, stagedTo, toSlot, count)
+	if not ok then release(); return false, refused end
+	local function apply()
+		local observations = {}
+		for _, pair in ipairs({ { from, beforeFrom }, { to, beforeTo } }) do
+			for slot, entry in pairs(pair[1].items) do
+				local original = pair[2][slot]
+				local serial = type(entry.metadata) == 'table' and entry.metadata.serial
+				if serial and original and original.metadata and original.metadata.serial == serial then
+					observations[serial] = { before = original, live = entry }
+				end
+			end
+		end
+		Containers.EconomicApply(from, stagedFrom, beforeFrom, observations)
+		Containers.EconomicApply(to, stagedTo, beforeTo, observations)
+		M.Storage.EconomicAccepted(from, first)
+		M.Storage.EconomicAccepted(to, second)
+		release()
+		local firstNotice = pcall(Containers.PublishEconomic, from)
+		local secondNotice = pcall(Containers.PublishEconomic, to)
+		if not firstNotice or not secondNotice then
+			Open77.log.error('[inventory] committed transfer notification failed')
+		end
+	end
+	local called, saved = pcall(M.Storage.SaveAtomic, { stagedFrom, stagedTo })
+	if called and saved.ok then apply(); return true end
+	if called and saved.error ~= 'transaction-raised' then release(); return false, saved.error end
+	-- Replacement snapshots are idempotent while both containers stay locked.
+	-- A missing reply cannot permit an older deferred save to restore the source.
+	Open77.log.error(('[inventory] transfer %s -> %s pending reconciliation'):format(from.id, to.id))
+	CreateThread(function()
+		while from.economicLock == token and to.economicLock == token do
+			Wait(1000)
+			local ran, retried = pcall(M.Storage.SaveAtomic, { stagedFrom, stagedTo })
+			if ran and retried.ok then apply(); return end
+		end
+	end)
+	return false, 'money.pending'
+end
+
 --- Splits part of a stack into the first free slot.
 -- @author dop42
 -- @param container table|nil
@@ -875,6 +985,7 @@ end
 -- @return boolean
 -- @return string|nil
 function Containers.Split(container, slot, count)
+	if container and container.economicLock then return false, 'busy' end
 	if not container then return false, 'not_found' end
 	local source = container.items[slot]
 	if not source then return false, 'empty_slot' end
@@ -902,6 +1013,7 @@ end
 -- @return boolean
 -- @return string|nil
 function Containers.Sort(container, mode)
+	if container and container.economicLock then return false, 'busy' end
 	if not container then return false, 'not_found' end
 	if mode ~= 'weight' and mode ~= 'name' then return false, 'bad_request' end
 	-- Sorting moves every stack, a held one with the rest.
@@ -941,6 +1053,7 @@ end
 function Containers.Discard(id, written)
 	local container = loaded[id]
 	if not container then return end
+	if container.economicLock then container.unloadWhenClean = true; return end
 
 	-- WHAT WENT WITH IT, SAID OUT LOUD. This is the one place in the module where
 	-- items cease to exist, and it used to do it in complete silence: no audit
@@ -1001,6 +1114,7 @@ end
 function Containers.Unload(id)
 	local container = loaded[id]
 	if not container then return end
+	if container.economicLock then container.unloadWhenClean = true; return end
 	if not container.transient then
 		local clean = M.Storage.SaveUntilClean(container)
 		-- The write yielded: if the container was replaced meanwhile, it is no
@@ -1067,4 +1181,13 @@ function Containers.IsViewed(id)
 		if view.id == id then return true end
 	end
 	return false
+end
+
+--- Publishes a change that has already committed with its wallet transaction.
+-- The staging path never calls commit: no dirty mark or event precedes SQL.
+function Containers.PublishEconomic(container)
+	announce(container)
+	Containers.Publish(container)
+	if container.kind == KIND.CHARACTER then M.Weapons.CheckHeld(container) end
+	M.World.CheckEmptyDrop(container)
 end

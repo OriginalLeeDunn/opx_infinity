@@ -32,7 +32,7 @@ do
 		end,
 	} }
 	assert(loadfile('modules/business/server/storage.lua', 't', sandbox({ OPX = OPX })))()
-	local op = { id = 'test', kind = 'job', group = 'ncpd', amount = 10, reason = 'test',
+	local op = { id = 'test', attempt = 'attempt-one', kind = 'job', group = 'ncpd', amount = 10, reason = 'test',
 		out = 'test:out', into = 'test:in', from = { kind = 'job', group = 'ncpd' },
 		to = { kind = 'job', group = 'trauma' } }
 	assert(M.Storage.Credit(op).ok)
@@ -93,16 +93,14 @@ do
 	end
 	M.Init(); M.Start(); env.source = 1
 	handlers.OPEN('shop')
-	local ok, _, undo = wardrobe.charge(1, { 'OuterChest' })
-	assert(ok and charged == 40 and type(undo) == 'function')
-	citizen = 'replacement'; undo()
-	assert(refunds[1][1] == 'original' and refunds[1][2] == 40, 'wardrobe undo paid a replacement citizen')
+	local ok, _, quote = wardrobe.charge(1, { 'OuterChest' })
+	assert(ok and charged == 0 and type(quote) == 'table' and quote.amount == 40 and quote.moneyType == 'EDDIES')
+	assert(#refunds == 0, 'a price quote moved money before the outfit transaction')
 	citizen = 'original'
 	handlers.WEAR({ shop = 'shop', look = 'uniform' })
-	ok, _, undo = wardrobe.bill(1)
-	assert(ok and type(undo) == 'function')
-	citizen = 'replacement'; undo()
-	assert(refunds[2][1] == 'original', 'uniform undo paid a replacement citizen')
+	ok, _, quote = wardrobe.bill(1)
+	assert(ok and type(quote) == 'table' and quote.amount == 40 and charged == 0)
+	assert(#refunds == 0, 'uniform quote created a compensating payment')
 	for _, event in ipairs({ 'LOAD', 'LIST', 'SHARE', 'REDEEM', 'SAVE' }) do
 		citizen = 'original'; sent = {}; local before = grants
 		readEffect = function() citizen = 'replacement' end
@@ -192,7 +190,17 @@ do
 		if waits then coroutine.yield() end
 		return OPX.Result.Ok({ cooking = 0, tail = tail })
 	end
-	crafting.Storage.Place = function(_, _, _, seconds) tail = seconds; return OPX.Result.Ok(seconds) end
+	local placed = {}
+	crafting.Contracts.inventory.AtomicTrade = function(cid, _, delta, changes, _, _, participant)
+		assert(delta == 0 and changes[1].name == 'scrap_metal' and changes[1].count == -1)
+		local op = { id = 'queue-' .. tostring(items), attempt = 'attempt', citizenId = cid }
+		local effects, guard = participant(op)(op)
+		assert(guard and guard.values[3] == 3 and effects[1].query:find('MAX(ready_at)', 1, true))
+		tail, items = tail + effects[1].values[4], items - 1
+		placed[op.id] = tail
+		return OPX.Result.Ok({})
+	end
+	crafting.Storage.Placed = function(_, token) return OPX.Result.Ok(placed[token]) end
 	local first
 	local thread = coroutine.create(function() first = api.Order(1, 'audit:queue', 'rounds') end)
 	assert(coroutine.resume(thread))

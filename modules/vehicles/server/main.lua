@@ -140,8 +140,6 @@ end
 local registering = {}
 local REGISTER_WAIT_MS = 5000
 local REGISTER_POLL_MS = 50
--- A turn held past this can only be a coroutine the host dropped mid-yield.
-local REGISTER_STALE_MS = 30000
 
 local registerNow
 
@@ -156,12 +154,11 @@ function M.Register(citizenId, record, options)
 		return Result.Err('error.badRequest', 'citizenId and record are required')
 	end
 	local deadline = OPX.Now() + REGISTER_WAIT_MS
-	while registering[citizenId] ~= nil
-		and OPX.Now() - registering[citizenId] < REGISTER_STALE_MS do
+	while registering[citizenId] ~= nil do
 		if OPX.Now() >= deadline then return Result.Err('vehicle.registering', citizenId) end
 		Wait(REGISTER_POLL_MS)
 	end
-	local mine = OPX.Now()
+	local mine = { since = OPX.Now() }
 	registering[citizenId] = mine
 	local ran, answer = pcall(registerNow, citizenId, record, options)
 	if registering[citizenId] == mine then registering[citizenId] = nil end
@@ -219,6 +216,60 @@ registerNow = function(citizenId, record, options)
 		end
 	end
 	return Result.Err('vehicle.plateExhausted', entity and entity.plate or '?')
+end
+
+--- Trusted server purchase: wallet debit and ownership share one receipt.
+-- A pending reply is not refundable; the stored car is recoverable at a garage.
+function M.Purchase(source, record, options, payment)
+	options, payment = options or {}, payment or {}
+	if not character or type(character.AtomicMoney) ~= 'function' then return Result.Err('error.unavailable') end
+	local owner = character.GetPlayer(source)
+	if not owner then return Result.Err('error.notLoggedIn') end
+	if type(record) ~= 'string' or record == '' or #record > MAX_RECORD then return Result.Err('vehicle.badRecord') end
+	local amount = math.tointeger(payment.amount)
+	if not amount or amount < 0 then return Result.Err('money.badAmount') end
+	local citizenId = owner.PlayerData.citizenId
+	local deadline = OPX.Now() + REGISTER_WAIT_MS
+	while registering[citizenId] do
+		if OPX.Now() >= deadline then return Result.Err('vehicle.registering') end
+		Wait(REGISTER_POLL_MS)
+	end
+	local mine = { since = OPX.Now(), pending = true }
+	registering[citizenId] = mine
+	local function release()
+		if registering[citizenId] == mine then registering[citizenId] = nil end
+	end
+	local entity = { plate = plate(), citizenId = citizenId, record = record,
+		appearance = options.appearance, garage = options.garage or M.Settings.DEFAULT_GARAGE,
+		state = STATE.STORED, health = 1.0, paint = options.paint, metadata = options.metadata or {} }
+	local ran, answer = pcall(character.AtomicMoney, owner, payment.moneyType, amount,
+		amount == 0 and 'touch' or 'remove', payment.reason, payment.opId, function(op)
+			op.release = release
+			op.publish = function()
+				OPX.Publish(M.Event.ON_REGISTERED, owner.PlayerData.source, {
+					citizenId = citizenId, plate = entity.plate, record = record, garage = entity.garage })
+			end
+			return function(attempt)
+				local statements, guard = Store.PurchaseStatements(entity, attempt, M.Settings.PER_CHARACTER)
+				if payment.participant then
+					local extra = payment.participant(attempt, entity)
+					for index = 1, #(extra or {}) do statements[#statements + 1] = extra[index] end
+				end
+				return statements, guard
+			end
+		end)
+	if not ran then
+		-- AtomicMoney normally catches dispatch exceptions and owns its recovery.
+		-- Retain the registration guard if it reports an unresolved operation.
+		if not character.IsMoneyPending(citizenId) then release() end
+		return Result.Err('money.pending')
+	end
+	if answer.error ~= 'money.pending' then release() end
+	if not answer.ok then return answer end
+	local stored = Store.ByPurchase(answer.value.opId)
+	if not stored.ok or not stored.value then return Result.Err('money.pending', answer.value.opId) end
+	stored.value.opId = answer.value.opId
+	return stored
 end
 
 --- Answers every vehicle a character owns.
@@ -823,6 +874,7 @@ end
 function M.Api()
 	OPX.Api.Provide('vehicles', 1, {
 		Register = M.Register,
+		Purchase = M.Purchase,
 		List = M.List,
 		Get = M.Get,
 		PlateOf = M.PlateOf,

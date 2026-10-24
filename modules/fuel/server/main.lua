@@ -855,6 +855,9 @@ function M.Api()
 	})
 end
 
+--- Consumption may start once an operator has surveyed a usable station.
+function M.RefuelingAvailable() return next(stations) ~= nil end
+
 --- Wires the doors, the can and the two loops. On a coroutine.
 -- @author dop42
 function M.Start()
@@ -864,7 +867,9 @@ function M.Start()
 			:format(#placeholders, table.concat(placeholders, ', ')))
 	end
 	if next(stations) == nil then
-		Open77.log.warn('[fuel] no station is open: every tank still burns, and only a can or staff fills one')
+		Open77.log.warn(settings().requireOpenStation
+			and '[fuel] no station is open: OPX consumption is paused until station points are surveyed'
+			or '[fuel] no station is open: consumption remains enabled by configuration')
 	end
 
 	local api = inventory()

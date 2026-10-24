@@ -372,6 +372,8 @@ function Tanks.Tick()
 	local now = OPX.Now()
 	local dt = lastTickAt ~= nil and now - lastTickAt or Tanks.Settings().tickMs
 	lastTickAt = now
+	if Tanks.Settings().requireOpenStation and not Tanks.StandingDown()
+		and type(M.RefuelingAvailable) == 'function' and not M.RefuelingAvailable() then return end
 	local api = Open77.vehicles
 	if type(api) ~= 'table' or type(api.all) ~= 'function' then return end
 	local read, list = pcall(api.all)

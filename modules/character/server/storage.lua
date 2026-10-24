@@ -328,7 +328,6 @@ function M.Storage.Save(entity, loggedOut)
 UPDATE opx77_characters
    SET name = @name,
        char_info = @charInfo,
-       money = @money,
        job = @job,
        gang = @gang,
        position = NULLIF(@position, ''),
@@ -340,7 +339,6 @@ UPDATE opx77_characters
 		citizen = entity.citizenId,
 		name = storedName(entity.name),
 		charInfo = encode(entity.charInfo),
-		money = encode(entity.money),
 		job = encode(entity.job),
 		gang = encode(entity.gang),
 		position = nullable(entity.position),
@@ -350,49 +348,11 @@ UPDATE opx77_characters
 	})
 end
 
---- Adds to one balance of a character that is not loaded, in one statement.
--- @author dop42
---
--- AN INCREMENT, NEVER A READ-MODIFY-WRITE. The balance is read and written by the
--- same `UPDATE`, so two offline payments landing together each add to what the
--- other left, where a fetch-then-save pair would both read the old balance and
--- the second would erase the first. An absent currency key counts as zero, which
--- is what `NormaliseEntity` answers for one on the next login anyway.
---
--- The JSON path is a bound parameter, built from a money type the caller has
--- already checked against `MONEY.TYPES`; no text from anywhere else reaches it.
--- @param citizenId CitizenId
--- @param moneyType MoneyType
--- @param amount integer positive
--- @return Result
-function M.Storage.AddMoney(citizenId, moneyType, amount)
-	-- Match the live ledger's JSON-safe ceiling in the UPDATE itself. A read
-	-- before this write would let concurrent offline payments both pass it.
-	local maximum = 9007199254740991
-	local written = Storage.Execute([[
-UPDATE opx77_characters
-   SET money = JSON_SET(money, @path,
-       COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(money, @path)) AS SIGNED), 0) + @amount)
- WHERE citizen_id = @citizen AND deleted_at IS NULL
-   AND COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(money, @path)) AS SIGNED), 0) <= @remaining
-  ]], { citizen = citizenId, path = '$.' .. moneyType, amount = amount,
-		remaining = maximum - amount })
-	if not written.ok then return written end
-	-- The bridge answers the affected rows as a number or under `affectedRows`;
-	-- zero is a character that is not there, and anything unreadable is left to
-	-- the read that follows to decide.
-	local affected = written.value
-	if type(affected) == 'table' then affected = affected.affectedRows end
-	if tonumber(affected) == 0 then
-		local exists = Storage.Scalar([[
-SELECT COUNT(*) FROM opx77_characters
- WHERE citizen_id = @citizen AND deleted_at IS NULL
-  ]], { citizen = citizenId })
-		if not exists.ok then return exists end
-		if (tonumber(exists.value) or 0) > 0 then return Result.Err('money.tooLarge', citizenId) end
-		return Result.Err('character.notFound', citizenId)
-	end
-	return Result.Ok(true)
+--- Credits through the same durable journal as every public money operation.
+-- This low-level door cannot bypass receipts or later be undone by autosave.
+function M.Storage.AddMoney(citizenId, moneyType, amount, opId)
+	return M.Storage.MoneyChange({ id = opId, citizenId = citizenId, moneyType = moneyType,
+		action = 'add', amount = amount, reason = 'storage:add', allowNegative = true })
 end
 
 --- Reads one stored balance of a character, loaded or not.
@@ -762,4 +722,154 @@ SELECT g.citizen_id, g.grade, c.name, c.char_info
 		}
 	end
 	return Result.Ok(out)
+end
+
+-- ── durable money operations ────────────────────────────────────────────────
+
+M.Storage.SCHEMA[#M.Storage.SCHEMA + 1] = [[
+CREATE TABLE IF NOT EXISTS opx77_money_ledger (
+    op_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+    attempt_token CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    citizen_id VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    money_type VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    action VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    amount BIGINT NOT NULL,
+    balance_after BIGINT NOT NULL,
+    reason VARCHAR(192) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_opx77_money_ledger_citizen (citizen_id, created_at)
+) ENGINE=InnoDB
+]]
+
+--- A database UUID, independent of process clocks and resource restarts. Yields.
+function M.Storage.NewMoneyId()
+	return Storage.Scalar('SELECT UUID()')
+end
+
+--- The durable receipt for an operation. Never contains character names.
+function M.Storage.MoneyReceipt(id)
+	return Storage.Single([[
+SELECT op_id, citizen_id, money_type, action, amount, balance_after, reason
+  FROM opx77_money_ledger WHERE op_id = @id
+]], { id = id })
+end
+
+--- Builds the wallet and trusted participant writes as one transaction.
+-- Every participant statement must join BOTH op_id and attempt_token. A guarded
+-- INSERT that matches no balance must not reuse a receipt another attempt wrote.
+-- The selected character and any eligibility subquery are locked until commit.
+function M.Storage.MoneyStatements(op, effects, guard)
+	local path = '$.' .. op.moneyType
+	local balance = 'COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(c.money, ?)) AS SIGNED), 0)'
+	local value, condition, values
+	local prefix = { op.id, op.attempt, op.moneyType, op.action, op.amount }
+	if op.action == 'touch' then
+		value, condition = balance, ' AND ' .. balance .. ' >= ? AND ' .. balance .. ' <= ?'
+		prefix[#prefix + 1] = path
+		values = { path, -9007199254740991, path, 9007199254740991 }
+	elseif op.action == 'set' then
+		value, condition = '?', ''
+		prefix[#prefix + 1] = op.amount
+	else
+		value = balance .. (op.action == 'add' and ' + ?' or ' - ?')
+		prefix[#prefix + 1], prefix[#prefix + 2] = path, op.amount
+		if op.action == 'add' then
+			condition = ' AND ' .. balance .. ' <= ? AND ' .. balance .. ' >= ?'
+			values = { path, 9007199254740991 - op.amount, path, -9007199254740991 }
+		else
+			condition = ' AND ' .. balance .. ' >= ? AND ' .. balance .. ' <= ?'
+			values = { path, (op.allowNegative and -9007199254740991 or 0) + op.amount, path, 9007199254740991 }
+		end
+	end
+	prefix[#prefix + 1], prefix[#prefix + 2] = op.reason or '', op.citizenId
+	for index = 1, #(values or {}) do prefix[#prefix + 1] = values[index] end
+	if guard then
+		condition = condition .. ' AND (' .. guard.query .. ')'
+		for index = 1, #(guard.values or {}) do prefix[#prefix + 1] = guard.values[index] end
+	end
+	local statements = {
+		{ query = 'INSERT INTO opx77_money_ledger ' ..
+			'(op_id, attempt_token, citizen_id, money_type, action, amount, balance_after, reason) ' ..
+			'SELECT ?, ?, c.citizen_id, ?, ?, ?, ' .. value .. ', ? FROM opx77_characters c ' ..
+			"WHERE c.citizen_id = ? AND c.deleted_at IS NULL AND JSON_TYPE(c.money) = 'OBJECT'" .. condition .. ' FOR UPDATE', values = prefix },
+		{ query = 'UPDATE opx77_characters c JOIN opx77_money_ledger l ON l.citizen_id = c.citizen_id ' ..
+			'SET c.money = JSON_SET(c.money, ?, l.balance_after) WHERE l.op_id = ? AND l.attempt_token = ?',
+			values = { path, op.id, op.attempt } },
+	}
+	for index = 1, #(effects or {}) do statements[#statements + 1] = effects[index] end
+	if #statements > 64 then return Result.Err('money.tooLarge', 'transaction statement limit') end
+	return Result.Ok(statements)
+end
+
+local function receiptFor(row, op)
+	if row.citizen_id ~= op.citizenId or row.money_type ~= op.moneyType or row.action ~= op.action
+		or tonumber(row.amount) ~= op.amount or (row.reason or '') ~= (op.reason or '') then
+		return Result.Err('money.opIdConflict', op.id)
+	end
+	return Result.Ok({ balance = math.tointeger(tonumber(row.balance_after)), opId = op.id })
+end
+
+--- Writes money and participant effects atomically; ambiguous replies use receipts.
+-- `build(op)` is a trusted server participant, returning statements and an optional
+-- SQL eligibility guard. It is rebuilt with a fresh attempt token on every retry.
+function M.Storage.MoneyChange(op, build)
+	if not op.id then
+		local id = M.Storage.NewMoneyId()
+		if not id.ok then return id end
+		op.id = id.value
+	end
+	local previous = M.Storage.MoneyReceipt(op.id)
+	if not previous.ok then return previous end
+	if previous.value then
+		local answer = receiptFor(previous.value, op)
+		if answer.ok then answer.value.replay = true end
+		return answer
+	end
+	local uncertain = false
+	for _ = 1, 3 do
+		local attempt = M.Storage.NewMoneyId()
+		if not attempt.ok then
+			return Result.Err(uncertain and 'money.pending' or 'error.unavailable', op.id)
+		end
+		op.attempt = attempt.value
+		local effects, guard = {}, nil
+		if build then
+			local prepared
+			prepared, effects, guard = pcall(build, op)
+			if not prepared then return Result.Err(uncertain and 'money.pending' or 'error.unavailable', op.id) end
+		end
+		local built, planned = pcall(M.Storage.MoneyStatements, op, effects, guard)
+		if not built then return Result.Err(uncertain and 'money.pending' or 'error.unavailable', op.id) end
+		if not planned.ok then return planned end
+		local written = Storage.Transaction(planned.value)
+		if not written.ok and written.error == 'transaction-raised' then uncertain = true end
+		local after = M.Storage.MoneyReceipt(op.id)
+		if after.ok and after.value then return receiptFor(after.value, op) end
+		if not after.ok then uncertain = true end
+		if written.ok and after.ok then
+			local exists = Storage.Scalar('SELECT 1 FROM opx77_characters WHERE citizen_id = @citizen AND deleted_at IS NULL',
+				{ citizen = op.citizenId })
+			if not exists.ok then return Result.Err('error.unavailable', op.id) end
+			if tonumber(exists.value) ~= 1 then return Result.Err('character.notFound', op.citizenId) end
+			return Result.Err(guard and guard.error or (op.action == 'remove' and 'money.insufficient'
+				or 'money.tooLarge'), op.id)
+		end
+	end
+	return Result.Err(uncertain and 'money.pending' or 'error.unavailable', op.id)
+end
+
+--- The peer credit is authorized by the buyer's exact receipt attempt.
+function M.Storage.PeerStatements(op, citizenId)
+	local peer = { id = op.id .. ':credit', attempt = op.attempt, citizenId = citizenId,
+		moneyType = op.moneyType, action = op.amount > 0 and 'add' or 'touch', amount = op.amount,
+		reason = 'peer-credit:' .. op.id, allowNegative = op.allowNegative }
+	local planned = M.Storage.MoneyStatements(peer, nil,
+		{ query = 'EXISTS (SELECT 1 FROM opx77_money_ledger WHERE op_id = ? AND attempt_token = ?)',
+			values = { op.id, op.attempt } })
+	assert(planned.ok)
+	local path = '$.' .. op.moneyType
+	local balance = 'COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(money, ?)) AS SIGNED), 0)'
+	return planned.value, { query = "EXISTS (SELECT 1 FROM opx77_characters WHERE citizen_id = ? AND deleted_at IS NULL AND JSON_TYPE(money) = 'OBJECT' AND " ..
+		balance .. ' <= ? AND ' .. balance .. ' >= ? FOR UPDATE)',
+		values = { citizenId, path, 9007199254740991 - op.amount, path, -9007199254740991 }, error = 'money.tooLarge' }
 end
