@@ -4,7 +4,7 @@ local M = OPX.Modules.Get('pool')
 local Model, B, I, R, C, G, Match, TableMenu = M.Model, M.Playback, M.Input, M.Render, M.Camera, M.Guide, M.Match, M.TableMenu
 local spec, buffer, input, positions, target, prompts, jobs, lastPacket, subscribed, lastMouse, lastWheel, lastAim, waiting, owned, held, reported, lastControls
 local autoAim, following, shotSeen, hudVisible, member, memberSlot, watching
-local openTable, reopenTable
+local openTable, reopenTable, assistanceSettings
 local function request(action, extra, snapshot)
 	extra = extra or {}
 	extra.epoch = snapshot and snapshot.epoch or buffer.epoch
@@ -56,8 +56,10 @@ local function receive(packet)
 	if not spec or not subscribed then return end
 	if type(packet) == 'table' and packet.closed == true then clear(true); return end
 	local oldEpoch, wasOwned = buffer.epoch, owned
+	local oldAssistance = buffer.state and buffer.state.assistance or 0
 	if B.Push(buffer, packet, OPX.Now()) then
 		lastPacket = OPX.Now()
+		if oldAssistance ~= buffer.state.assistance then G.Clear() end
 		M.Audio.Queue(packet, buffer)
 		local nextOwned = buffer.state.owner == Open77.players.localId()
 		if oldEpoch ~= buffer.epoch or (wasOwned and not nextOwned) then
@@ -189,7 +191,8 @@ end
 local function guide()
 	if owned and input.aiming and positions and positions[1][3] and buffer.state and buffer.state.phase == 'ready'
 		and Open77.input.isCaptured() == false and M.Settings.AIM_GUIDE ~= false then
-		G.Draw(spec, positions, input.angle, OPX.Now())
+		G.Draw(spec, positions, input.angle, OPX.Now(),
+			M.Assistance.Profile(assistanceSettings, buffer.state.assistance), input.chargedAt and input.power or nil)
 	else G.Clear() end
 end
 openTable = function()
@@ -245,7 +248,8 @@ local function strip()
 		turn = game and game.turn or 0, raceLabel = locale('pool.raceTo', { target = game and game.target or 5 }),
 		soloStats = locale('pool.points', { score = game and game.scores[1] or 0, shots = game and game.shots or 0 }),
 		duel = game and game.mode == 'duel' or false, target = game and game.target or 5,
-		hint = locale(following and 'pool.rolling' or not playing and 'pool.manageHint' or not owned and 'pool.waitTurn' or input.chargedAt and 'pool.release' or 'pool.charge'),
+		hint = locale(following and 'pool.rolling' or not playing and 'pool.manageHint' or not owned and 'pool.waitTurn' or input.chargedAt and 'pool.release' or 'pool.charge')
+			.. (owned and input.aiming and (buffer.state.assistance or 0) > 0 and (' · '..locale('pool.preview'..buffer.state.assistance)) or ''),
 		view = locale(input.overview and 'pool.tableView' or 'pool.cueView') })
 end
 local function frame() press(); draw(); if subscribed and spec then M.Audio.Frame(spec, OPX.Now()) end end
@@ -258,6 +262,7 @@ function M.Init()
 end
 function M.Start()
 	R.Reset(); G.Reset()
+	assistanceSettings = M.Assistance.Read(M.Settings.TRAJECTORY)
 	spec = Model.Table()
 	if not spec or not R.Register() then return end
 	target, prompts = OPX.Api.Get('target'), OPX.Api.Get('prompts')

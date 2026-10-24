@@ -35,9 +35,11 @@ function B.Push(buffer, packet, now)
 	buffer.offset = math.min(buffer.offset or math.huge, now - previous)
 	for _, frame in ipairs(frames) do buffer.frames[#buffer.frames+1] = frame end
 	while #buffer.frames > 40 do table.remove(buffer.frames, 1) end
+	local assistance = Number(packet.assistance, 0, 3)
+	if not assistance or assistance%1 ~= 0 then assistance = 0 end
 	local aim = type(packet.aim) == 'table' and packet.aim or {}
 	buffer.state = { owner = packet.owner, phase = packet.phase, revision = packet.revision,
-		readyAt = packet.readyAt, game = game, angle = Number(aim.angle, -math.pi*2, math.pi*2) or 0,
+		readyAt = packet.readyAt, game = game, assistance = assistance, angle = Number(aim.angle, -math.pi*2, math.pi*2) or 0,
 		power = Number(aim.power, 0, 1) or 0, aiming = aim.visible == true }
 	return true
 end

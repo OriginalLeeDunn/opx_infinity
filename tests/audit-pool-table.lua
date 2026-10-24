@@ -3,7 +3,7 @@ local M, opened, closed, sent = {}, nil, nil, nil
 local menu={Open=function(spec)opened=spec;return{ok=true,value={handle=42}}end,Close=function(handle)closed=handle end}
 local env=setmetatable({OPX={Modules={Get=function()return M end},Api={Get=function()return menu end},Note=function()end,Toast={Locale=function()end}},
  Open77={players={localId=function()return 7 end}},locale=function(key)return key end},{__index=_G})
-for _,f in ipairs({'shared/model','shared/match','client/table'})do assert(loadfile('modules/pool/'..f..'.lua','t',env))()end
+for _,f in ipairs({'shared/model','shared/assistance','shared/match','client/table'})do assert(loadfile('modules/pool/'..f..'.lua','t',env))()end
 local G,T=M.Match,M.TableMenu
 local glyphEnv={OPX={}};assert(loadfile('core/shared/glyphs.lua','t',glyphEnv))()
 local state={epoch=4,revision=9,owner=0,phase='ready',game=G.New('practice')}

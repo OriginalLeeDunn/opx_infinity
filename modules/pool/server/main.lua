@@ -4,6 +4,7 @@ local M = OPX.Modules.Get('pool')
 local Model, P, G = M.Model, M.Physics, M.Match
 local spec, balls, tickets, watchers, job, epoch, sequence, revision, ticks, phase, readyAt, aim, character, game
 local before, resetUntil, createdAt, finishedAt, rackDue, sounds, soundSequence
+local assistanceSettings
 local function person(player)
 	local p = character and character.GetPlayer(player)
 	return p and p.PlayerData and p or nil
@@ -15,6 +16,16 @@ end
 local function sameIdentity(ticket)
 	return ticket and ticket.session and person(ticket.player) == ticket.person
 		and ticket.person.PlayerData.citizenId == ticket.cid and OPX.Sessions[ticket.player] == ticket.session
+end
+local function observe(ticket)
+	local installed
+	if type(character.GetMetadata) == 'function' then
+		local ok, value = pcall(character.GetMetadata, ticket.player, 'cyberware')
+		if ok then installed = value end
+	end
+	ticket.assistanceAt = OPX.Now()
+	ticket.assistance = (M.Settings or {}).AIM_GUIDE == false and 0 or M.Assistance.Level(assistanceSettings, installed)
+	return ticket
 end
 local function valid(ticket, reach)
 	if not sameIdentity(ticket) or OPX.Life.Down(ticket.player) then return false end
@@ -72,7 +83,12 @@ local function publish(frames)
 	local state = { epoch = epoch, sequence = sequence, revision = revision, owner = G.Owner(game),
 		phase = phase, readyAt = readyAt, frames = frames, aim = aim, game = game, sounds = sounds }
 	for player, ticket in pairs(watchers) do
-		if valid(ticket, 18) then TriggerClientEvent(M.Event.STATE, player, state)
+		if valid(ticket, 18) then
+			if state.owner == player and OPX.Now()-(ticket.assistanceAt or 0) >= 1000 then observe(ticket) end
+			local packet = {}
+			for key, value in pairs(state) do packet[key] = value end
+			packet.assistance = state.owner == player and (ticket.assistance or 0) or 0
+			TriggerClientEvent(M.Event.STATE, player, packet)
 		else
 			watchers[player] = nil
 			if sameIdentity(ticket) then TriggerClientEvent(M.Event.STATE, player, { closed = true }) end
@@ -127,13 +143,13 @@ local function request(player, action, data)
 	local channel = action == 'aim' and 'aim' or action == 'watch' and 'watch' or action == 'shoot' and 'shoot' or 'action'
 	if OPX.Cooling(player, 'pool.' .. channel, channel == 'aim' and 90 or channel == 'watch' and 900 or 150) then return false end
 	if not valid(ticket, action == 'watch' and 16 or 6) then return false end
-	if action == 'watch' then watchers[player] = ticket;return true end
+	if action == 'watch' then watchers[player] = observe(ticket);return true end
 	-- Refresh expired identity-bound seats before considering a new session.
 	for index = 1, 2 do if tickets[index] and not valid(tickets[index], 6) then depart(index) end end
 	if action == 'enter' then
 		if game.status ~= 'idle' then notice(player, 'busy');return false end
 		if not valid(ticket, 3.5) or phase ~= 'ready' then return false end
-		game, tickets[1], watchers[player], createdAt = G.New('practice', player, M.Settings), ticket, ticket, OPX.Now()
+		game, tickets[1], watchers[player], createdAt = G.New('practice', player, M.Settings), ticket, observe(ticket), OPX.Now()
 		rack();return true
 	end
 	-- Mode/lobby/reset commands bind to the exact table revision the player saw.
@@ -147,12 +163,12 @@ local function request(player, action, data)
 	if action == 'create' then
 		if game.status ~= 'idle' then notice(player, 'busy');return false end
 		if not G.MODES[data.mode] or not valid(ticket, 3.5) or phase ~= 'ready' then return false end
-		game, tickets[1], watchers[player], createdAt = G.New(data.mode, player, M.Settings), ticket, ticket, OPX.Now()
+		game, tickets[1], watchers[player], createdAt = G.New(data.mode, player, M.Settings), ticket, observe(ticket), OPX.Now()
 		rack();return true
 	end
 	if action == 'join' then
 		if not valid(ticket, 3.5) or not G.Join(game, player) then notice(player, 'busy');return false end
-		tickets[2], watchers[player], revision, aim.visible = ticket, ticket, revision+1, false
+		tickets[2], watchers[player], revision, aim.visible = ticket, observe(ticket), revision+1, false
 		notify('duelStarted');return true
 	end
 	local index = seat(ticket)
@@ -197,6 +213,7 @@ function M.Init()
 end
 function M.Start()
 	character, spec = OPX.Api.Get('character'), Model.Table()
+	assistanceSettings = M.Assistance.Read((M.Settings or {}).TRAJECTORY)
 	if not spec then return end
 	rack()
 	RegisterNetEvent(M.Event.REQUEST, function(action, data)
