@@ -21,6 +21,10 @@ OPX.Config.MODULES.pool = {
 	},
 	SENSITIVITY = 0.0018, -- radians per physical mouse count
 	CHARGE_SECONDS = 1.8,
+	OVERVIEW_HEIGHT = 1.65, -- metres above ball centres
+	SOLO_SHOTS = 10,
+	DUEL_TARGET = 5,
+	AUDIO_VOLUME = 0.65, -- 0 mutes the recorded table contacts
 	AIM_GUIDE = true, -- straight line to the first ball/cushion; no bounce prediction
 	-- opx_pool_assets reserves these three native recreation aliases globally.
 	-- Do not use them as tents, sleeping bags or gym equipment on this world.

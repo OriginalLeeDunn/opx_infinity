@@ -19,7 +19,7 @@ local env = setmetatable({ OPX = {
 	end,
 }, { __index = _G })
 M.Event = { STATE = 'state', NOTICE = 'notice', REQUEST = 'request' }
-for _, file in ipairs({ 'shared/model', 'shared/playback', 'client/input', 'server/physics', 'server/main' }) do
+for _, file in ipairs({ 'shared/model', 'shared/match', 'shared/playback', 'client/input', 'server/physics', 'server/main' }) do
 	assert(loadfile('modules/pool/' .. file .. '.lua', 't', env))()
 end
 local P, B, I, Model = M.Physics, M.Playback, M.Input, M.Model

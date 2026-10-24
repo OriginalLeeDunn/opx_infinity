@@ -945,12 +945,12 @@ server-side drunk level played with `Open77.effects.screen('drunk')` on the drin
 Contract `bar` v1 (server): `Venues()`, `Items()`, `DrunkLevel(player)`. Bus:
 `opx:on:bar:mixed|bought|served`.
 
-### Pool practice prototype
+### Pool
 
-`modules/pool` + `config/pool.lua` is an original, free practice prototype with
-one cue ball and two object balls. Gameplay is original; cooked visuals and
-world cleanup are supplied by the separate `opx_pool_assets` resource.
-It is not a competitive 8-ball mode: no stakes, XP, families, spin or winner payout.
+`modules/pool` + `config/pool.lua` offers three original modes using one white
+cue ball and two yellow object balls. Cooked models, recorded audio and cleanup
+patches live in the separate `opx_pool_assets` resource. The modes have no wagers,
+XP or money rewards, spin, numbered-ball families or persisted match records.
 
 `TABLE.enabled` ships false. Survey a real, unobstructed table before enabling it:
 `x/y/z` are the **ball centres above the cloth**, not the floor; `halfLength` and
@@ -960,35 +960,69 @@ players' routing bucket. Ten named measurements supplied with nc_pool are availa
 credit to Darkpickle for the placement data. Their documented floor-to-ball
 offset of 0.843 m is already applied to `z`. Choose one with
 `TABLE = { enabled = true, preset = 'el_coyote_cojo' }`; the Coyote ball centre is
-`(-1247.944, -995.978, 13.263)`, yaw `99.85`. The prototype activates one table at
+`(-1247.944, -995.978, 13.263)`, yaw `99.85`. The configuration activates one table at
 a time. These inherited measurements require visual verification on the current
 game build; they are not newly surveyed. To use a custom table, omit `preset` and
 put the geometry directly in `TABLE`. The asset resource supplies the recorded
-ArchiveXL cleanup patches. A sector/node-count mismatch leaves vanilla decorations
+ArchiveXL cleanup patches. The Coyote file is named `0_opx_pool_hosts.archive.xl`
+beside the matching archive, so ArchiveXL can discover it when the depot mounts
+archives individually. The sector indices and type/count guards are preserved.
+A sector/node-count mismatch leaves vanilla decorations
 in place; inspect the client ArchiveXL log. The gameplay module never deletes
 another resource's props or world nodes.
 
-The eye offers **Practise pool** at the configured table. One loaded character
-holds the practice seat; nearby loaded characters in the same bucket receive
-spectator frames. Entering automatically frames the white ball from behind the
-cue. Move the mouse to aim; hold **Shift** for fine adjustments. Holding left-click
-charges the shot and releasing fires; the dedicated, unfocused overlay shows a
-smooth power gauge. The direction becomes finer while charging. **V** toggles an
-overhead view for planning; the mouse wheel adjusts the cue-view height. A dashed
-straight guide stops at the first ball or cushion, with a cue-ball contact ring;
-it does not predict rebounds or results. Set `AIM_GUIDE = false` to hide it.
-`SENSITIVITY` defaults to `0.0018`, `CHARGE_SECONDS` to `1.8`.
+The eye opens **Table and game modes**. Choose **Free practice** (unlimited
+shots, automatic rerack after both yellows are pocketed), **Solo challenge**
+(clear both within `SOLO_SHOTS`, default 10), or create a **Two-player duel**.
+A second nearby player chooses **Join the duel**; this starts the game. A solo
+challenge ends on a clear or the shot limit; scratching while pocketing the last
+yellow loses the challenge. Scores count pockets, with a one-point scratch penalty
+floored at zero. Duel target is `DUEL_TARGET` (default 5): a pocket retains the
+turn, a miss or scratch passes it, and the two yellows rerack when cleared.
+Only the server's physical outcomes change these scores and turns.
 
-After a shot the camera moves to the table view until authoritative playback has
-settled, then returns behind the white ball. Right-click cancels/resumes aiming;
-while cancelled the player can walk around and **R** resets the practice balls.
-**Backspace** leaves, including while balls move. Position, rotation, jump, dodge
-and ordinary interaction are held only during the camera view, through the same
-module-owned control leases used by target/police/hauling. UI capture, loss of the
-seat, character unload, leaving and stop remove the camera, guide and gauge and
-release those claims. Capturing input cancels a charge without firing and does
-not automatically resume it when the UI closes. A camera refusal leaves practice
-with a friendly notice and records the native reason in operator diagnostics.
+The current shooter automatically gets a camera behind the white ball. Mouse
+movement aims; **Shift** gives fine control. Hold/release left-click to charge/fire.
+**Middle mouse** toggles the overhead view; V remains available to inventory.
+The wheel adjusts cue-view height. The overhead default is now **1.65 m** above
+ball centres (`OVERVIEW_HEIGHT`, range 1.2–2.4), with a wider lens to keep the
+cloth framed. A small lateral cue-camera offset keeps the shaft visible. The
+queue sits behind the white ball, retracts with charge and follows through for
+220 ms after release. All rendered balls/queue explicitly request `collision =
+false`, `physics = false`, `visible = true`; ball contacts remain server simulation.
+
+**R** resets even during aim, cancelling charge first. In a duel it proposes a
+new game; the other participant must accept with **R** or the table menu. The
+current scores/balls remain until consent, shots are paused during the vote,
+and the request expires after 15 seconds. **E** opens table options, including
+resume, rematch/reset, declining a request, finishing and leaving. A reset waits
+until the balls stop. **Backspace** leaves at any time. Leaving, dying, changing
+character/session, changing bucket or moving more than 6 m away forfeits an active
+duel; the shooter must stay within 3.5 m. Unfilled lobbies expire after two minutes,
+finished results free the table after 30 seconds. Spectators cannot change a game.
+Participants can use middle mouse to watch the overhead view during the other turn.
+
+The overlay shows the mode, scores, active player, remaining solo shots and a
+smooth power gauge, and takes no focus. Right-click cancels/resumes aim; while
+cancelled the player can walk around. Capturing a menu cancels charge without
+firing and requires an explicit resume afterwards. The scoped camera and control
+leases release on loss of the seat, leaving, character unload and stop. The
+scripted camera explicitly requests **thirdPersonBody = true**, verified against
+the signed op77.152 client; if the native returns a body/options availability
+refusal, it retries once without that optional field and logs the legacy fallback.
+Destroying only the owned camera restores the native presentation. Actual local
+head/hair rendering and framing still require a live client check.
+
+The straight aiming guide stops at the first ball or cushion and shows a contact
+ring, without predicting rebounds. `AIM_GUIDE = false` hides it. `SENSITIVITY`
+defaults to `0.0018`, `CHARGE_SECONDS` to `1.8`. Real CC0 cue, ball and pocket
+recordings are delivered as PCM WAV by the asset resource; rails reuse the ball
+clip at lower gain. `AUDIO_VOLUME` (0–1, default 0.65) sets loudness, zero mutes.
+Server contacts carry bounded IDs/times; client audio follows the same 100 ms
+playback delay, deduplicates repeated snapshots and skips past sounds on join.
+Up to four sounds dispatch per frame through the asset resource's caller-checked
+client exports; that resource owns at most eight spatial voices. See its NOTICE
+and audio/sources.json for original recordings, CC0 links, exact hashes and edits.
 
 The camera needs `camera.script`; the bounded aiming guide uses `world.debug`.
 Its camera/prop work runs per frame; guide geometry is capped at 20 lines and
@@ -1001,15 +1035,19 @@ Its fixed 120 Hz solver advances to swept ball/rail/pocket contacts, with a boun
 contact count and dissipative collisions/friction. Six timestamped samples are
 sent every 50 ms to valid nearby watchers. Clients keep at most 40 samples and
 interpolate 100 ms behind the stream; they never extrapolate or decide outcomes.
-Shot and rack requests carry the current epoch and ready revision. Old, duplicate,
+Creation, joining, shots and resets bind to the viewed epoch/revision. Reset votes
+and scores remain tied to the two original character/session tickets. Shot and
+rack requests carry the current epoch and ready revision. Old, duplicate,
 out-of-range, cross-bucket, dead, stale-transform or recycled-session requests
-cannot take a shot. Practice has no economic effects or persisted game state.
+cannot take a shot. These modes have no economic effects or persisted game state.
 
 The native baseline checked is Devkit `2.50.0+op77.148`; the test VPS uses
 `2.50.0+op77.152`. Install
 [`opx_pool_assets`](https://github.com/opx77-framework/opx_pool_assets) before Infinity.
-Use asset resource version `0.1.2` or later: its idle client script makes the
-resource available in the signed client set to satisfy Infinity's dependency.
+Use asset resource version `0.2.0` or later. Its client script publishes the recorded
+audio service and makes the resource available in the signed client set to satisfy
+Infinity's dependency. The service alone declares `audio.play`; Infinity does not
+request audio-network authority.
 A server-only asset resource is omitted from that set and causes client activation
 to fail even when the archive download succeeds.
 World-decoration cleanup additionally requires the

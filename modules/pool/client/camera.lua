@@ -5,6 +5,21 @@ local Model = M.Model
 M.Camera = {}
 local C = M.Camera
 local id, pose, last, active
+local bodyWarning = false
+local function bodyFallback(why)
+	return why == 'invalid_camera_body' or why == 'camera_body_unavailable' or why == 'invalid_camera_options'
+end
+local function createView(wanted, fullBody)
+	-- Verified in the signed op77.152 client: create reads thirdPersonBody and
+	-- cameras() reports it. The op77.148 reference omits this optional field.
+	local options = { position = wanted.position, lookAt = wanted.target, fov = wanted.fov }
+	if fullBody then options.thirdPersonBody = true end
+	local camera, why = Open77.camera.create(options)
+	if not camera then return nil, why end
+	local ok, refusal = Open77.camera.activate(camera, { blendMs = 250 })
+	if not ok then Open77.camera.destroy(camera); return nil, refusal end
+	return camera
+end
 local function mix(a, b, amount) return a + (b-a)*amount end
 function C.Clear()
 	-- Destroying our definition restores the view only if THIS camera held it.
@@ -19,12 +34,12 @@ function C.Pose(spec, points, angle, overview, height)
 	local c, s = math.cos(angle), math.sin(angle)
 	local ball = points[1]
 	if overview then
-		local at = Model.World(spec, -c*0.65, -s*0.65)
-		at.z = at.z+2.35
+		local at = Model.World(spec, -c*0.45, -s*0.45)
+		at.z = at.z+(Model.Number((M.Settings or {}).OVERVIEW_HEIGHT, 1.2, 2.4) or 1.65)
 		local aim = Model.World(spec, 0, 0)
-		return { position = at, target = aim, fov = 62 }
+		return { position = at, target = aim, fov = 72 }
 	end
-	local at = Model.World(spec, ball[1]-c*1.25, ball[2]-s*1.25)
+	local at = Model.World(spec, ball[1]-c*1.25-s*0.14, ball[2]-s*1.25+c*0.14)
 	at.z = at.z+height
 	local aim = Model.World(spec, ball[1]+c*0.45, ball[2]+s*0.45)
 	aim.z = aim.z+0.015
@@ -34,10 +49,12 @@ function C.Update(spec, points, angle, overview, height, now)
 	local wanted = C.Pose(spec, points, angle, overview, height)
 	if not id then
 		local why
-		id, why = Open77.camera.create({ position = wanted.position, lookAt = wanted.target, fov = wanted.fov })
+		id, why = createView(wanted, true)
+		if not id and bodyFallback(why) then
+			if not bodyWarning then OPX.Note('pool', 'full-body camera unavailable; legacy view: ' .. tostring(why)); bodyWarning = true end
+			id, why = createView(wanted, false)
+		end
 		if not id then return false, why end
-		local ok, refusal = Open77.camera.activate(id, { blendMs = 250 })
-		if not ok then C.Clear(); return false, refusal end
 		pose, last, active = wanted, now, true
 		return true
 	end
