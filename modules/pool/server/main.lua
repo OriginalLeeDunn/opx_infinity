@@ -137,7 +137,13 @@ local function request(player, action, data)
 		rack();return true
 	end
 	-- Mode/lobby/reset commands bind to the exact table revision the player saw.
-	if type(data) ~= 'table' or data.epoch ~= epoch or data.revision ~= revision then notice(player, 'changed');return false end
+	if type(data) ~= 'table' or data.epoch ~= epoch or data.revision ~= revision then
+		-- Aim is a periodic presentation update: a packet sent before a shot
+		-- settled or a rerack arrived can legitimately refer to the old state.
+		-- Reject it silently; explicit actions still need their refusal message.
+		if action ~= 'aim' then notice(player, 'changed') end
+		return false
+	end
 	if action == 'create' then
 		if game.status ~= 'idle' then notice(player, 'busy');return false end
 		if not G.MODES[data.mode] or not valid(ticket, 3.5) or phase ~= 'ready' then return false end

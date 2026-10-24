@@ -132,7 +132,14 @@ check(not request(7,'shoot',command),'duplicate shot accepted')
 for _=1,200 do M.Server.Step() end
 local settled=packets[7]
 check(settled.phase=='ready' and settled.revision>state.revision,'server never settled')
+local beforeStaleAim=#notices
+for _=1,5 do
+ check(not request(7,'aim',{epoch=command.epoch,revision=command.revision,visible=true,angle=0,power=0}),'stale aim accepted')
+end
+check(not request(7,'aim',{epoch=settled.epoch-1,revision=settled.revision,visible=false,angle=0,power=0}),'previous-rack aim accepted')
+check(#notices==beforeStaleAim,'routine delayed aim produced a reopen-menu notification')
 check(not request(7,'shoot',command),'stale revision accepted')
+check(#notices==beforeStaleAim+1 and notices[#notices]=='changed','stale explicit action lost its refusal')
 local current={epoch=settled.epoch,revision=settled.revision,angle=0,power=1}
 players[7].snapshot.bucket=1
 check(not request(7,'shoot',current),'cross-bucket shot accepted')

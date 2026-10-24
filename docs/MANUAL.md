@@ -1059,7 +1059,10 @@ Its fixed 120 Hz solver advances to swept ball/rail/pocket contacts, with a boun
 contact ceiling of 128 per fixed tick and dissipative collisions/friction. Two
 timestamped endpoint samples are sent every 50 ms to valid nearby watchers.
 Clients keep at most 40 samples and interpolate 100 ms behind the stream; they never extrapolate or decide outcomes.
-Creation, joining, shots and resets bind to the viewed epoch/revision. Reset votes
+Creation, joining, shots and resets bind to the viewed epoch/revision. Delayed
+periodic aiming updates with an old epoch/revision are rejected silently: they
+never ask the player to reopen a menu during normal play. Stale explicit actions
+still report their refusal. Reset votes
 and scores remain tied to the two original character/session tickets. Shot and
 rack requests carry the current epoch and ready revision. Old, duplicate,
 out-of-range, cross-bucket, dead, stale-transform or recycled-session requests
