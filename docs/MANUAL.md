@@ -950,11 +950,18 @@ Contract `bar` v1 (server): `Venues()`, `Items()`, `DrunkLevel(player)`. Bus:
 `modules/pool` + `config/pool.lua` offers three original modes using one white
 cue ball and fifteen distinct vanilla object balls, arranged in a five-row triangle.
 The object balls use the game’s `ball_c_billiard.mesh` through `ball_q_billiard.mesh`
-models via the documented [raw mesh prop backend](https://open2077.net/docs/props).
-An optional `MODELS.objects` array supplies exactly fifteen model paths. Existing
-configs without that field receive the full vanilla set automatically. Cue/white
-hosts, recorded audio and cleanup
-patches live in the separate `opx_pool_assets` resource. Table actions use menu-wide
+models through fifteen cooked hosts in `opx_pool_assets` **0.3.0 or later**. Infinity
+registers each mesh/visual-host pair using the resource-owned model registry on
+**op77.152 or later**, then renders the opaque model ID returned by the native.
+Raw mesh names alone displayed fallback cylinders on the deployed client. Missing
+or refused registration now leaves the table unavailable with a friendly notice,
+rather than spawning placeholders. Existing configs automatically use the full
+registered set. Optional `MODELS.objects` overrides must supply fifteen distinct,
+already registered model IDs or supported aliases. Cue/white hosts, recorded audio
+and cleanup patches remain in the same asset resource. After upgrading the pack,
+**fully close the game and launch it again through the launcher**; reconnecting
+inside a running game does not mount the updated archive. See
+[the version-specific native contract](POOL_MODELS.md). Table actions use menu-wide
 `closeOnSelect`, so selecting a mode dispatches its command before releasing
 focus. Confirmation submenus dispatch only their confirmed selection. The modes
 have no wagers,
@@ -1059,7 +1066,7 @@ cannot take a shot. These modes have no economic effects or persisted game state
 The native baseline checked is Devkit `2.50.0+op77.148`; the test VPS uses
 `2.50.0+op77.152`. Install
 [`opx_pool_assets`](https://github.com/opx77-framework/opx_pool_assets) before Infinity.
-Use asset resource version `0.2.0` or later. Its client script publishes the recorded
+Use asset resource version `0.3.0` or later. Its client script publishes the recorded
 audio service and makes the resource available in the signed client set to satisfy
 Infinity's dependency. The service alone declares `audio.play`; Infinity does not
 request audio-network authority.
@@ -1082,7 +1089,8 @@ required-mod trust/review policy; do not silently enable unsecured mode to insta
 a loader. Restart the server, fully quit Cyberpunk, and reconnect through the
 launcher: cooked archives cannot mount during a running game session.
 
-The asset package deliberately reserves three native aliases globally:
+The fifteen new `opx/pool/ball_*.ent` hosts have their own namespace and reserve
+no additional global aliases. The legacy asset package reserves three aliases globally:
 `recreation.tent` (white), `recreation.sleeping_bag` (yellow), and
 `recreation.gym_equipment` (horizontal cue). Other resources must not use them for
 their original objects. Six normal/attached hosts are repacked from the supplied
