@@ -987,10 +987,19 @@ cannot take a shot. Practice has no economic effects or persisted game state.
 
 The native baseline checked is Devkit `2.50.0+op77.148`; the test VPS uses
 `2.50.0+op77.152`. Install
-[`opx_pool_assets`](https://github.com/opx77-framework/opx_pool_assets) and require ArchiveXL through the official signed index:
-`requiredMods.packages = [{ "id": "archivexl", "minVersion": "1.27.1" }]`.
-Load the asset resource before Infinity. Do not load the DLL-preloading
-`archivexl` resource on a secured server; that route is deliberately rejected. The framework
+[`opx_pool_assets`](https://github.com/opx77-framework/opx_pool_assets) before Infinity.
+World-decoration cleanup additionally requires the
+[Open77 ArchiveXL port for Cyberpunk 2.5](https://github.com/Open2077/archive-xl),
+currently published as `1.27.5-open77.6`. The stable signed catalogue checked on
+2026-10-24 (generation 82) has no standalone `archivexl` entry. Requesting that
+nonexistent indexed ID prevents the launcher from resolving the world. The
+configuration example therefore does not request it. A hosted executable package
+must pass the platform review for its exact hash before secured distribution;
+publishing source or a GitHub release does not establish that verdict.
+Do not load a DLL-preloading resource on a secured server. Cooked host assets and
+ArchiveXL cleanup are separate: the archive can be delivered without the loader,
+but cleanup must not be considered working until the compatible loader is mounted
+and checked in game. The framework
 manifest declares the asset-resource dependency. Keep the server's existing
 required-mod trust/review policy; do not silently enable unsecured mode to install
 a loader. Restart the server, fully quit Cyberpunk, and reconnect through the

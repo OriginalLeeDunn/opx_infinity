@@ -89,8 +89,9 @@ the [docs site](https://opx77-framework.github.io/opx77_doc/docs/opx_infinity).
 You need an **Open77 dedicated server**, a **MySQL** database, and the OPX repositories:
 [`opx_lib`](https://github.com/opx77-framework/opx_lib) (the client library) and this
 one, plus [`opx_pool_assets`](https://github.com/opx77-framework/opx_pool_assets)
-for the cooked billiards assets. Require the official indexed `archivexl` package
-in `requiredMods.packages` (see the asset repository configuration example). The full guide is [Install](https://opx77-framework.github.io/opx77_doc/docs/getting-started/install).
+for the cooked billiards assets. Table-decoration cleanup additionally needs the
+[Open77 ArchiveXL port for Cyberpunk 2.5](https://github.com/Open2077/archive-xl).
+Its distribution must be verified separately; see the asset repository guide. The full guide is [Install](https://opx77-framework.github.io/opx77_doc/docs/getting-started/install).
 
 1. **Copy the resources** into the server's resource root. The folder name must
    equal the resource name. The server only needs
@@ -107,8 +108,10 @@ in `requiredMods.packages` (see the asset repository configuration example). The
    `opx_infinity`. The framework will not start without its declared dependencies.
    Restart the dedicated server; players must fully quit the game and reconnect
    through the launcher to mount the asset package. Keep the server’s configured
-   mod review/consent policy. On a secured world, use the signed-index ArchiveXL
-   package; do not add the DLL-preloading `archivexl` resource to the load list.
+   mod review/consent policy. Do not request an indexed `archivexl` package unless
+   that ID actually exists in the current platform catalogue. Do not add a
+   DLL-preloading resource to a secured world. Cleanup remains unverified until
+   the compatible loader has been distributed and tested.
 
    ```jsonc
    // server.jsonc
