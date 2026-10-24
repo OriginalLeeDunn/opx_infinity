@@ -2,7 +2,7 @@
 local Host = dofile('tests/host.lua')
 local env, control = Host.Environment('client')
 local props, nextId, creates, moves, mouse, state = {}, 0, 0, 0, 0, {}
-local failed = false
+local failed, refused = false, nil
 for _,name in ipairs({'allowShoot','allowAim','allowInteraction','freezeRotation','allowWeapons','allowJump','allowDodge'}) do
 	env.Open77.players[name] = function(value) state[name]=value; return true end
 end
@@ -16,7 +16,7 @@ env.Open77.props = {
 		props[id]={id=id,model=options.model,position=options.position,rendered=true,failed=false,backend='test_host'}
 		return id
 	end,
-	setTransform = function(id, transform) assert(props[id]); moves=moves+1; props[id].position=transform.position; return true end,
+	setTransform = function(id, transform) if refused then return false,refused end; assert(props[id]); moves=moves+1; props[id].position=transform.position; return true end,
 	remove = function(id) props[id]=nil; return true end,
 	list = function()
 		local rows={}
@@ -78,4 +78,20 @@ assert(next(props)==nil and M.Render.Failed() and state.allowShoot==true,'failed
 local before=creates
 M.Client.Draw(); M.Client.Watch(); assert(creates==before,'failed model retry loop')
 M.Stop(); assert(next(props)==nil and state.freezeRotation==false,'stop leaked props/controls')
+-- A just-created native entity may not be transformable until streaming ends.
+M.Render.Reset(); failed=false
+local geometry={x=100,y=10,z=1,yaw=0}
+local points={{-0.6,0,true},{0.4,0,true},{0.5,0.2,true}}
+assert(M.Render.Draw(geometry,points,false,0,0))
+local initial=creates
+refused='projection_pending'
+control.Advance(100)
+assert(M.Render.Draw(geometry,points,false,0,0) and creates==initial,'transient refusal respawned or failed early')
+control.Advance(3000)
+assert(not M.Render.Draw(geometry,points,false,0,0) and M.Render.Failed() and next(props)==nil,'permanent refusal retried forever')
+local diagnosed=false
+for _,event in ipairs(control.serverEvents) do
+	if event[1]=='pool' and tostring(event[2]):find('projection_pending',1,true) then diagnosed=true end
+end
+assert(diagnosed,'native refusal reason was discarded')
 print('pool enabled client: render reuse, focus cancellation, failed-model cleanup; maximum measured callback',worst,'instructions')

@@ -1,4 +1,4 @@
---- Original practice prototype. No wagers, XP or imported nc_pool code/assets.
+--- Original practice prototype. No wagers, XP or imported nc_pool gameplay code. Visuals live in opx_pool_assets.
 -- @author dop42
 local M = OPX.Modules.Declare{
 	id = 'pool', side = 'both', fatal = false,

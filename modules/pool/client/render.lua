@@ -26,6 +26,14 @@ local function make(model, position, yaw)
 	created[id] = OPX.Now()
 	return id
 end
+local function move(id, transform)
+	local called, ok, why = pcall(Open77.props.setTransform, id, transform)
+	if called and ok == true then return true end
+	-- Native entities stream asynchronously after create. Keep the same object
+	-- briefly instead of treating its first not-ready result as a broken model.
+	if created[id] and OPX.Now()-created[id] < 3000 then return true end
+	return fail('setTransform: ' .. tostring(called and why or ok))
+end
 function R.Draw(spec, positions, aiming, angle, power)
 	if failure then return false end
 	local models = Model.Models()
@@ -37,7 +45,7 @@ function R.Draw(spec, positions, aiming, angle, power)
 				local id, why = make(index == 1 and models.cue or models.object, position)
 				if not id then return fail(why) end
 				ids[index] = id
-			elseif Open77.props.setTransform(ids[index], { position = position }) ~= true then return fail('ball transform') end
+			elseif not move(ids[index], { position = position }) then return false end
 		elseif ids[index] then Open77.props.remove(ids[index]); created[ids[index]], ids[index] = nil, nil end
 	end
 	if aiming and positions[1][3] then
@@ -48,7 +56,7 @@ function R.Draw(spec, positions, aiming, angle, power)
 			local id, why = make(models.stick, at, yaw)
 			if not id then return fail(why) end
 			stick = id
-		elseif Open77.props.setTransform(stick, { position = at, yaw = yaw }) ~= true then return fail('cue transform') end
+		elseif not move(stick, { position = at, yaw = yaw }) then return false end
 	elseif stick then Open77.props.remove(stick); created[stick], stick = nil, nil end
 	return true
 end
