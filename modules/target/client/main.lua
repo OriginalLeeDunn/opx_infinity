@@ -232,43 +232,10 @@ end
 -- these needs `players.controls`; without the permission the eye refuses to open
 -- rather than opening over live controls.
 --
--- ALL OR NOTHING. The four were applied in one chain, so a later one that raised
--- or refused (a build without `freezeRotation`, a host that said no) left the
--- earlier ones applied -- while `heldControls` stayed false, so `close` never
--- gave them back: aim, shooting and interaction stayed off for the session,
--- and every later press of the key took them again. All four are now checked
--- present before any is touched, and a step that fails undoes the ones before
--- it, each by its own inverse (never `resetControls`, which would also clear
--- what another module holds).
-local HOLD_STEPS = {
-	{ name = 'allowAim', take = false, give = true },
-	{ name = 'allowShoot', take = false, give = true },
-	{ name = 'allowInteraction', take = false, give = true },
-	{ name = 'freezeRotation', take = true, give = false },
-}
-
+-- Leases compose inside Infinity's single resource VM. Taking a partial hold
+-- rolls back; releasing the eye preserves the pool, carry and cuff owners.
 local function controls(hold)
-	local players = Open77.players
-	if type(players) ~= 'table' then return false end
-	if not hold then
-		if type(players.resetControls) == 'function' then pcall(players.resetControls) end
-		return true
-	end
-	for index = 1, #HOLD_STEPS do
-		if type(players[HOLD_STEPS[index].name]) ~= 'function' then return false end
-	end
-	for index = 1, #HOLD_STEPS do
-		local step = HOLD_STEPS[index]
-		local called, applied = pcall(players[step.name], step.take)
-		if not called or not applied then
-			for back = index - 1, 1, -1 do
-				local undo = HOLD_STEPS[back]
-				pcall(players[undo.name], undo.give)
-			end
-			return false
-		end
-	end
-	return true
+	return OPX.Controls.Set('target', { 'allowAim', 'allowShoot', 'allowInteraction', 'freezeRotation' }, hold)
 end
 
 -- The hold on its own, for the suite: opening the eye needs a screen ray, a
@@ -287,10 +254,7 @@ local function close(reason)
 	handle = nil
 	OPX.UI.ReleaseFocus(FOCUS)
 	if not was then return end
-	-- ONLY IF THEY WERE TAKEN. `controls(false)` is a global reset of this
-	-- resource's control restrictions, not the inverse of what this function
-	-- set, so calling it on a path that never took them hands back restrictions
-	-- another module is relying on.
+	-- A refusal during open did not acquire a lease.
 	if heldControls then
 		controls(false)
 		heldControls = false

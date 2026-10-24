@@ -286,17 +286,9 @@ local CONTROLS = { 'allowWeapons', 'allowShoot', 'allowAim', 'allowJump' }
 --- Applies or releases the player controls, logging a refusal once.
 local controlsNoted = false
 local function holdControls(on)
-	local players = Open77.players
-	if type(players) ~= 'table' then return end
-	for _, name in ipairs(CONTROLS) do
-		if type(players[name]) == 'function' then
-			local called, ok, why = pcall(players[name], not on)
-			if on and (not called or ok ~= true) and not controlsNoted then
-				controlsNoted = true
-				OPX.Note('hauling', ('%s(false) was refused while carrying: %s')
-					:format(name, tostring(called and why or ok)))
-			end
-		end
+	if not OPX.Controls.Set('hauling', CONTROLS, on) and on and not controlsNoted then
+		controlsNoted = true
+		OPX.Note('hauling', 'player-control lease refused while carrying')
 	end
 end
 

@@ -945,6 +945,72 @@ server-side drunk level played with `Open77.effects.screen('drunk')` on the drin
 Contract `bar` v1 (server): `Venues()`, `Items()`, `DrunkLevel(player)`. Bus:
 `opx:on:bar:mixed|bought|served`.
 
+### Pool practice prototype
+
+`modules/pool` + `config/pool.lua` is an original, free practice prototype with
+one cue ball and two object balls. It imports no nc_pool scripts or archives.
+It is not a competitive 8-ball mode: no stakes, XP, families, spin or winner payout.
+
+`TABLE.enabled` ships false. Survey a real, unobstructed table before enabling it:
+`x/y/z` are the **ball centres above the cloth**, not the floor; `halfLength` and
+`halfWidth` describe the playable rectangle in metres. `yaw` rotates the local
+long axis from world +X, counterclockwise in degrees. `bucket` must match the
+players' routing bucket. Ten named measurements supplied with nc_pool are available as `PRESETS`, with
+credit to Darkpickle for the placement data. Their documented floor-to-ball
+offset of 0.843 m is already applied to `z`. Choose one with
+`TABLE = { enabled = true, preset = 'el_coyote_cojo' }`; the Coyote ball centre is
+`(-1247.944, -995.978, 13.263)`, yaw `99.85`. The prototype activates one table at
+a time. These inherited measurements require visual verification on the current
+game build; they are not newly surveyed. To use a custom table, omit `preset` and
+put the geometry directly in `TABLE`. No cleanup patches are installed. Decorative balls already on a vanilla table need separate authored
+world cleanup; this module never deletes another resource's props or world nodes.
+
+The eye offers **Practise pool** at the configured table. One loaded character
+holds the practice seat; nearby loaded characters in the same bucket receive
+spectator frames. Right-click arms/cancels aim, mouse movement adjusts direction,
+holding/releasing left-click charges/fires, **R** resets the balls while unarmed,
+and **Backspace** leaves. Walking remains free. Aiming temporarily holds camera
+rotation; opening a keyboard-owning UI cancels charge without shooting. The
+existing prompts strip shows controls and power without taking WebUI focus.
+
+The server owns all ball coordinates, collisions, pockets and scratch recovery.
+Its fixed 120 Hz solver advances to swept ball/rail/pocket contacts, with a bounded
+contact count and dissipative collisions/friction. Six timestamped samples are
+sent every 50 ms to valid nearby watchers. Clients keep at most 40 samples and
+interpolate 100 ms behind the stream; they never extrapolate or decide outcomes.
+Shot and rack requests carry the current epoch and ready revision. Old, duplicate,
+out-of-range, cross-bucket, dead, stale-transform or recycled-session requests
+cannot take a shot. Practice has no economic effects or persisted game state.
+
+The native baseline checked is Devkit `2.50.0+op77.148`; the test VPS uses
+`2.50.0+op77.152`. Configured raw billiard meshes come from the native data catalogue
+and are **discoverable, not individually validated**. On the actual game build,
+verify the visible ball shape/scale and the cue's horizontal orientation and pivot;
+`MODELS.stickYaw` and `stickOffset` provide host-specific calibration. The verified
+local transform API offers position and yaw only: this slice does not promise
+full 3D rolling rotation or tilt/spin on the cue. If a raw mesh
+has no safe host, supply separately authored compatible hosts through `MODELS`.
+Do not overwrite a curated unrelated prop alias. No `.ent` backend, copied archive,
+preload or custom asset redistribution is included. Local-prop creation, transform,
+failed rendering and marker fallbacks are diagnosed; the friendly player message
+asks them to contact staff. A renderer failure removes the module's visuals,
+releases the controls and stops retries until the resource is restarted.
+
+Live qualification: two real clients on the same table, fast glancing impacts,
+rail/pocket transitions, mouse feel at different frame rates, jitter, spectator
+entry and reconnect, UI cancellation, character/bucket changes and stop cleanup.
+Unit/render doubles and instruction measurements do not prove the meshes render
+correctly in Cyberpunk.
+
+#### Shared player-control ownership
+
+`OPX.Controls.Set(owner, names, held)` gives modules leases over the native
+resource-wide restriction bits. Target, police, hauling and pool use this boundary.
+Releasing one owner preserves every other owner's restrictions; failed partial
+acquisitions roll back. Native restrictions are re-applied on upkeep where required
+because the engine may clear them on death or a body transition. Never call
+`resetControls` to close an individual module's interaction.
+
 ### Taxi
 
 `modules/taxi` + `config/taxi.lua`. A **company** is a config entry (`delamain` ships on

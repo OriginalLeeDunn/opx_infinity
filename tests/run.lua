@@ -236,6 +236,8 @@ local CORE_NAMESPACE = {
 	-- drifted -- a view opened from a close callback was orphaned, and fixed
 	-- three times -- and the copy that drifted would be the view that traps.
 	Modal = true,
+	-- Shared resource control restrictions are leased by module, not reset globally.
+	Controls = true,
 	-- `Carry` is the one reload-surviving blob, divided into a namespace per
 	-- writer. `Open77.state` holds ONE value per resource and two modules were
 	-- writing it whole, each destroying the other; see `lib/server/storage.lua`.
@@ -19494,6 +19496,7 @@ do
 			and state.allowAim == false and state.allowShoot == false
 			and state.allowInteraction == false and state.freezeRotation == true)
 
+		check('the successful lease is released before refusal cases', target.HoldControls(false) == true)
 		state = {}
 		players.freezeRotation = nil
 		check('with one missing it is refused before anything is touched',
@@ -22711,8 +22714,8 @@ do
 		-- porte une caisse ?" The player controls reach what the input API cannot.
 		local held = {}
 		local players = env.Open77.players
-		for _, name in ipairs({ 'allowWeapons', 'allowShoot', 'allowAim' }) do
-			players[name] = function(allow) held[name] = allow == false or nil; return true end
+		for _, name in ipairs({ 'allowWeapons', 'allowShoot', 'allowAim', 'allowJump', 'allowInteraction', 'freezeRotation' }) do
+			players[name] = function(allow) held[name] = (name == 'freezeRotation' and allow == true or name ~= 'freezeRotation' and allow == false) or nil; return true end
 		end
 		players.resetControls = function() held = {}; return true end
 		-- THE KNEEL IS NOT THE CARRY. The BEGIN of a pickup already answers the
@@ -22744,10 +22747,11 @@ do
 		control.netEvents[M.Event.ANSWER](true, nil, '555')
 		check('carrying takes the weapons, the shot and the aim away',
 			held.allowWeapons and held.allowShoot and held.allowAim)
-		-- The eye's close is `resetControls`, which clears this resource's blocks.
-		players.resetControls()
+		-- Closing the eye releases only its own lease, preserving carry.
+		check('the eye can take its own controls over a carry', OPX.Modules.Get('target').HoldControls(true))
+		check('and release them without a global reset', OPX.Modules.Get('target').HoldControls(false))
 		control.Fire(OPX.Event(OPX.Channel.LOCAL, 'target', 'closed'), 'closed')
-		check('and they are put back when the ALT eye closes over a carry',
+		check('the carry restrictions survive the ALT eye closing',
 			held.allowWeapons == true)
 		local function drops()
 			local n = 0
