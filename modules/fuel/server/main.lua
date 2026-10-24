@@ -128,15 +128,6 @@ local function charge(player, method, amount, reason)
 	return read and ok == true
 end
 
---- Gives money back after a sale that could not be handed over.
-local function refund(player, method, amount, reason)
-	if amount <= 0 then return true end
-	local api = character()
-	if api == nil or type(api.AddMoney) ~= 'function' then return false end
-	local read, ok = pcall(api.AddMoney, player, method, amount, reason)
-	return read and ok == true
-end
-
 --- Whether a method is one this server takes at a pump.
 local function methodOf(value)
 	if type(value) ~= 'string' then return nil end
@@ -479,6 +470,12 @@ function M.CanBuy(player, payload)
 	local api = inventory()
 	if api == nil then return answer(player, false, 'no_inventory'), 'no_inventory' end
 
+	local people = character()
+	local person = people and people.GetPlayer(player)
+	local ownerSession = OPX.Sessions[player]
+	if not person or not ownerSession then return answer(player, false, 'no_character'), 'no_character' end
+	local citizenId, userId = person.PlayerData.citizenId, OPX.UserIdOf(player)
+	local expected
 	local refill = type(payload) == 'table' and payload.refill == true
 	local price, slot = config.can.price, nil
 	if refill then
@@ -486,6 +483,7 @@ function M.CanBuy(player, payload)
 		if #cans == 0 then return answer(player, false, 'no_can'), 'no_can' end
 		if cans[1].durability >= 100 then return answer(player, false, 'can_full'), 'can_full' end
 		price, slot = config.can.refillPrice, cans[1].slot
+		expected = OPX.Table.DeepCopy(cans[1].metadata or {})
 	else
 		local read, room = pcall(api.CanCarry, player, config.can.item, 1, { durability = 100, ammo = 100 })
 		if not read or type(room) ~= 'table' or not room.ok or room.value ~= true then
@@ -498,8 +496,13 @@ function M.CanBuy(player, payload)
 
 	local progress = OPX.Api.Get('progress')
 	if progress == nil or type(progress.Start) ~= 'function' then return answer(player, false, 'no_bar'), 'no_bar' end
+	if people.GetPlayer(player) ~= person or OPX.Sessions[player] ~= ownerSession or OPX.UserIdOf(player) ~= userId then
+		return answer(player, false, 'no_character'), 'no_character'
+	end
 	local session = { kind = refill and 'refill' or 'buy', method = method, price = price, slot = slot,
-		station = place.station.key, pump = place.pump, bucket = place.at.bucket }
+		station = place.station.key, pump = place.pump, bucket = place.at.bucket,
+		person = person, citizenId = citizenId, ownerSession = ownerSession, userId = userId,
+		item = config.can.item, expected = expected }
 	local started = progress.Start(player, OWNER, {
 		label = locale(refill and 'fuel.bar.refill' or 'fuel.bar.buy'),
 		durationMs = config.can.durationMs,
@@ -511,52 +514,65 @@ function M.CanBuy(player, payload)
 	return true, session.kind
 end
 
---- The end of a can bought or refilled: charged first, handed over after, and
---- refunded when the hand-over is refused. Nothing for a bar cut short.
--- @author dop42
--- @param player integer
--- @param session table
--- @param outcome table
+--- A completed purchase commits its wallet and can snapshot together.
+-- Unknown results are owned by the core reconciler and are never refunded.
 function M.Purchased(player, session, outcome)
+	if session.purchaseDispatched then return false end
+	local people = character()
+	local person = people and people.GetPlayer(player)
+	local function sameBuyer()
+		return person ~= nil and person == session.person and person.PlayerData.citizenId == session.citizenId
+			and OPX.Sessions[player] == session.ownerSession and OPX.UserIdOf(player) == session.userId
+			and people.GetPlayer(player) == person
+	end
+	if not sameBuyer() then return false end
 	if outcome.completed ~= true then
 		if outcome.ending ~= 'left' then answer(player, false, 'cancelled') end
-		return
+		return false
 	end
 	local api = inventory()
 	local config = settings()
-	local reason = 'fuel:can'
-	if api == nil then return answer(player, false, 'no_inventory') end
-	-- Still at a pump: the bar held them, but a bar is the client's.
+	if not api or type(api.AtomicTrade) ~= 'function' then return answer(player, false, 'no_inventory') end
 	local at = pointOf(player)
-	if at == nil or at.bucket ~= session.bucket
+	if not at or at.bucket ~= session.bucket
 		or distance(session.pump, at.x, at.y, at.z) > OPX.Spots.ServerReach(config.useRadius) then
 		return answer(player, false, 'moved_away')
 	end
-	if not charge(player, session.method, session.price, reason) then
-		return answer(player, false, 'not_enough_money', { price = session.price })
-	end
-	local handed
+	local changes, metadata = {}, { durability = 100, ammo = 100 }
 	if session.kind == 'refill' then
-		local read, stack = pcall(api.GetSlot, player, session.slot)
-		stack = read and type(stack) == 'table' and stack.ok and stack.value or nil
-		if type(stack) == 'table' and stack.name == config.can.item then
-			local metadata = type(stack.metadata) == 'table' and stack.metadata or {}
-			metadata.durability, metadata.ammo = 100, 100
-			local set = api.SetMetadata(player, session.slot, metadata)
-			handed = type(set) == 'table' and set.ok == true
-		end
-	else
-		local added = api.AddItem(player, config.can.item, 1, { durability = 100, ammo = 100 })
-		handed = type(added) == 'table' and added.ok == true
+		metadata = OPX.Table.DeepCopy(session.expected or {})
+		metadata.durability, metadata.ammo = 100, 100
+		changes[#changes + 1] = { name = session.item, slot = session.slot, count = -1,
+			metadata = session.expected, held = true }
 	end
-	if not handed then
-		refund(player, session.method, session.price, reason .. ':refund')
-		return answer(player, false, session.kind == 'refill' and 'no_can' or 'cannot_carry')
+	changes[#changes + 1] = { name = session.item, count = 1, metadata = metadata }
+	session.purchaseDispatched = true
+	local called, paid = pcall(api.AtomicTrade, person, session.method, -session.price, changes,
+		'fuel:can', session.operationId, function(op)
+			if not sameBuyer() then return nil, 'error.notLoggedIn' end
+			local current = pointOf(player)
+			if not current or current.bucket ~= session.bucket
+				or distance(session.pump, current.x, current.y, current.z) > OPX.Spots.ServerReach(config.useRadius) then
+				return nil, 'moved_away'
+			end
+			session.operationId = op.id
+			return function() return {} end
+		end)
+	if not called or type(paid) ~= 'table' or not paid.ok then
+		if not sameBuyer() then return false end
+		local code = called and type(paid) == 'table' and paid.error or 'money.pending'
+		return answer(player, false, code == 'money.insufficient' and 'not_enough_money'
+			or code == 'money.pending' and 'purchase_pending' or code == 'moved_away' and 'moved_away' or session.kind == 'refill' and 'no_can' or 'cannot_carry',
+			{ price = session.price })
 	end
 	OPX.Audit.Log({ event = 'fuel.' .. session.kind, message = ('player %d, %d'):format(player, session.price),
-		data = { price = session.price, method = session.method, station = session.station }, source = player })
-	answer(player, true, session.kind == 'refill' and 'can_refilled' or 'can_bought',
-		{ cost = session.price, method = session.method })
+		data = { price = session.price, method = session.method, station = session.station, opId = session.operationId },
+		source = player, citizenId = session.citizenId })
+	if sameBuyer() then
+		return answer(player, true, session.kind == 'refill' and 'can_refilled' or 'can_bought',
+			{ cost = session.price, method = session.method })
+	end
+	return true
 end
 
 --- ox's can-into-a-vehicle `startFueling(vehicle, false)`. `vehicleId` is the

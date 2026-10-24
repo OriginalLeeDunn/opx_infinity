@@ -42015,6 +42015,35 @@ local function fuelInventory(OPX)
 		CanCarry = function() return { ok = true, value = fake.carry } end,
 		GetItemCount = function() return { ok = true, value = 0 } end,
 	}
+	api.AtomicTrade = function(target, method, delta, changes, reason, id, participant)
+		local character = realGet('character')
+		local player = type(target) == 'table' and target or character.ResolvePlayer(target)
+		if not player then return OPX.Result.Err('not_loaded') end
+		return character.AtomicMoney(player, method, math.abs(delta), delta == 0 and 'touch' or delta > 0 and 'add' or 'remove',
+			reason, id, function(op)
+				local staged = OPX.Table.DeepCopy(fake.cans)
+				for _, change in ipairs(changes) do
+					if change.count < 0 then
+						local old = staged[change.slot]
+						if not old or not OPX.Modules.Get('inventory').Common.SameMetadata(old, change.metadata) then return nil, 'empty_slot' end
+						staged[change.slot] = nil
+					elseif not fake.carry then return nil, 'no_room' end
+				end
+				local added = {}
+				for _, change in ipairs(changes) do
+					if change.count > 0 then
+						local slot = 1; while staged[slot] do slot = slot + 1 end
+						staged[slot] = OPX.Table.DeepCopy(change.metadata)
+						added[#added + 1] = { name = change.name, count = change.count, metadata = OPX.Table.DeepCopy(change.metadata) }
+					end
+				end
+				op.apply = function()
+					fake.cans = staged
+					for _, entry in ipairs(added) do fake.added[#fake.added + 1] = entry end
+				end
+				return participant(op)
+			end)
+	end
 	OPX.Api.Get = function(name, minimum)
 		if name == 'inventory' then return api end
 		return realGet(name, minimum)
@@ -42390,6 +42419,7 @@ do
 		local progress = OPX.Modules.Get('progress')
 		local P = 62
 		local player = standCharacter(env, control, P, 'FUEL0002', { EDDIES = 500, BANK = 0 })
+		OPX.EnsureSession(P)
 		local money = player.PlayerData.money
 		local fake = fuelInventory(OPX)
 		control.Stand(P, 104.5, 0.0, 0.0)
@@ -46459,6 +46489,63 @@ do
 			end,
 			RegisterItem = function() return { ok = true } end,
 		}
+		fake.CanCarry = function(target)
+			local current = OPX.Api.Get('character').GetPlayerByCitizenId(bagKey(target))
+			return OPX.Result.Ok(not full[target] and not (current and full[current.PlayerData.source]))
+		end
+		fake.AtomicTrade = function(target, money, delta, changes, reason, opId, participant)
+			local character = OPX.Api.Get('character')
+			local cid = bagKey(target)
+			return character.AtomicMoney(cid, money, math.abs(delta), delta == 0 and 'touch' or delta > 0 and 'add' or 'remove', reason, opId, function(op)
+				local nextBags, nextStashes = OPX.Table.DeepCopy(bags), OPX.Table.DeepCopy(stashes)
+				for _, removing in ipairs({ true, false }) do
+					for _, change in ipairs(changes) do
+						if (change.count < 0) == removing then
+							local key = change.stash or change.citizenId or cid
+							local source = not change.stash and character.GetPlayerByCitizenId(key)
+							if change.count > 0 and (full[key] or (source and full[source.PlayerData.source])) then return nil, 'too_heavy' end
+							local map = change.stash and nextStashes or nextBags
+							map[key] = map[key] or {}
+							local count = (map[key][change.name] or 0) + change.count
+							if count < 0 then return nil, 'not_enough' end
+							map[key][change.name] = count
+						end
+					end
+				end
+				local builder, why
+				if participant then builder, why = participant(op) end
+				if participant and not builder then return nil, why end
+				local apply = op.apply
+				op.apply = function() bags, stashes = nextBags, nextStashes; if apply then apply() end end
+				return builder or function() return {} end
+			end)
+		end
+		fake.AtomicPeerTrade = function(seller, buyer, money, price, items, reason, opId, options)
+			options = options or {}
+			local changes = {}
+			for _, item in ipairs(items) do
+				changes[#changes + 1] = { name = item.name, count = -item.count, citizenId = seller }
+				changes[#changes + 1] = { name = item.name, count = item.count, citizenId = buyer }
+			end
+			return fake.AtomicTrade(buyer, money, -price, changes, reason, opId, function(op)
+				local character = OPX.Api.Get('character')
+				local credit, why = character.PreparePeerCredit(op, character.GetPlayerByCitizenId(seller), options.credit or price)
+				if not credit then return nil, why end
+				local extra
+				if options.participant then extra, why = options.participant(op) end
+				if why then return nil, why end
+				return function(attempt)
+					local statements, guard = credit(attempt)
+					if extra then
+						local added, condition = extra(attempt)
+						for _, statement in ipairs(added or {}) do statements[#statements + 1] = statement end
+						guard = OPX.Storage.CombineGuards(guard, condition)
+					end
+					return statements, guard
+				end
+			end)
+		end
+
 		local accountsStub, invoicesStub = nil, nil
 		local ledger = { balance = 0, moves = {} }
 		local issued = {}
@@ -46476,6 +46563,19 @@ do
 					return { ok = true, value = { balance = ledger.balance } }
 				end,
 			} or nil
+			if accountsStub then
+				accountsStub.PrepareTrade = function(op, kind, key, amount, deposit)
+					if not deposit and ledger.balance < amount then return nil, 'insufficient_funds' end
+					local apply = op.apply
+					op.apply = function()
+						if apply then apply() end
+						if deposit then accountsStub.Deposit(kind, key, amount, op.reason, op.id)
+						else accountsStub.Withdraw(kind, key, amount, op.reason, op.id) end
+					end
+					return function() return {} end
+				end
+			end
+
 		end
 		local function useInvoices(on, refuse)
 			invoicesStub = on and {
@@ -46485,6 +46585,22 @@ do
 					return { ok = true, value = { id = #issued } }
 				end,
 			} or nil
+			if invoicesStub then
+				invoicesStub.PrepareServiceBill = function(spec)
+					if refuse then return OPX.Result.Err('refused') end
+					local prepared = {}
+					prepared.Participant = function(op)
+						local apply = op.apply
+						op.apply = function()
+							if apply then apply() end
+							issued[#issued + 1] = spec; prepared.id = #issued
+						end
+						return function() return {} end
+					end
+					return OPX.Result.Ok(prepared)
+				end
+			end
+
 		end
 		local realGet = OPX.Api.Get
 		OPX.Api.Get = function(name, minimum)
@@ -48250,6 +48366,59 @@ do
 			local loaded = OPX.Api.Get('character').GetPlayer(player)
 			if loaded ~= nil then bags[loaded.PlayerData.citizenId] = bags[player] end
 		end
+        -- Explicit durable media history; production SQL is covered separately.
+        local saleRows, saleScenes, saleSequence = {}, {}, 0
+        media.Storage.NewId = function() saleSequence = saleSequence + 1; return OPX.Result.Ok('media-test-' .. saleSequence) end
+        media.Storage.State = function(cid, network, desk)
+            local seller, minted, revision = 0, 0, 0
+            for index, sale in ipairs(saleRows) do
+                if sale.cid == cid then seller = seller + sale.total end
+                if sale.network == network and sale.funded == 'mint' then minted = minted + sale.total end
+                if sale.desk == desk then revision = index end
+            end
+            local scenes = {}
+            for _, scene in ipairs(saleScenes) do if scene.desk == desk then scenes[#scenes + 1] = scene end end
+            return OPX.Result.Ok({ seller = seller, minted = minted, revision = revision, scenes = scenes })
+        end
+        local realSaleSQL = media.Storage.SaleStatements
+        media.Storage.SaleStatements = function(op, sale)
+            op.fixtureMediaSale = sale
+            return realSaleSQL(op, sale)
+        end
+        inventory.AtomicTrade = function(cid, kind, delta, changes, reason, id, participant)
+            local character = OPX.Api.Get('character')
+            local player = character.GetPlayerByCitizenId(cid)
+            if not player then return OPX.Result.Err('not_loaded') end
+            return character.AtomicMoney(player, kind, math.abs(delta), delta == 0 and 'touch' or delta > 0 and 'add' or 'remove',
+                reason, id, function(op)
+                    local staged = OPX.Table.DeepCopy(bags[cid] or {})
+                    for _, change in ipairs(changes) do
+                        local held = staged[change.slot]
+                        if not held or held.name ~= change.name
+                            or not OPX.Modules.Get('inventory').Common.SameMetadata(held.metadata, change.metadata) then
+                            return nil, 'empty_slot'
+                        end
+                        staged[change.slot] = nil
+                    end
+                    op.apply = function()
+                        local live = bags[cid]
+                        for slot in pairs(live) do live[slot] = nil end
+                        for slot, item in pairs(staged) do live[slot] = item end
+                    end
+                    local build, code = participant(op, staged)
+                    if not build then return nil, code end
+                    local extraApply = op.apply
+                    op.apply = function()
+                        extraApply()
+                        local sale = op.fixtureMediaSale
+                        saleRows[#saleRows + 1] = { cid = cid, network = sale.network, desk = sale.desk, total = sale.total, funded = sale.funded }
+                        for _, scene in ipairs(sale.scenes) do
+                            saleScenes[#saleScenes + 1] = { desk = sale.desk, x = scene.x, y = scene.y, z = scene.z, at = env.Open77.time.unix() }
+                        end
+                    end
+                    return build
+                end)
+        end
 		local accounts = nil
 		local realGet = OPX.Api.Get
 		OPX.Api.Get = function(name, minimum)
@@ -48385,16 +48554,21 @@ do
 		local withdrawn = {}
 		local balance = 0
 		local nestedOk, nestedCode
-		accounts = {
-			Withdraw = function(kind, key, amount, reason, opId)
-				if amount > balance then return { ok = false, error = 'insufficient_funds' } end
-				nestedOk, nestedCode = media.Sell(STRINGER, { network = 'wns', desk = 'japantown_bureau' })
-				balance = balance - amount
-				withdrawn[#withdrawn + 1] = { kind = kind, key = key, amount = amount, reason = reason, opId = opId }
-				return { ok = true, value = { balance = balance } }
-			end,
-			Deposit = function(_, _, amount) balance = balance + amount; return { ok = true } end,
-		}
+        accounts = {
+            PayCitizen = function(kind, key, cid, currency, amount, reason, opId, changes, participant)
+                if amount > balance then return OPX.Result.Err('insufficient_funds') end
+                nestedOk, nestedCode = media.Sell(STRINGER, { network = 'wns', desk = 'japantown_bureau' })
+                return inventory.AtomicTrade(cid, currency, amount, changes, reason, opId, function(op, staged)
+                    local prior = op.apply
+                    op.apply = function()
+                        prior()
+                        balance = balance - amount
+                        withdrawn[#withdrawn + 1] = { kind = kind, key = key, amount = amount, reason = reason, opId = opId }
+                    end
+                    return participant(op, staged)
+                end)
+            end,
+        }
 		bags[ANCHOR][21] = { name = 'press_photo', metadata = { by = CIDS[1], at = math.floor(OPX.Now() / 1000),
 			crowd = 0, x = 900, y = 0, z = 0 } }
 		control.Advance(1000)

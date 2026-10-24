@@ -139,6 +139,14 @@ local function standing(player, venue, spot, reach)
 	return nil
 end
 
+--- Revalidates a captured actor after inventory reads and save fences yield.
+local function authority(player, data, session, venue, spot, minimumGrade)
+	if dataOf(player) ~= data or OPX.Sessions[player] ~= session then return 'left' end
+	local allowed, why = M.Allowed(venue, data, minimumGrade)
+	if not allowed then return why end
+	return standing(player, venue, spot)
+end
+
 --- The venue a bartender works and stands in, for serving, or nil and a code.
 local function venueServedFrom(player, data)
 	local at = pointOf(player)
@@ -228,7 +236,8 @@ function M.Mix(player, venueId, key)
 	local progress = OPX.Api.Get('progress')
 	if progress == nil or type(progress.Start) ~= 'function' then return answer(player, false, 'no_bar'), 'no_bar' end
 	-- Claimed before the bar call: a second request in the same frame is busy.
-	local op = { venue = venue.id, recipe = recipe.key, citizenId = data.citizenId, player = player }
+	local op = { venue = venue.id, recipe = recipe.key, citizenId = data.citizenId, player = player,
+		data = data, session = OPX.EnsureSession(player) }
 	mixing[player] = op
 	local started = progress.Start(player, M.OWNER, {
 		label = locale('bar.bar.mix', { item = itemLabel(recipe.item) }),
@@ -262,29 +271,40 @@ settleMix = function(op, outcome)
 	local why = standing(player, venue, venue.counter)
 	if why ~= nil then return answer(player, false, why), why end
 
-	-- The ingredients out of the stash first; a short one puts back what went.
-	local api, taken = inventory(), {}
-	for _, input in ipairs(recipe.inputs) do
-		if not ok(api.RemoveFromStash(venue.stash.name, input.item, input.count)) then
-			for _, back in ipairs(taken) do api.AddToStash(venue.stash.name, back.item, back.count) end
-			return answer(player, false, 'short'), 'short'
+	local api = inventory()
+	if not api or type(api.AtomicTrade) ~= 'function' then return answer(player, false, 'unavailable'), 'unavailable' end
+	local fits = api.CanCarry and api.CanCarry(op.citizenId, recipe.item, recipe.count)
+	local where = ok(fits) and fits.value == true and 'bag' or 'stash'
+	local function mix()
+		local changes = {}
+		for _, input in ipairs(recipe.inputs) do
+			changes[#changes + 1] = { name = input.item, count = -input.count, stash = venue.stash.name }
 		end
-		taken[#taken + 1] = input
+		changes[#changes + 1] = { name = recipe.item, count = recipe.count, stash = where == 'stash' and venue.stash.name or nil }
+		return api.AtomicTrade(op.citizenId, S.money, 0, changes, 'bar:mix:' .. venue.id .. ':' .. recipe.key, nil, function(context)
+			local why = authority(player, op.data, op.session, venue, venue.counter)
+			if why then return nil, why end
+			context.publish = function()
+				OPX.Publish(M.Event.ON_MIXED, player, { citizenId = op.citizenId, venue = venue.id, recipe = recipe.key,
+					item = recipe.item, count = recipe.count, where = where })
+				local live = dataOf(player)
+				if live and live.citizenId == op.citizenId then
+					answer(player, true, where == 'stash' and 'mixed_to_stash' or 'mixed', { item = itemLabel(recipe.item), count = recipe.count })
+				end
+			end
+			return function() return {} end
+		end)
 	end
-	-- The drink last: into the bag, or onto the stash shelf when the bag is full.
-	local where = 'bag'
-	if not ok(api.AddItem(op.citizenId, recipe.item, recipe.count)) then
-		where = 'stash'
-		if not ok(api.AddToStash(venue.stash.name, recipe.item, recipe.count)) then
-			for _, back in ipairs(taken) do api.AddToStash(venue.stash.name, back.item, back.count) end
-			return answer(player, false, 'no_room'), 'no_room'
-		end
+	local made = mix()
+	if not made.ok and where == 'bag' and (made.error == 'no_room' or made.error == 'too_heavy') then where = 'stash'; made = mix() end
+	if not made.ok then
+		if made.error == 'left' then return false, 'left' end
+		local code = made.error == 'money.pending' and 'payment_pending' or made.error == 'not_enough' and 'short'
+			or OPX.Locale.Exists('bar.error.' .. tostring(made.error)) and made.error or 'no_room'
+		return answer(player, false, code), code
 	end
-	OPX.Publish(M.Event.ON_MIXED, player, { citizenId = op.citizenId, venue = venue.id, recipe = recipe.key,
-		item = recipe.item, count = recipe.count, where = where })
-	local params = { item = itemLabel(recipe.item), count = recipe.count }
-	if where == 'stash' then return answer(player, true, 'mixed_to_stash', params), 'mixed_to_stash' end
-	return answer(player, true, 'mixed', params), 'mixed'
+	return true, where == 'stash' and 'mixed_to_stash' or 'mixed'
+
 end
 
 -- ── the stash and the supplier ──────────────────────────────────────────────
@@ -352,43 +372,46 @@ function M.Buy(player, venueId, index)
 	end
 	if row == nil then return answer(player, false, 'bad_request'), 'bad_request' end
 	local data = dataOf(player)
+	local session = OPX.EnsureSession(player)
 	local passed, code = M.Allowed(venue, data, venue.supplyGrade)
 	if not passed then return answer(player, false, code), code end
 	local why = standing(player, venue, venue.supply)
 	if why ~= nil then return answer(player, false, why), why end
 
 	local reason = ('bar:supply:%s:%s'):format(venue.id, row.item)
-	local funds = fundsFor(venue)
-	local opId = ('bar-buy-%s-%d-%d'):format(data.citizenId, math.floor(OPX.Now()), row.index)
-	if row.price > 0 then
-		if funds == 'account' then
-			local read, taken = pcall(accounts().Withdraw, venue.account.kind, venue.account.key, row.price, reason, opId)
-			if not read or not ok(taken) then
-				local broke = read and type(taken) == 'table' and taken.error == 'insufficient_funds'
-				return answer(player, false, broke and 'venue_broke' or 'unavailable'), broke and 'venue_broke' or 'unavailable'
+	local funds, api = fundsFor(venue), inventory()
+	if not api or type(api.AtomicTrade) ~= 'function' then return answer(player, false, 'unavailable'), 'unavailable' end
+	local bought = api.AtomicTrade(data.citizenId, 'BANK', funds == 'account' and 0 or -row.price,
+		{ { name = row.item, count = row.count, stash = venue.stash.name } }, reason, nil, function(op)
+			local why = authority(player, data, session, venue, venue.supply, venue.supplyGrade)
+			if why then return nil, why end
+			local builder
+			if row.price > 0 and funds == 'account' then
+				local treasury = accounts()
+				if not treasury or type(treasury.PrepareTrade) ~= 'function' then return nil, 'error.unavailable' end
+				local why
+				builder, why = treasury.PrepareTrade(op, venue.account.kind, venue.account.key, row.price, false)
+				if not builder then return nil, why end
 			end
-		else
-			local read, taken = pcall(character.RemoveMoney, data.citizenId, 'BANK', row.price, reason)
-			if not read or taken ~= true then return answer(player, false, 'not_enough_money'), 'not_enough_money' end
-		end
-	end
-	if not ok(inventory().AddToStash(venue.stash.name, row.item, row.count)) then
-		if row.price > 0 then
-			if funds == 'account' then
-				pcall(accounts().Deposit, venue.account.kind, venue.account.key, row.price, reason .. ':refund',
-					opId .. ':refund')
-			else
-				pcall(character.AddMoney, data.citizenId, 'BANK', row.price, reason .. ':refund')
+			op.publish = function()
+				OPX.Audit.Log({ event = 'bar.supply', source = player, citizenId = data.citizenId,
+					message = ('%dx %s for %d into %s (%s)'):format(row.count, row.item, row.price, venue.stash.name, funds),
+					data = { venue = venue.id, item = row.item, count = row.count, price = row.price, funds = funds } })
+				OPX.Publish(M.Event.ON_BOUGHT, player, { citizenId = data.citizenId, venue = venue.id, item = row.item, count = row.count, price = row.price })
+				local live = dataOf(player)
+				if live and live.citizenId == data.citizenId then answer(player, true, 'bought', { item = itemLabel(row.item), count = row.count, price = row.price }) end
 			end
-		end
-		return answer(player, false, 'stash_full'), 'stash_full'
+			return builder or function() return {} end
+		end)
+	if not bought.ok then
+		if bought.error == 'left' then return false, 'left' end
+		local code = bought.error == 'money.pending' and 'payment_pending' or bought.error == 'insufficient_funds' and 'venue_broke'
+			or bought.error == 'money.insufficient' and 'not_enough_money'
+			or OPX.Locale.Exists('bar.error.' .. tostring(bought.error)) and bought.error or 'stash_full'
+		return answer(player, false, code), code
 	end
-	OPX.Audit.Log({ event = 'bar.supply', source = player, citizenId = data.citizenId,
-		message = ('%dx %s for %d into %s (%s)'):format(row.count, row.item, row.price, venue.stash.name, funds),
-		data = { venue = venue.id, item = row.item, count = row.count, price = row.price, funds = funds } })
-	OPX.Publish(M.Event.ON_BOUGHT, player, { citizenId = data.citizenId, venue = venue.id, item = row.item,
-		count = row.count, price = row.price })
-	return answer(player, true, 'bought', { item = itemLabel(row.item), count = row.count, price = row.price }), 'bought'
+	return true, 'bought'
+
 end
 
 -- ── serving ─────────────────────────────────────────────────────────────────
@@ -455,53 +478,13 @@ function M.Serve(player, target, item)
 	end
 	serves[state.id] = { id = state.id, bartender = player, customer = context.target,
 		bartenderCid = context.data.citizenId, customerCid = context.customer.citizenId,
-		bartenderSession = OPX.Sessions[player], customerSession = OPX.Sessions[context.target],
+		bartenderSession = OPX.EnsureSession(player), customerSession = OPX.EnsureSession(context.target),
+		bartenderData = context.data, customerData = context.customer,
 		venue = venue.id, item = item, price = price, at = OPX.Now() }
 	serveOf[player] = state.id
 	local params = { item = itemLabel(item), price = price, venue = venue.label }
 	answer(context.target, true, 'serve_invited', params)
 	return answer(player, true, 'serve_offered', params), 'serve_offered'
-end
-
-local function give(target, item)
-	return ok(inventory().AddItem(target, item, 1))
-end
-
-local function take(target, item)
-	return ok(inventory().RemoveItem(target, item, 1))
-end
-
---- Pays a sale out: the bartender's cut, the house's share to the venue
---- treasury (or to the bartender when there is no accounts module).
-local function payOut(serve, venue)
-	local staff, house = Model.Split(serve.price, S.staffCut)
-	local api = accounts()
-	local deposited = false
-	if house > 0 and api ~= nil and venue.account ~= nil then
-		local read, done = pcall(api.Deposit, venue.account.kind, venue.account.key, house,
-			('bar:sale:%s:%s'):format(venue.id, serve.item), 'bar:' .. serve.id)
-		deposited = read and ok(done)
-		if not deposited then
-			OPX.Audit.Log({ event = 'bar.depositFailed', severity = 'warn', source = serve.bartender,
-				message = ('%d for %s went to the bartender'):format(house, venue.id) })
-		end
-	end
-	local toStaff = deposited and staff or serve.price
-	if toStaff > 0 then
-		local read, paid = pcall(character.AddMoney, serve.bartenderCid, S.money, toStaff, 'bar:sale:' .. venue.id)
-		if not read or paid ~= true then
-			OPX.Audit.Log({ event = 'bar.payoutLost', severity = 'warn', source = serve.bartender,
-				message = ('%d for %s could not be paid'):format(toStaff, venue.id) })
-		end
-	end
-	return toStaff, deposited and house or 0
-end
-
---- Charges the customer straight from their purse. Answers whether it went.
-local function chargeDirect(serve)
-	local read, taken = pcall(character.RemoveMoney, serve.customerCid, S.money, serve.price,
-		('bar:%s:%s'):format(serve.venue, serve.item))
-	return read and taken == true
 end
 
 local function invoices()
@@ -518,7 +501,7 @@ function M.Complete(id)
 	if serveOf[serve.bartender] == id then serveOf[serve.bartender] = nil end
 	local bartender, customer = dataOf(serve.bartender), dataOf(serve.customer)
 	local venue = S.venues[serve.venue]
-	if bartender == nil or customer == nil or venue == nil or bartender.citizenId ~= serve.bartenderCid
+	if bartender == nil or customer == nil or venue == nil or bartender ~= serve.bartenderData or customer ~= serve.customerData or bartender.citizenId ~= serve.bartenderCid
 		or customer.citizenId ~= serve.customerCid or OPX.Sessions[serve.bartender] ~= serve.bartenderSession
 		or OPX.Sessions[serve.customer] ~= serve.customerSession then
 		return false, 'left'
@@ -526,78 +509,68 @@ function M.Complete(id)
 	local passed, code = M.Allowed(venue, bartender)
 	if not passed then return answer(serve.bartender, false, code), code end
 
-	-- The bartender gives the drink up first.
-	if not take(serve.bartenderCid, serve.item) then
-		answer(serve.customer, false, 'serve_failed')
-		return answer(serve.bartender, false, 'not_enough_items'), 'not_enough_items'
-	end
 	local params = { item = itemLabel(serve.item), price = serve.price, venue = venue.label }
-	local billing, invoiceId = 'free', nil
-	local api = invoices()
+	local api, prepared = invoices(), nil
 	local useInvoice = serve.price > 0 and api ~= nil and S.billing ~= 'direct'
-
-	if serve.price > 0 and not useInvoice then
-		-- Direct: the customer's money before their drink.
-		if not chargeDirect(serve) then
-			give(serve.bartenderCid, serve.item)
-			answer(serve.customer, false, 'not_enough_money', params)
-			return answer(serve.bartender, false, 'customer_short'), 'customer_short'
-		end
-		billing = 'direct'
-	end
-	if not give(serve.customerCid, serve.item) then
-		if billing == 'direct' then
-			pcall(character.AddMoney, serve.customerCid, S.money, serve.price, 'bar:refund:' .. serve.venue)
-		end
-		give(serve.bartenderCid, serve.item)
-		answer(serve.customer, false, 'cannot_carry')
-		return answer(serve.bartender, false, 'customer_full'), 'customer_full'
-	end
-
-	local staff, house = 0, 0
-	if billing == 'direct' then
-		staff, house = payOut(serve, venue)
-	elseif useInvoice then
-		-- Earlier inventory calls may yield. The invoice API takes live slots,
-		-- so never issue the old customer's bill to their replacement.
-		local currentBartender, currentCustomer = dataOf(serve.bartender), dataOf(serve.customer)
-		if currentBartender == nil or currentCustomer == nil or
-			currentBartender.citizenId ~= serve.bartenderCid or currentCustomer.citizenId ~= serve.customerCid or
-			OPX.Sessions[serve.bartender] ~= serve.bartenderSession or
-			OPX.Sessions[serve.customer] ~= serve.customerSession then
-			if take(serve.customerCid, serve.item) then give(serve.bartenderCid, serve.item) end
-			return false, 'left'
-		end
-		local read, issued = pcall(api.Issue, {
-			issuer = serve.bartender, target = serve.customer, amount = serve.price,
+	if useInvoice then
+		if type(api.PrepareServiceBill) ~= 'function' then return answer(serve.bartender, false, 'unavailable'), 'unavailable' end
+		local bill = api.PrepareServiceBill({ issuer = serve.bartender, target = serve.customer, amount = serve.price,
 			reason = ('%s - %s'):format(venue.label, itemLabel(serve.item)),
 			account = venue.account ~= nil and { kind = venue.account.kind, key = venue.account.key } or nil,
-			cutPct = S.staffCut, source = 'bar',
-		})
-		if read and ok(issued) then
-			billing = 'invoice'
-			invoiceId = type(issued.value) == 'table' and issued.value.id or issued.value
-		elseif chargeDirect(serve) then
-			-- No bill could be written: the price is charged on the spot instead.
-			billing = 'direct'
-			staff, house = payOut(serve, venue)
-		else
-			-- Neither: the drink goes back behind the bar.
-			if take(serve.customerCid, serve.item) then give(serve.bartenderCid, serve.item) end
-			answer(serve.customer, false, 'not_enough_money', params)
-			return answer(serve.bartender, false, 'customer_short'), 'customer_short'
-		end
+			cutPct = S.staffCut, source = 'bar' })
+		if bill.ok then prepared = bill.value
+		elseif S.billing == 'auto' then useInvoice = false
+		else return answer(serve.bartender, false, 'unavailable'), 'unavailable' end
 	end
+	local staff, house = Model.Split(serve.price, S.staffCut)
+	local treasury = accounts()
+	if not treasury or not venue.account then staff, house = serve.price, 0 end
+	local billing = useInvoice and 'invoice' or serve.price > 0 and 'direct' or 'free'
+	local inv = inventory()
+	if not inv or type(inv.AtomicPeerTrade) ~= 'function' then return answer(serve.bartender, false, 'unavailable'), 'unavailable' end
+	local traded = inv.AtomicPeerTrade(serve.bartenderCid, serve.customerCid, S.money, useInvoice and 0 or serve.price,
+		{ { name = serve.item, count = 1 } }, 'bar:' .. venue.id .. ':' .. serve.item, 'bar:' .. serve.id,
+		{ credit = useInvoice and 0 or staff, participant = function(op)
+			local why = authority(serve.bartender, bartender, serve.bartenderSession, venue, venue.counter)
+			if why then return nil, why end
+			if bartender.citizenId ~= serve.bartenderCid or customer.citizenId ~= serve.customerCid
+				or dataOf(serve.customer) ~= customer or OPX.Sessions[serve.customer] ~= serve.customerSession then return nil, 'left' end
+			if down(serve.customer) then return nil, 'player_down' end
+			if apart(pointOf(serve.bartender), pointOf(serve.customer)) > OPX.Spots.ServerReach(S.serve.breakDistance) then return nil, 'too_far' end
+			local extraBuild
+			if prepared then extraBuild, why = prepared.Participant(op)
+			elseif house > 0 then
+				if type(treasury.PrepareTrade) ~= 'function' then return nil, 'error.unavailable' end
+				extraBuild, why = treasury.PrepareTrade(op, venue.account.kind, venue.account.key, house, true)
+			end
+			if why then return nil, why end
+			local publish = op.publish
+			op.publish = function()
+				if publish then pcall(publish) end
+				local invoiceId = prepared and prepared.id
+				OPX.Audit.Log({ event = 'bar.serve', source = serve.bartender, citizenId = serve.bartenderCid,
+					message = ('%s to %s for %d (%s)'):format(serve.item, serve.customerCid, serve.price, billing),
+					data = { venue = venue.id, item = serve.item, price = serve.price, billing = billing,
+						staff = useInvoice and 0 or staff, house = useInvoice and 0 or house, invoice = invoiceId } })
+				OPX.Publish(M.Event.ON_SERVED, serve.bartender, { venue = venue.id, item = serve.item, price = serve.price,
+					bartender = serve.bartenderCid, customer = serve.customerCid, billing = billing, invoice = invoiceId })
+				local b, c = dataOf(serve.bartender), dataOf(serve.customer)
+				if c and c.citizenId == serve.customerCid then answer(serve.customer, true, useInvoice and 'received_invoiced' or 'received', params) end
+				if b and b.citizenId == serve.bartenderCid then answer(serve.bartender, true,
+					useInvoice and 'served_invoiced' or billing == 'free' and 'served_free' or 'served', params) end
+			end
+			return extraBuild or function() return {} end
+		end })
+	if not traded.ok then
+		if traded.error == 'left' then return false, 'left' end
+		local code = traded.error == 'money.pending' and 'payment_pending' or traded.error == 'money.insufficient' and 'customer_short'
+			or traded.error == 'not_enough' and 'not_enough_items'
+			or OPX.Locale.Exists('bar.error.' .. tostring(traded.error)) and traded.error or 'serve_failed'
+		answer(serve.customer, false, code == 'customer_short' and 'not_enough_money' or code, params)
+		return answer(serve.bartender, false, code, params), code
+	end
+	return true, useInvoice and 'served_invoiced' or billing == 'free' and 'served_free' or 'served'
 
-	OPX.Audit.Log({ event = 'bar.serve', source = serve.bartender, citizenId = serve.bartenderCid,
-		message = ('%s to %s for %d (%s)'):format(serve.item, serve.customerCid, serve.price, billing),
-		data = { venue = venue.id, item = serve.item, price = serve.price, billing = billing, staff = staff,
-			house = house, invoice = invoiceId, customer = serve.customerCid } })
-	OPX.Publish(M.Event.ON_SERVED, serve.bartender, { venue = venue.id, item = serve.item, price = serve.price,
-		bartender = serve.bartenderCid, customer = serve.customerCid, billing = billing, invoice = invoiceId })
-	local verb = billing == 'invoice' and 'served_invoiced' or (billing == 'free' and 'served_free' or 'served')
-	answer(serve.customer, true, billing == 'invoice' and 'received_invoiced' or 'received', params)
-	return answer(serve.bartender, true, verb, params), verb
 end
 
 local function onCompleted(state)

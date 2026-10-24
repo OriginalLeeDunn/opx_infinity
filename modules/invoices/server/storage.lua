@@ -23,6 +23,7 @@ local Storage = OPX.Storage
 
 M.Storage = {}
 M.Storage.COLUMNS = {
+	{ TABLE = 'opx77_invoices', COLUMN = 'issue_op', DEFINITION = 'VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL UNIQUE' },
 	{ TABLE = 'opx77_invoice_ledger', COLUMN = 'durable_version', DEFINITION = 'TINYINT UNSIGNED NOT NULL DEFAULT 0' },
 	{ TABLE = 'opx77_invoice_ledger', COLUMN = 'destination',
 		DEFINITION = 'VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL' },
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS opx77_invoices (
     cut_pct TINYINT UNSIGNED NOT NULL DEFAULT 0,
     source VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     paid_with VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL,
+    issue_op VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL UNIQUE,
     issued_at BIGINT NOT NULL,
     expires_at BIGINT NOT NULL DEFAULT 0,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -266,4 +268,24 @@ SELECT op_id, invoice_id, phase, citizen_id, amount, durable_version
 			amount = math.tointeger(tonumber(row.amount)) or 0, durable = tonumber(row.durable_version) == 1 }
 	end
 	return Result.Ok(out)
+end
+
+--- A consented service and its unpaid invoice commit with the delivered item.
+function M.Storage.ServiceStatements(op, record, maximum)
+	return { { query = 'INSERT INTO opx77_invoices ' ..
+		'(state, rev, issuer_cid, issuer_name, target_cid, target_name, company, amount, reason, account_kind, account_key, cut_pct, source, issued_at, expires_at, issue_op) ' ..
+		"SELECT ?, 0, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, op_id FROM opx77_money_ledger " ..
+		'WHERE op_id = ? AND attempt_token = ?', values = { record.state, record.issuerCid, record.issuerName,
+			record.targetCid, record.targetName, nullable(record.company), record.amount, record.reason,
+			nullable(record.account and record.account.kind), nullable(record.account and record.account.key),
+			record.cutPct, record.source, record.issuedAt, record.expiresAt, op.id, op.attempt } } },
+		{ query = "(SELECT COUNT(*) FROM opx77_invoices WHERE target_cid = ? AND state = 'unpaid' FOR UPDATE) < ?",
+			values = { record.targetCid, maximum }, error = 'too_many_unpaid' }
+end
+
+function M.Storage.ByIssue(opId)
+	local found = Storage.Single('SELECT id, state, rev, issuer_cid, issuer_name, target_cid, target_name, company, amount, reason, ' ..
+		'account_kind, account_key, cut_pct, source, paid_with, issued_at, expires_at FROM opx77_invoices WHERE issue_op = @op', { op = opId })
+	if not found.ok then return found end
+	return Result.Ok(found.value and M.Storage.Record(found.value))
 end

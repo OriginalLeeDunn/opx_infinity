@@ -924,16 +924,20 @@ Lizzie's Bar, El Coyote Cojo, Totentanz, a Jig-Jig Street noodle stall -- all at
 
 The loop, all server-side: staff buy **stock** at the supplier into the stash (paid
 from the venue `accounts` treasury when that contract exists, else from the buyer's
-BANK; money first, stock second, refunded if the stash is full) -> **mix** at the
+BANK; payment and stock commit together, with no charge if the stash is full) -> **mix** at the
 counter: a recipe of the venue `MENU` is checked against the stash, a server-timed
 `progress` bar runs, everything is re-checked, the ingredients leave the stash and the
 drink lands in the bartender's bag (on the stash shelf if the bag is full); a cancel
 uses nothing -> **serve**: ALT on a customer, pick a drink they carry from the venue's
 `PRICES`, the platform's two-player `give` with consent; on completion the drink moves
-and the customer is billed through `invoices` (`source = 'bar'`, `cutPct =
+and the customer receives an accepted, unpaid tab through `invoices` (`source = 'bar'`, `cutPct =
 STAFF_CUT_PCT`, the venue `ACCOUNT`) or, without it, charged directly with the
 bartender's cut paid out and the house share deposited to `accounts` (all to the
-bartender without it). The items (the Afterlife's cocktails named after legends,
+bartender without it). The consented handover commits the item and either the unpaid
+invoice or the complete direct-payment split in one transaction. Mixing likewise
+commits stash ingredients and the finished drink together. Job, session and distance
+checks run again after inventory save fences. An uncertain database reply keeps the
+operation pending; it never triggers a refund or a second billing route. The items (the Afterlife's cocktails named after legends,
 Broseph ale, noodles, the stock) are registered at boot; a drink's `THIRST`/`HUNGER`
 become its `use.status`, moved by `needs` when it is used, and its `ALCOHOL` raises a
 server-side drunk level played with `Open77.effects.screen('drunk')` on the drinker.
@@ -1448,10 +1452,12 @@ only when `PHOTO.UPLOAD_URL` is set: `Open77.players.requestScreenshot` (permiss
 `players.screenshot`) has the client POST its own game view there -- the platform never
 carries the bytes over the game transport, so without an external URL a photo is the
 record of a shot. `/story` files a `press_story` (headline, body, words). An editor **desk**
-(ALT) buys every piece of the seller's own byline: pieces leave the bag, then
-`accounts.Withdraw(kind, key, total, reason, opId)` or, with no `accounts`, new money under
-`SALES.MINT_PER_HOUR`, then `AddMoney`; any refusal puts back what moved. Freshness, old
-news (`REPEAT_*`) and a per-seller hourly cap shape the price. Stringers sell to any desk,
+(ALT) buys pieces of the seller's own byline. The exact inventory slots, wallet credit,
+optional newsroom treasury debit and sale history commit together. Without `accounts`,
+new money stays under `SALES.MINT_PER_HOUR`. Hourly caps and repeated-scene history
+persist across restarts; a locked newsroom row serializes concurrent sales before
+checking caps and the quoted scene revision. An uncertain reply remains pending.
+Freshness, old news (`REPEAT_*`) and a per-seller hourly cap shape the price. Stringers sell to any desk,
 staff only to their own newsroom.
 
 **Tips line**: `/tip <text>`, anybody, anonymous to the reporters on duty (the caller is in
@@ -1511,7 +1517,9 @@ resulting balance. Participant writes use both that id and a fresh attempt nonce
 The internal `inventory.AtomicTrade` and `AtomicPeerTrade` contracts couple wallets
 with staged bags, trunks or peer inventories. Currency-note conversions, company
 desk transfers, crafting orders/collection, shard sales, hauling sales, corporate
-item hand-ins, underworld trades and paid clothing use this boundary. Crafting
+item hand-ins, underworld trades, paid clothing, bar stock/mixing/serving, media
+sales and fuel-can purchases/refills use this boundary. Bar company splits and
+accepted service invoices participate in the same transaction as the handover. Crafting
 computes each deadline from the locked SQL queue tail.
 
 A lost database reply returns `money.pending`. The runtime keeps affected wallets

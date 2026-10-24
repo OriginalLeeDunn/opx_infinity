@@ -50,6 +50,13 @@ function M.Economy.Trade(target, moneyType, delta, changes, reason, opId, partic
 			local known = false
 			for _, container in ipairs(involved) do if container == otherBag then known = true end end
 			if not known then involved[#involved + 1] = otherBag end
+		elseif change.stash ~= nil then
+			local stash = M.EconomicStash(change.stash)
+			if not stash.ok then return stash end
+			locations[index] = stash.value
+			local known = false
+			for _, container in ipairs(involved) do if container == stash.value then known = true end end
+			if not known then involved[#involved + 1] = stash.value end
 		elseif change.vehicleId ~= nil then
 			local trunk = M.EconomicTrunk(change.vehicleId, source)
 			if not trunk.ok then return trunk end
@@ -123,23 +130,29 @@ function M.Economy.Trade(target, moneyType, delta, changes, reason, opId, partic
 					end
 				end
 			end
-			local extras, guard
-			if extraBuild then extras, guard = extraBuild(attempt) end
+			local extras, guard, before
+			if extraBuild then extras, guard, before = extraBuild(attempt) end
 			for index = 1, #(extras or {}) do statements[#statements + 1] = extras[index] end
-			return statements, guard
+			return statements, guard, before
 		end
 	end)
 end
 
 --- Trades items between two characters and credits the seller in the same SQL
 --- transaction as the buyer's debit. Reverse items pay an item currency instead.
-function M.Economy.PeerTrade(sellerId, buyerId, moneyType, price, items, reason, opId)
+function M.Economy.PeerTrade(sellerId, buyerId, moneyType, price, items, reason, opId, options)
 	local character = M.Contracts.character
 	if opId ~= nil and (type(opId) ~= 'string' or #opId > 121 or not opId:match('^[%w_:%-%.]+$')) then
 		return Result.Err('money.opIdConflict')
 	end
 	price = type(price) == 'number' and math.tointeger(price)
 	if not price or price < 0 or price > 9007199254740991 or type(items) ~= 'table' or #items > 64 then
+		return Result.Err('bad_request')
+	end
+	options = options or {}
+	if type(options) ~= 'table' then return Result.Err('bad_request') end
+	local credit = options.credit == nil and price or type(options.credit) == 'number' and math.tointeger(options.credit)
+	if not credit or credit < 0 or credit > price or (credit ~= price and type(options.participant) ~= 'function') then
 		return Result.Err('bad_request')
 	end
 	local seller = character.GetPlayerByCitizenId(sellerId)
@@ -153,15 +166,15 @@ function M.Economy.PeerTrade(sellerId, buyerId, moneyType, price, items, reason,
 			local secondary = character.MoneyReceipt(opId .. ':credit')
 			if not secondary.ok or not secondary.value then return Result.Err('money.pending') end
 			local row = secondary.value
-			if row.citizen_id ~= sellerId or row.money_type ~= moneyType or tonumber(row.amount) ~= price
-				or row.action ~= (price > 0 and 'add' or 'touch') or row.reason ~= 'peer-credit:' .. opId then
+			if row.citizen_id ~= sellerId or row.money_type ~= moneyType or tonumber(row.amount) ~= credit
+				or row.action ~= (credit > 0 and 'add' or 'touch') or row.reason ~= 'peer-credit:' .. opId then
 				return Result.Err('money.opIdConflict')
 			end
 			return character.AtomicMoney(buyer, moneyType, price, price > 0 and 'remove' or 'touch', reason, opId)
 		end
 	end
-	if price > 0 and not OPX.Hooks.Trigger('money:beforeAdd', { player = seller, citizenId = sellerId,
-		moneyType = moneyType, amount = price, reason = reason }) then return Result.Err('money.vetoed') end
+	if credit > 0 and not OPX.Hooks.Trigger('money:beforeAdd', { player = seller, citizenId = sellerId,
+		moneyType = moneyType, amount = credit, reason = reason }) then return Result.Err('money.vetoed') end
 	local changes = {}
 	for _, item in ipairs(items) do
 		if type(item) ~= 'table' or type(item.name) ~= 'string' or type(item.count) ~= 'number'
@@ -170,7 +183,24 @@ function M.Economy.PeerTrade(sellerId, buyerId, moneyType, price, items, reason,
 		changes[#changes + 1] = { name = item.name, count = -item.count, metadata = item.metadata, citizenId = from }
 		changes[#changes + 1] = { name = item.name, count = item.count, metadata = item.metadata, citizenId = into }
 	end
-	return M.Economy.Trade(buyer, moneyType, -price, changes, reason, opId, function(op)
-		return character.PreparePeerCredit(op, seller)
+	return M.Economy.Trade(buyer, moneyType, -price, changes, reason, opId, function(op, staged)
+		local creditBuild, why = character.PreparePeerCredit(op, seller, credit)
+		if not creditBuild then return nil, why end
+		local extraBuild
+		if options.participant then
+			extraBuild, why = options.participant(op, staged)
+			if not extraBuild then return nil, why or 'error.unavailable' end
+		end
+		return function(attempt)
+			local statements, guard = creditBuild(attempt)
+			local before
+			if extraBuild then
+				local extra, extraGuard, prefix = extraBuild(attempt)
+				before = prefix
+				for _, statement in ipairs(extra or {}) do statements[#statements + 1] = statement end
+				guard = OPX.Storage.CombineGuards(guard, extraGuard)
+			end
+			return statements, guard, before
+		end
 	end)
 end

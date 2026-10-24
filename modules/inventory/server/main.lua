@@ -456,6 +456,11 @@ local function withStash(name, body, create, absent, options)
 	return body(container, name)
 end
 
+--- Trusted trade access to a named stash; ordinary creator rules still apply.
+function M.EconomicStash(name)
+	return withStash(name, function(container) return Result.Ok(container) end, true)
+end
+
 --- Puts away the stashes loaded by name and idle since. Yields.
 -- @author dop42
 -- @return integer

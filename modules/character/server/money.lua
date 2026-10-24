@@ -203,7 +203,11 @@ end
 
 --- Attaches a second loaded wallet to a buyer's transaction without waiting
 --- while holding the first lock. Opposite trades fail busy instead of deadlock.
-function Money.AttachCredit(op, other)
+function Money.AttachCredit(op, other, creditAmount)
+	creditAmount = creditAmount or op.amount
+	if type(creditAmount) ~= 'number' or not math.tointeger(creditAmount) or creditAmount < 0 or creditAmount > op.amount then
+		return nil, 'money.badAmount'
+	end
 	if type(other) ~= 'table' or not loaded(other) or #op.id > 121 then return nil, 'error.notLoggedIn' end
 	local citizenId = other.PlayerData.citizenId
 	if citizenId == op.citizenId then return nil, 'money.opIdConflict' end
@@ -223,8 +227,8 @@ function Money.AttachCredit(op, other)
 		local receipt = M.Storage.MoneyReceipt(op.id .. ':credit')
 		if not receipt.ok or not receipt.value then return false end
 		local row = receipt.value
-		if row.citizen_id ~= citizenId or row.money_type ~= op.moneyType or tonumber(row.amount) ~= op.amount
-			or row.action ~= (op.amount > 0 and 'add' or 'touch') or row.reason ~= 'peer-credit:' .. op.id then return false end
+		if row.citizen_id ~= citizenId or row.money_type ~= op.moneyType or tonumber(row.amount) ~= creditAmount
+			or row.action ~= (creditAmount > 0 and 'add' or 'touch') or row.reason ~= 'peer-credit:' .. op.id then return false end
 		local balance = M.Storage.Balance(citizenId, op.moneyType)
 		if not balance.ok then return false end
 		peerBalance = balance.value
@@ -236,7 +240,7 @@ function Money.AttachCredit(op, other)
 	end
 	op.publish = function()
 		if oldPublish then oldPublish() end
-		if loaded(other) and op.amount > 0 then M.AnnounceMoney(other, op.moneyType, op.amount, 'add', op.reason) end
+		if loaded(other) and creditAmount > 0 then M.AnnounceMoney(other, op.moneyType, creditAmount, 'add', op.reason) end
 	end
-	return function(attempt) return M.Storage.PeerStatements(attempt, citizenId) end
+	return function(attempt) return M.Storage.PeerStatements(attempt, citizenId, creditAmount) end
 end

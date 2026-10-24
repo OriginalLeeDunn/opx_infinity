@@ -53,6 +53,10 @@ with connection.cursor() as cursor:
 
 def reset(case):
   with connection.cursor() as cursor:
+    cursor.execute('DELETE FROM opx77_media_scenes')
+    cursor.execute('DELETE FROM opx77_media_sales')
+    cursor.execute('DELETE FROM opx77_media_state')
+    cursor.execute('DELETE FROM opx77_invoices')
     cursor.execute('DELETE FROM opx77_underworld_ledger')
     cursor.execute('DELETE FROM opx77_underworld_registers')
     cursor.execute('DELETE FROM opx77_underworld_batches')
@@ -76,6 +80,10 @@ def reset(case):
     if case['notes']:
       cursor.execute("INSERT INTO opx77_inventory_items(inventory_id,slot,name,quantity) VALUES(1,2,'eddies',%s)", (case['notes'],))
 
+    if case.get('media'):
+      cursor.execute("INSERT INTO opx77_inventory_items(inventory_id,slot,name,quantity,metadata) VALUES(1,2,'press_photo',1,%s)", (json.dumps({'by':'ECONTEST'}),))
+    if case.get('mediaStale'):
+      cursor.execute("INSERT INTO opx77_media_sales(op_id,citizen_id,network_key,desk_key,amount,funded,sold_at) VALUES('previous','OTHER','test-network','test-network/desk',10,'mint',UTC_TIMESTAMP())")
     if case.get('underworld') == 'batch':
       cursor.execute("INSERT INTO opx77_inventory_items(inventory_id,slot,name,quantity) VALUES(1,2,'dirty_eddies',100)")
     if case.get('underworld') == 'collect':
@@ -124,7 +132,13 @@ def state():
     batches = cursor.fetchall()
     cursor.execute('SELECT store_id,charges FROM opx77_underworld_registers ORDER BY store_id')
     tills = cursor.fetchall()
-    return balance, notes, receipts, items, company, company_receipts, orders, peer, vehicles, obligations, clothing, minted, batches, tills
+    cursor.execute('SELECT issue_op,state,amount,target_cid FROM opx77_invoices ORDER BY id')
+    invoices = cursor.fetchall()
+    cursor.execute('SELECT op_id,citizen_id,network_key,desk_key,amount,funded FROM opx77_media_sales ORDER BY id')
+    media = cursor.fetchall()
+    cursor.execute('SELECT op_id,scene_no,x,y,z FROM opx77_media_scenes ORDER BY op_id,scene_no')
+    scenes = cursor.fetchall()
+    return balance, notes, receipts, items, company, company_receipts, orders, peer, vehicles, obligations, clothing, minted, batches, tills, invoices, media, scenes
 
 
 def execute(cursor, statement):
@@ -163,6 +177,11 @@ for case in plans['cases']:
     with connection.cursor() as cursor:
       cursor.execute("SELECT balance_after FROM opx77_money_ledger WHERE citizen_id='ECONTEST'")
       assert int(cursor.fetchone()[0]) == committed[0]
+  if case.get('serviceInvoice'):
+    assert len(committed[14]) == 1 and committed[14][0][1:3] == ('unpaid',100)
+  if case.get('media') and not refused:
+    assert len(committed[15]) == 1 and len(committed[16]) == 16
+    assert not any(row[1] == 'press_photo' for row in committed[3])
   if case.get('underworld') == 'mint':
     assert committed[11] == (('robbery:test', 100),) and committed[13] == (('test', 0),)
   elif case.get('underworld') == 'batch':
@@ -174,7 +193,7 @@ for case in plans['cases']:
   if case.get('clothing'):
     assert len(committed[10]) == 1
   if case.get('peer') is not None and not refused:
-    assert committed[7] == case['peer'] + 100 and sum(row[2] for row in committed[3] if row[1] == 'water') == 3
+    assert committed[7] == case['peer'] + case.get('peerCredit', 100) and sum(row[2] for row in committed[3] if row[1] == 'water') == 3
   if case.get('multi'):
     assert sum(row[2] for row in committed[3] if row[1] == 'water') == 2
   if case.get('craft') == 'order':
@@ -318,6 +337,39 @@ for balance, expected in ((500, 508), (9007199254740988, 9007199254740991)):
   assert after[0] == expected and after[2] == expected - balance, ('concurrent credits', balance, after)
   checks += 1
 
+# Two sellers with separate wallets and bags must share the empty-network
+# mutex. Check both server-default RR and READ COMMITTED explicitly.
+for isolation in ('REPEATABLE READ', 'READ COMMITTED'):
+  for purpose, statements in plans['mediaConcurrent'].items():
+    reset(dict(balance=500, notes=0, peer=40))
+    with connection.cursor() as cursor:
+      cursor.execute("INSERT INTO opx77_inventory_items(inventory_id,slot,name,quantity) VALUES(1,2,'press_photo',1),(2,2,'press_photo',1)")
+    def sell_media(plan):
+      for attempt in range(5):
+        writer = pymysql.connect(**settings)
+        try:
+          with writer.cursor() as cursor:
+            cursor.execute('SET SESSION TRANSACTION ISOLATION LEVEL ' + isolation)
+          writer.begin()
+          with writer.cursor() as cursor:
+            for statement in plan:
+              execute(cursor, statement)
+          writer.commit()
+          return
+        except pymysql.OperationalError as failure:
+          writer.rollback()
+          if failure.args[0] != 1213 or attempt == 4:
+            raise
+        finally:
+          writer.close()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+      list(pool.map(sell_media, statements))
+    after = state()
+    assert len(after[15]) == 1 and len(after[16]) == 1, (isolation,purpose,'two stale quotes committed')
+    assert after[0] + after[7] == 640 and after[2] == 1, (isolation,purpose,'cap or wallet split')
+    assert sum(row[2] for row in after[3] if row[1] == 'press_photo') == 1
+    checks += 1
+
 # Each order derives its deadline from the locked SQL tail, even when both
 # application requests were prepared with the same stale shelf snapshot.
 reset(dict(balance=500, notes=0))
@@ -335,7 +387,7 @@ checks += 1
 print(f'InnoDB economy: {checks} crash boundaries, conservation, refusals and receipt replay checks passed ({database})')
 # Only empty the fresh isolated schema; never DROP a database.
 with connection.cursor() as cursor:
-  for table in ('opx77_underworld_ledger', 'opx77_underworld_registers', 'opx77_underworld_batches', 'opx77_dealership_payouts', 'opx77_vehicles', 'opx77_character_clothing', 'opx77_crafting_orders', 'opx77_inventory_items', 'opx77_inventories', 'opx77_money_ledger', 'opx77_company_ledger', 'opx77_company_accounts', 'opx77_characters', 'opx77_users'):
+  for table in ('opx77_media_scenes', 'opx77_media_sales', 'opx77_media_state', 'opx77_invoices', 'opx77_underworld_ledger', 'opx77_underworld_registers', 'opx77_underworld_batches', 'opx77_dealership_payouts', 'opx77_vehicles', 'opx77_character_clothing', 'opx77_crafting_orders', 'opx77_inventory_items', 'opx77_inventories', 'opx77_money_ledger', 'opx77_company_ledger', 'opx77_company_accounts', 'opx77_characters', 'opx77_users'):
     cursor.execute('DELETE FROM ' + table)
 connection.close()
 admin.close()

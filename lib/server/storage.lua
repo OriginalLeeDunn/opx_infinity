@@ -371,3 +371,14 @@ SELECT COUNT(*)
 	Open77.log.info(('[storage] added index %s to %s'):format(indexName, tableName))
 	return Result.Ok(true)
 end
+
+--- Combines trusted participant predicates without moving SQL into consumers.
+function OPX.Storage.CombineGuards(first, second)
+	if not first then return second end
+	if not second then return first end
+	local values = {}
+	for _, value in ipairs(first.values or {}) do values[#values + 1] = value end
+	for _, value in ipairs(second.values or {}) do values[#values + 1] = value end
+	return { query = '(' .. first.query .. ') AND (' .. second.query .. ')', values = values,
+		error = first.error == second.error and first.error or 'error.unavailable' }
+end
