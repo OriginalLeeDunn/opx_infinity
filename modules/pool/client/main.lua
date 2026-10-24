@@ -42,6 +42,7 @@ local function available()
 end
 local function receive(packet)
 	if not spec or not subscribed then return end
+	if type(packet) == 'table' and packet.closed == true then clear(true); return end
 	local oldEpoch = buffer.epoch
 	if B.Push(buffer, packet, OPX.Now()) then
 		lastPacket = OPX.Now()
@@ -130,7 +131,7 @@ function M.Start()
 	target, prompts = OPX.Api.Get('target'), OPX.Api.Get('prompts')
 	if target then target.RegisterSpheres('pool', { { x = spec.x, y = spec.y, z = spec.z, radius = 2 } }, {
 		id = 'practice', label = locale('pool.enter'), icon = 'interact', distance = 3,
-		canInteract = function() return not R.Failed() end,
+		canInteract = function() return not R.Failed() and buffer.state ~= nil and OPX.Now()-lastPacket < 1000 end,
 		onSelect = function() if not R.Failed() then subscribed, lastPacket = true, OPX.Now(); request('enter') end end,
 	}) end
 	RegisterNetEvent(M.Event.STATE, receive)

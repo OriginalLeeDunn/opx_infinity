@@ -66,6 +66,12 @@ control.Advance(1200); control.input.captured=true; M.Client.Input(); M.Client.D
 assert(state.freezeRotation==false,'chat capture kept camera frozen')
 for _,message in ipairs(control.serverEvents) do assert(not(message.name==M.Event.REQUEST and message[1]=='shoot'),'captured release fired shot') end
 control.input.captured=false; control.input.down.mouse1=false; M.Client.Input()
+-- A server scope revocation immediately drops local props, input and seat.
+M.Client.Receive({closed=true})
+assert(next(props)==nil and state.allowShoot==true and state.freezeRotation==false,'scope revoke leaked projection')
+M.Client.Watch()
+local resumed=packet(1,0); resumed.epoch=4; M.Client.Receive(resumed); M.Client.Frame()
+assert(state.allowShoot==false,'practice did not recover after scope resubscribe')
 -- A renderer failure releases the seat and controls and does not silently retry.
 failed=true; M.Client.Watch()
 assert(next(props)==nil and M.Render.Failed() and state.allowShoot==true,'failed model kept objects or controls')

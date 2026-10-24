@@ -88,6 +88,10 @@ M.Init(); M.Start()
 local function request(id,action,data) now=now+200; return M.Server.Request(id,action,data) end
 check(request(7,'enter'),'valid practice entry')
 check(not request(8,'enter'),'second owner accepted')
+check(request(8,'watch'),'spectator subscribe')
+M.Server.Step(); players[8].snapshot.bucket=1; M.Server.Step()
+check(packets[8].closed==true,'bucket change retained spectator projection')
+players[8].snapshot.bucket=0
 M.Server.Step(); local state=packets[7]
 local command={epoch=state.epoch,revision=state.revision,angle=0,power=1}
 check(not request(8,'shoot',command),'nonowner shot accepted')

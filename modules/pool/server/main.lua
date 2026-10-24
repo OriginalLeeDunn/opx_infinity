@@ -11,10 +11,12 @@ local function actor(player)
 	local p = person(player)
 	return p and { player = player, person = p, cid = p.PlayerData.citizenId, session = OPX.Sessions[player] } or nil
 end
+local function sameIdentity(ticket)
+	return ticket and ticket.session and person(ticket.player) == ticket.person
+		and ticket.person.PlayerData.citizenId == ticket.cid and OPX.Sessions[ticket.player] == ticket.session
+end
 local function valid(ticket, reach)
-	if not ticket or not ticket.session or person(ticket.player) ~= ticket.person
-		or ticket.person.PlayerData.citizenId ~= ticket.cid or OPX.Sessions[ticket.player] ~= ticket.session
-		or OPX.Life.Down(ticket.player) then return false end
+	if not sameIdentity(ticket) or OPX.Life.Down(ticket.player) then return false end
 	local snap = Open77.players.get(ticket.player)
 	local at = snap and snap.position
 	return snap and snap.fresh == true and snap.bucket == spec.bucket and type(at) == 'table'
@@ -30,7 +32,11 @@ local function publish(frames)
 	sequence = sequence + 1
 	local state = packet(frames)
 	for player, ticket in pairs(watchers) do
-		if valid(ticket, 18) then TriggerClientEvent(M.Event.STATE, player, state) else watchers[player] = nil end
+		if valid(ticket, 18) then TriggerClientEvent(M.Event.STATE, player, state)
+		else
+			watchers[player] = nil
+			if sameIdentity(ticket) then TriggerClientEvent(M.Event.STATE, player, { closed = true }) end
+		end
 	end
 end
 local function rack()
