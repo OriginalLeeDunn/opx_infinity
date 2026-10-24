@@ -314,17 +314,9 @@ end
 -- ── the cuffs, on the suspect's own client ───────────────────────────────────
 
 local function hold(on)
-	local players = Open77.players
-	if type(players) ~= 'table' then return end
-	for _, name in ipairs(RESTRAINTS) do
-		if type(players[name]) == 'function' then
-			local called, ok, why = pcall(players[name], not on)
-			if on and (not called or ok ~= true) and not restrainNoted then
-				restrainNoted = true
-				OPX.Note('police', ('%s(false) was refused while cuffed: %s'):format(name,
-					tostring(called and why or ok)))
-			end
-		end
+	if not OPX.Controls.Set('police', RESTRAINTS, on) and on and not restrainNoted then
+		restrainNoted = true
+		OPX.Note('police', 'player-control lease refused while cuffed')
 	end
 	local target = OPX.Api.Get('target')
 	if target ~= nil and type(target.SetTargetingEnabled) == 'function' then

@@ -112,6 +112,7 @@ shared_script "config/teleports.lua"
 -- here, and the server re-derives every bound the client thinks it knows.
 shared_script "config/crafting.lua"
 shared_script "config/salvage.lua"
+shared_script "config/pool.lua"
 shared_script "config/citywork.lua"
 -- Shared like the crafting config above it: the client draws the two spheres of
 -- every armoury and reads their positions here, and both halves must refuse the
@@ -264,6 +265,7 @@ client_script "core/client/ui.lua"
 -- slider step, the focus responder and the lifecycle around one open view.
 -- After `ui.lua`, whose focus calls it answers with, and before all three.
 client_script "lib/client/modal.lua"
+client_script "lib/client/controls.lua"
 client_script "core/client/notify.lua"
 
 shared_script "modules/diagnostics/module.lua"
@@ -804,6 +806,17 @@ server_script "modules/crafting/server/main.lua"
 client_script "modules/crafting/client/main.lua"
 
 -- Public recovery feeds the existing crafting and trade material economy.
+-- Original free-practice billiards; tables require surveyed geometry and models.
+shared_script "modules/pool/module.lua"
+shared_script "modules/pool/locales.lua"
+shared_script "modules/pool/shared/model.lua"
+shared_script "modules/pool/shared/playback.lua"
+server_script "modules/pool/server/physics.lua"
+server_script "modules/pool/server/main.lua"
+client_script "modules/pool/client/input.lua"
+client_script "modules/pool/client/render.lua"
+client_script "modules/pool/client/main.lua"
+
 shared_script "modules/salvage/module.lua"
 shared_script "modules/salvage/locales.lua"
 shared_script "modules/salvage/shared/model.lua"

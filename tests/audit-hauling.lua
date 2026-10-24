@@ -3,6 +3,9 @@
 local Host = dofile('tests/host.lua')
 local env, control = Host.Environment('client')
 local writes = {}
+for _, name in ipairs({ 'allowWeapons', 'allowShoot', 'allowAim' }) do
+	env.Open77.players[name] = function() return true end
+end
 env.Open77.players.allowJump = function(allowed)
 	writes[#writes + 1] = allowed
 	return true
