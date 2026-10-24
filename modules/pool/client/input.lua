@@ -15,6 +15,10 @@ function I.Step(state, now, buttons, allowed, captured, delta, sensitivity, seco
 		state.aiming, state.chargedAt, state.power = false, nil, 0
 		return { kind = 'leave' }
 	end
+	if buttons.rack and not old.rack then
+		state.aiming, state.chargedAt, state.power = false, nil, 0
+		return { kind = 'rack' }
+	end
 	if right or (buttons.cancel and not old.cancel) then
 		state.aiming = not buttons.cancel and right and not state.aiming or false
 		state.chargedAt, state.power = nil, 0

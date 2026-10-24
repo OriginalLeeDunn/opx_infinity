@@ -41,7 +41,7 @@ function P.Frame(balls, time)
 	for index, ball in ipairs(balls) do frame.balls[index] = { ball.x, ball.y, ball.alive } end
 	return frame
 end
-function P.Step(balls, spec, dt)
+function P.Step(balls, spec, dt, contact)
 	local remaining, contacts = dt, 0
 	local pockets = { {-spec.halfLength,-spec.halfWidth}, {0,-spec.halfWidth}, {spec.halfLength,-spec.halfWidth},
 		{-spec.halfLength,spec.halfWidth}, {0,spec.halfWidth}, {spec.halfLength,spec.halfWidth} }
@@ -80,9 +80,15 @@ function P.Step(balls, spec, dt)
 			return false
 		end
 		local a = balls[one]
-		if kind == 'pocket' then a.alive, a.vx, a.vy = false, 0, 0
-		elseif kind == 'x' then a.vx = -a.vx * RAIL
-		elseif kind == 'y' then a.vy = -a.vy * RAIL
+		if kind == 'pocket' then
+			if contact then contact('pocket', a.x, a.y, 0.8) end
+			a.alive, a.vx, a.vy = false, 0, 0
+		elseif kind == 'x' then
+			if contact then contact('rail', a.x, a.y, math.abs(a.vx)) end
+			a.vx = -a.vx * RAIL
+		elseif kind == 'y' then
+			if contact then contact('rail', a.x, a.y, math.abs(a.vy)) end
+			a.vy = -a.vy * RAIL
 		else
 			local b = balls[two]
 			local dx, dy = b.x-a.x, b.y-a.y
@@ -90,6 +96,7 @@ function P.Step(balls, spec, dt)
 			local nx, ny = dx / math.max(distance, EPS), dy / math.max(distance, EPS)
 			local relative = (a.vx-b.vx)*nx + (a.vy-b.vy)*ny
 			if relative > 0 then
+				if contact then contact('ball', (a.x+b.x)*0.5, (a.y+b.y)*0.5, relative) end
 				local impulse = relative * (1 + RESTITUTION) * 0.5
 				a.vx, a.vy = a.vx-impulse*nx, a.vy-impulse*ny
 				b.vx, b.vy = b.vx+impulse*nx, b.vy+impulse*ny

@@ -11,7 +11,8 @@ const code = ts.transpileModule(parsed.statements.filter(s => !ts.isImportDeclar
 const channels = new Map(), intervals = new Set()
 let unmount, now = 1000
 const ref = value => ({ value })
-const api = new Function('computed', 'onUnmounted', 'ref', 'num', 'text', 'useBridge', 'setInterval', 'clearInterval', 'Date', `${code}\nreturn {visible,power,percent,rolling}`)(
+const api = new Function('list', 'computed', 'onUnmounted', 'ref', 'num', 'text', 'useBridge', 'setInterval', 'clearInterval', 'Date', `${code}\nreturn {visible,power,percent,rolling,score,duel,status,canShoot}`)(
+  v => Array.isArray(v) ? v : [],
   fn => ({get value() {return fn()}}), fn => {unmount = fn}, ref,
   (v, fallback=0) => typeof v === 'number' && Number.isFinite(v) ? v : fallback,
   (v, fallback='') => typeof v === 'string' ? v : fallback,
@@ -21,6 +22,7 @@ frame({power: 0.42, phase: 'aim'})
 assert.equal(api.visible.value, true);assert.equal(api.percent.value, 42)
 frame({power: Number.NaN});assert.equal(api.power.value, 0)
 frame({power: 7, phase: 'rolling'});assert.equal(api.power.value, 1);assert.equal(api.rolling.value, true)
+frame({score:[3,Number.NaN],duel:true,status:'Your turn',canShoot:true});assert.deepEqual(api.score.value,[3,0]);assert.equal(api.canShoot.value,true);assert.equal(api.duel.value,true)
 channels.get('opx:pool:hide')({});assert.equal(api.visible.value, false)
 frame({power: 0.5});now += 501
 for (const fn of intervals) fn()

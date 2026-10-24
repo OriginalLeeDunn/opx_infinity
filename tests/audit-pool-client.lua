@@ -2,7 +2,7 @@
 local Host = dofile('tests/host.lua')
 local env, control = Host.Environment('client')
 local props, nextId, creates, moves, mouse, state = {}, 0, 0, 0, 0, {}
-local failed, refused = false, nil
+local failed, refused, cameraFov = false, nil, 52
 for _,name in ipairs({'allowShoot','allowAim','allowInteraction','freezeRotation','freezePosition','allowWeapons','allowJump','allowDodge'}) do
 	env.Open77.players[name] = function(value) state[name]=value; return true end
 end
@@ -11,6 +11,7 @@ env.Open77.character.position = function() return 99,10,1 end
 env.Open77.input.axis = function() return mouse end
 env.Open77.props = {
 	create = function(options)
+		assert(options.collision==false and options.physics==false and options.visible==true,'pool visual prop acquired collision/physics')
 		nextId=nextId+1; creates=creates+1
 		local id=tostring(nextId)
 		props[id]={id=id,model=options.model,position=options.position,rendered=true,failed=false,backend='test_host'}
@@ -29,7 +30,7 @@ env.Open77.camera = env.Open77.camera or {}
 env.Open77.camera.create = function(options) cameraCreated=cameraCreated+1; camId=cameraCreated; return camId end
 env.Open77.camera.activate = function(id) if cameraRefused then return false,'camera_held_by:test' end; cameraHeld=true; return true end
 env.Open77.camera.destroy = function(id) cameraDestroyed=cameraDestroyed+1; cameraHeld=false; camId=nil; return true end
-env.Open77.camera.setTransform = function() return true end
+env.Open77.camera.setTransform = function(_, transform) cameraFov=transform.fov; return true end
 env.Open77.camera.lookAt = function() return true end
 env.Open77.camera.cameras = function() return {held=cameraHeld,activeCamera=camId} end
 local guideShown=false
@@ -54,6 +55,10 @@ M.Client.Draw(); M.Client.Input()
 assert(creates==3 and state.allowShoot==false and state.allowAim==false,'practice did not render/hold weapons')
 M.Client.Frame(); M.Client.Guide(); M.Client.Strip()
 assert(cameraHeld and state.freezePosition==true and guideShown,'entry did not arm a camera/guide')
+control.input.down.V=true;control.Advance(20);M.Client.Frame();control.input.down.V=false
+assert(cameraFov==52,'inventory V key switched pool view')
+control.input.down.mouse3=true;control.Advance(20);M.Client.Frame();control.input.down.mouse3=false
+assert(cameraFov>52,'middle click did not switch pool view')
 local function measured(fn)
 	local cost=0
 	debug.sethook(function() cost=cost+100 end,'',100)

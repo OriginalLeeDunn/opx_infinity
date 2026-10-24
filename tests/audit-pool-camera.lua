@@ -20,9 +20,11 @@ local C,G,I=M.Camera,M.Guide,M.Input
 local spec={x=100,y=50,z=10,yaw=90,halfLength=1.4,halfWidth=0.68}
 local balls={{0,0,true},{0.5,0,true},{0.8,0.3,true}}
 local p=C.Pose(spec,balls,0,false,0.5)
-assert(math.abs(p.position.x-100)<1e-9 and math.abs(p.position.y-48.75)<1e-9 and p.position.z==10.5,'cue camera not behind white ball in world frame')
+assert(math.abs(p.position.x-99.86)<1e-9 and math.abs(p.position.y-48.75)<1e-9 and p.position.z==10.5,'cue camera not behind white ball in world frame')
 assert(p.target.y>50 and p.position.z>p.target.z,'cue view does not look down the shot')
+assert(C.Pose(spec,balls,0,true,0.5).position.z==11.65,'overhead camera was not lowered')
 assert(C.Update(spec,balls,0,false,0.5,0) and current==1)
+assert(calls[1][2].thirdPersonBody==true,'scripted view omitted the full body request')
 assert(C.Check())
 for now=16,160,16 do assert(C.Update(spec,balls,0.2,true,0.5,now)) end
 assert(nextId==1,'camera respawned while orbiting')
@@ -36,6 +38,11 @@ assert(not C.Check(),'lost view ownership not detected');C.Clear();assert(curren
 current=nil;assert(C.Update(spec,balls,0,false,0.5,220));failAt='setTransform'
 assert(not C.Update(spec,balls,0,false,0.5,240) and current==nil,'transform failure kept view')
 failAt=nil
+C.Clear()
+local nativeCreate=env.Open77.camera.create
+env.Open77.camera.create=function(options) if options.thirdPersonBody then return nil,'invalid_camera_body' end;return nativeCreate(options) end
+assert(C.Update(spec,balls,0,false,0.5,300),'old client fallback failed')
+C.Clear();env.Open77.camera.create=nativeCreate
 local x,y,d=G.End(spec,balls,0)
 assert(math.abs(d-(0.5-M.Model.RADIUS*2))<1e-9 and y==0,'guide ignores first ball radius')
 balls[2][3]=false;x,y,d=G.End(spec,balls,0)
@@ -49,4 +56,8 @@ local input=I.New();I.Step(input,0,{right=true},true,false,0,1,1)
 I.Step(input,0.1,{precise=true,overview=true},true,false,1,1,1)
 assert(math.abs(input.angle-0.15)<1e-9 and input.overview,'precision/view switch failed')
 I.Step(input,0.2,{overview=true},true,false,0,1,1);assert(input.overview,'held V toggled repeatedly')
+local charged=I.New();I.Step(charged,0,{right=true},true,false,0,1,1)
+I.Step(charged,.1,{left=true},true,false,0,1,1)
+local reset=I.Step(charged,.2,{left=true,rack=true},true,false,0,1,1)
+assert(reset.kind=='rack' and not charged.aiming and charged.chargedAt==nil,'reset while aiming fired or retained charge')
 print('pool camera: world framing, reuse, smoothing, ownership/failure cleanup, first-contact guide; guide budget',cost)

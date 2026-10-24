@@ -44,6 +44,6 @@ function Model.Models()
 		result[name] = path
 	end
 	result.stickYaw = Model.Number(raw.stickYaw, -360, 360) or 0
-	result.stickOffset = Model.Number(raw.stickOffset, -2, 2) or 0.7
+	result.stickOffset = Model.Number(raw.stickOffset, 0.2, 2) or 0.7
 	return result
 end

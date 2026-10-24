@@ -14,6 +14,8 @@ function B.Push(buffer, packet, now)
 		or (packet.phase ~= 'ready' and packet.phase ~= 'rolling')
 		or type(packet.frames) ~= 'table' or #packet.frames < 1 or #packet.frames > 7
 		or packet.epoch < buffer.epoch or (packet.epoch == buffer.epoch and packet.sequence <= buffer.sequence) then return false end
+	local game = packet.game ~= nil and M.Match.Read(packet.game) or nil
+	if packet.game ~= nil and (not game or packet.owner ~= M.Match.Owner(game)) then return false end
 	local previous = packet.epoch == buffer.epoch and buffer.lastTime or nil
 	local frames = {}
 	for _, frame in ipairs(packet.frames) do
@@ -35,7 +37,7 @@ function B.Push(buffer, packet, now)
 	while #buffer.frames > 40 do table.remove(buffer.frames, 1) end
 	local aim = type(packet.aim) == 'table' and packet.aim or {}
 	buffer.state = { owner = packet.owner, phase = packet.phase, revision = packet.revision,
-		readyAt = packet.readyAt, angle = Number(aim.angle, -math.pi*2, math.pi*2) or 0,
+		readyAt = packet.readyAt, game = game, angle = Number(aim.angle, -math.pi*2, math.pi*2) or 0,
 		power = Number(aim.power, 0, 1) or 0, aiming = aim.visible == true }
 	return true
 end

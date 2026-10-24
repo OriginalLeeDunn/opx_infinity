@@ -53,7 +53,7 @@ auto_start true
 -- and puts it on `OPX.Lib`; see that file for why only the client half uses it.
 dependency "opx_lib"
 -- Cooked pool hosts and table cleanup are mounted by the launcher before boot.
-dependency "opx_pool_assets >=0.1.2"
+dependency "opx_pool_assets >=0.2.0"
 
 reload_policy "reconnect"
 
@@ -812,6 +812,7 @@ client_script "modules/crafting/client/main.lua"
 shared_script "modules/pool/module.lua"
 shared_script "modules/pool/locales.lua"
 shared_script "modules/pool/shared/model.lua"
+shared_script "modules/pool/shared/match.lua"
 shared_script "modules/pool/shared/playback.lua"
 server_script "modules/pool/server/physics.lua"
 server_script "modules/pool/server/main.lua"
@@ -819,6 +820,8 @@ client_script "modules/pool/client/input.lua"
 client_script "modules/pool/client/render.lua"
 client_script "modules/pool/client/camera.lua"
 client_script "modules/pool/client/guide.lua"
+client_script "modules/pool/client/audio.lua"
+client_script "modules/pool/client/table.lua"
 client_script "modules/pool/client/main.lua"
 
 shared_script "modules/salvage/module.lua"
