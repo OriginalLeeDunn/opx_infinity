@@ -88,7 +88,8 @@ control.input.down.mouse2=false; control.input.down.mouse1=true; M.Client.Input(
 control.Advance(1200); control.input.captured=true; M.Client.Input(); M.Client.Draw()
 assert(state.freezeRotation==false and state.freezePosition==false and not cameraHeld and not guideShown,'chat capture kept view/guide/body frozen')
 for _,message in ipairs(control.serverEvents) do assert(not(message.name==M.Event.REQUEST and message[1]=='shoot'),'captured release fired shot') end
-control.input.captured=false; control.input.down.mouse1=false; M.Client.Input()
+control.input.captured=false; control.input.down.mouse1=false; M.Client.Frame()
+assert(not cameraHeld and state.freezePosition==false,'closing inventory resumed an interrupted aim')
 -- A server scope revocation immediately drops local props, input and seat.
 M.Client.Receive({closed=true})
 assert(next(props)==nil and state.allowShoot==true and state.freezeRotation==false and not cameraHeld and not guideShown,'scope revoke leaked projection/view')
@@ -121,6 +122,20 @@ M.Client.Receive(settled); M.Client.Frame(); control.Advance(200);M.Client.Frame
 assert(cameraHeld and state.freezePosition==true,'settled shot did not rearm the aiming view')
 control.input.down.BACKSPACE=true; M.Client.Frame();control.input.down.BACKSPACE=false
 assert(not cameraHeld and state.freezePosition==false and not guideShown,'leave failed to release the table view')
+M.Stop()
+-- A mode can be accepted before native focus finishes closing its menu.
+M.Init(); M.Start(); M.Client.Watch(); control.input.captured=true;control.input.down.mouse1=true
+local beforeSelect=#control.serverEvents
+local selected=packet(1,0); selected.epoch=11; M.Client.Receive(selected)
+M.Client.Frame(); M.Client.Frame()
+assert(not cameraHeld,'mode started while the menu still owned native input')
+control.input.captured=false; M.Client.Frame();M.Client.Frame()
+assert(cameraHeld and state.freezePosition==true,'accepted menu choice lost its deferred aim during focus release')
+control.input.down.mouse1=false;M.Client.Frame()
+for index=beforeSelect+1,#control.serverEvents do
+ local message=control.serverEvents[index]
+ assert(not(message.name==M.Event.REQUEST and message[1]=='shoot'),'menu selection click charged or fired the cue')
+end
 M.Stop()
 -- A just-created native entity may not be transformable until streaming ends.
 M.Render.Reset(); failed=false
