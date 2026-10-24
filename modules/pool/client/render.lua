@@ -23,7 +23,7 @@ local function fail(why)
 end
 -- op77.152 registerModel(id, {mesh, visualEntity, physicalEntity?}) returns
 -- an opaque resource-owned model ID. Cooked visual hosts are shipped by assets
--- 0.3.0; a raw .mesh name alone falls back to a marker on this client.
+-- 0.3.1; a raw .mesh name alone falls back to a marker on this client.
 function R.Register()
 	if failure then return false end
 	if registered then return true end
@@ -32,7 +32,7 @@ function R.Register()
 		if type(Open77.props.registerModel) ~= 'function' then return fail('prop model registration requires op77.152 or later') end
 		for number = 1, Model.BALLS-1 do
 			local ok, model, why = pcall(Open77.props.registerModel, 'pool_ball_' .. number, {
-				mesh = models.objects[number], visualEntity = ('opx\\pool\\ball_%02d.ent'):format(number),
+				mesh = models.objects[number], visualEntity = ('open77\\assets\\opx_infinity\\pool\\ball_%02d.ent'):format(number),
 			})
 			if not ok or type(model) ~= 'string' or #model == 0 or #model > 256 or model:find('%c') then
 				return fail('registerModel ball ' .. number .. ': ' .. tostring(ok and (why or model) or model))

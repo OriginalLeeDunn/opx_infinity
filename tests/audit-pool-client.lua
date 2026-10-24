@@ -24,8 +24,9 @@ env.Open77.props = {
   if registrationRefusal then return nil,registrationRefusal end
   assert(id:match('^pool_ball_%d+$') and type(definition)=='table','invalid registration arguments')
   local number=tonumber(id:match('%d+$'))
-  assert(definition.mesh:match('ball_'..string.char(98+number)..'_billiard%.mesh$'),'wrong mesh in registration')
-  assert(definition.visualEntity==('opx\\pool\\ball_%02d.ent'):format(number),'wrong cooked host')
+  local prefix='open77\\assets\\opx_infinity\\pool\\'
+  if definition.mesh~=prefix..('ball_%02d.mesh'):format(number) or definition.visualEntity~=prefix..('ball_%02d.ent'):format(number) then return nil,'invalid_model_paths' end
+  assert(definition.visualEntity==('open77\\assets\\opx_infinity\\pool\\ball_%02d.ent'):format(number),'wrong cooked host')
   assert(definition.physicalEntity==nil,'visual pool ball acquired a physical host')
   local result='opaque-registered-model:'..id
   registrations[id]=definition;registeredModels[result]=true

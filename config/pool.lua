@@ -31,7 +31,7 @@ OPX.Config.MODULES.pool = {
 	MODELS = {
 		cue = 'recreation.tent',
 		object = 'recreation.sleeping_bag', -- retained legacy profile field
-		-- Object balls register fifteen cooked hosts from opx_pool_assets >=0.3.0.
+		-- Object balls register fifteen cooked hosts from opx_pool_assets >=0.3.1.
 		-- Optional objects = { ... } must name fifteen distinct registered model IDs.
 		stick = 'recreation.gym_equipment',
 		-- Host-specific heading/pivot calibration, in degrees/metres.

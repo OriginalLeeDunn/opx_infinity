@@ -154,7 +154,7 @@ check(Model.Table()==nil,'unverified preset enabled by default')
 local mapped=Model.Models()
 check(#mapped.objects==15,'missing object ball models')
 local distinct={}
-for _,path in ipairs(mapped.objects) do check(not distinct[path] and path:match('ball_[c-q]_billiard%.mesh$'),'duplicate/non-billiard model');distinct[path]=true end
+for _,path in ipairs(mapped.objects) do check(not distinct[path] and path:match('^open77\\assets\\opx_infinity\\pool\\ball_%d%d%.mesh$'),'duplicate/non-billiard model');distinct[path]=true end
 check(mapped.cue=='recreation.tent' and mapped.object=='recreation.sleeping_bag' and mapped.stick=='recreation.gym_equipment','asset profile mapping mismatch')
 local count=0
 for key in pairs(config.PRESETS) do
