@@ -1016,6 +1016,9 @@ permissions {
   "world.environment",
 
   "world.props",
+  -- The pool registers resource-owned cooked visual hosts on op77.152.
+  -- Model registration is separate from permission to create/render props.
+  "props.register",
 
   -- The hauling sellers: one server-owned NPC per drop-off, ALT then sell.
   -- `open77_permissions world.npcs`: enforced by the server, gates

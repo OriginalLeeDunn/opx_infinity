@@ -11,9 +11,14 @@ It came from the signed core manifest; no modified client executable is shipped.
 
 The Lua `Open77.props.registerModel` binding is registered at VA `0x180792657`
 and implemented at VA `0x180759398` (preferred image base `0x180000000`). The
-binding checks `world.props`, accepts exactly two arguments (string ID, table),
+binding checks `props.register`, accepts exactly two arguments (string ID, table),
 and accepts only the string fields `mesh`, `visualEntity`, `physicalEntity`.
-The latter is optional; the mesh and visual entity must be depot `.mesh` and
+The manifest must declare `props.register` in addition to `world.props` for
+rendering: a deployed client without it returned
+`permission_denied:props.register` and stopped pool initialization before creating
+the target interaction or any ball props.
+
+`physicalEntity` is optional; the mesh and visual entity must be depot `.mesh` and
 `.ent` paths. It returns an opaque resource-owned model ID string on success,
 or nil and a refusal such as `invalid_model_arguments`, `invalid_model_fields`,
 `invalid_model_paths` or `model_registration_conflict`. Infinity uses the returned

@@ -9,9 +9,18 @@ end
 env.Open77.players.localId = function() return 7 end
 env.Open77.character.position = function() return 99,10,1 end
 env.Open77.input.axis = function() return mouse end
+local permissions={}
+local manifest=assert(io.open('open77.lua','r'));local text=manifest:read('a');manifest:close()
+for block in text:gmatch('permissions%s*(%b{})') do
+ for line in block:gmatch('[^\n]+') do
+  local permission=line:match('^%s*"([^"]+)"')
+  if permission then permissions[permission]=true end
+ end
+end
 local registrations, registeredModels, registrationRefusal = {}, {}, nil
 env.Open77.props = {
  registerModel = function(id, definition)
+  if not permissions['props.register'] then return nil,'permission_denied:props.register' end
   if registrationRefusal then return nil,registrationRefusal end
   assert(id:match('^pool_ball_%d+$') and type(definition)=='table','invalid registration arguments')
   local number=tonumber(id:match('%d+$'))
@@ -59,6 +68,7 @@ control.Fire('onClientResourceStart','opx_infinity'); control.Pump(320)
 local O=env.OPX
 local M=O.Modules.Get('pool')
 assert(O.Modules.IsRunning('pool'),'enabled prototype failed to boot')
+assert(not M.Render.Failed(),'pool initialization refused; check manifest registration permission')
 O.Modules.Get('character').PlayerData={citizenId='POOL_TEST'}
 M.Client.Watch()
 local now=O.Now()
