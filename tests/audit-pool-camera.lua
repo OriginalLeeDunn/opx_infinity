@@ -15,7 +15,7 @@ end
 local geometry, cleared
 function env.Open77.debugDraw.set(_,g) geometry=g;return true end
 function env.Open77.debugDraw.clear() cleared=true;geometry=nil;return true end
-for _,file in ipairs({'shared/model','client/camera','client/guide','client/input'}) do assert(loadfile('modules/pool/'..file..'.lua','t',env))() end
+for _,file in ipairs({'shared/model','shared/assistance','client/camera','client/prediction','client/guide','client/input'}) do assert(loadfile('modules/pool/'..file..'.lua','t',env))() end
 local C,G,I=M.Camera,M.Guide,M.Input
 local spec={x=100,y=50,z=10,yaw=90,halfLength=1.4,halfWidth=0.68}
 local balls={{0,0,true},{0.5,0,true},{0.8,0.3,true}}

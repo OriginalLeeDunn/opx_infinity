@@ -1,4 +1,4 @@
---- A bounded straight aiming aid, ending at the first ball or cushion.
+--- Resource-owned optical preview; finite geometry with a short native expiry.
 -- @author dop42
 local M = OPX.Modules.Get('pool')
 local Model = M.Model
@@ -9,49 +9,30 @@ function G.Clear()
 	if shown then Open77.debugDraw.clear('pool.aim'); shown = false end
 end
 function G.Reset() G.Clear(); refused, last = false, -math.huge end
-function G.End(spec, points, angle)
-	local x, y, c, s = points[1][1], points[1][2], math.cos(angle), math.sin(angle)
-	local length = 6
-	local r = Model.RADIUS
-	if math.abs(c) > 1e-6 then length = math.min(length, ((c > 0 and spec.halfLength-r or -spec.halfLength+r)-x)/c) end
-	if math.abs(s) > 1e-6 then length = math.min(length, ((s > 0 and spec.halfWidth-r or -spec.halfWidth+r)-y)/s) end
-	for index = 2, Model.BALLS do
-		local ball = points[index]
-		if ball[3] then
-			local dx, dy = ball[1]-x, ball[2]-y
-			local ahead, side = dx*c+dy*s, dx*s-dy*c
-			if ahead > 0 and math.abs(side) < r*2 then
-				local touch = ahead-math.sqrt(math.max(0, r*r*4-side*side))
-				if touch >= 0 then length = math.min(length, touch) end
-			end
+function G.End(spec, points, angle) return M.Prediction.End(spec,points,angle) end
+function G.Draw(spec, points, angle, now, profile, power)
+	profile = profile or M.Assistance.Profile(M.Assistance.Read(), 1)
+	if profile.level == 0 then G.Clear(); return end
+	if refused or now-last < 100 then return end
+	last = now
+	local paths, contact = M.Prediction.Trace(spec, points, angle, power, profile)
+	local lines = {}
+	local c, s = math.cos(math.rad(spec.yaw)), math.sin(math.rad(spec.yaw))
+	local function point(x, y)
+		return { x=spec.x+x*c-y*s, y=spec.y+x*s+y*c, z=spec.z-Model.RADIUS+0.003 }
+	end
+	for _, path in ipairs(paths) do
+		lines[#lines+1] = { a=point(path[1],path[2]), b=point(path[3],path[4]), color=path[5] }
+	end
+	if contact then
+		for index = 0, 7 do
+			local a, b = index*math.pi/4, (index+1)*math.pi/4
+			lines[#lines+1] = { a=point(contact[1]+math.cos(a)*Model.RADIUS,contact[2]+math.sin(a)*Model.RADIUS),
+				b=point(contact[1]+math.cos(b)*Model.RADIUS,contact[2]+math.sin(b)*Model.RADIUS), color='#ADEFFFCC' }
 		end
 	end
-	length = math.max(0, length)
-	return x+c*length, y+s*length, length
-end
-function G.Draw(spec, points, angle, now)
-	if refused or now-last < 50 then return end
-	last = now
-	local x, y, length = G.End(spec, points, angle)
-	local ball = points[1]
-	local lines = {}
-	local function point(px, py)
-		local p = Model.World(spec, px, py); p.z = p.z-Model.RADIUS+0.003; return p
-	end
-	local count = math.min(12, math.max(1, math.ceil(length/0.08)))
-	for index = 0, count-1 do
-		local a, b = index/count, math.min(1, (index+0.55)/count)
-		lines[#lines+1] = { a = point(ball[1]+(x-ball[1])*a, ball[2]+(y-ball[2])*a),
-			b = point(ball[1]+(x-ball[1])*b, ball[2]+(y-ball[2])*b), color = '#ADEFFFC0' }
-	end
-	for index = 0, 7 do
-		local a, b = index*math.pi/4, (index+1)*math.pi/4
-		lines[#lines+1] = { a = point(x+math.cos(a)*Model.RADIUS, y+math.sin(a)*Model.RADIUS),
-			b = point(x+math.cos(b)*Model.RADIUS, y+math.sin(b)*Model.RADIUS), color = '#ADEFFFCC' }
-	end
-	local ok, why = Open77.debugDraw.set('pool.aim', { lines = lines, ttl = 0.2, maxDistance = 8, thickness = 1.5 })
-	if not ok then
-		refused = true; G.Clear(); OPX.Note('pool', 'aim guide unavailable: ' .. tostring(why)); return
-	end
+	if #lines == 0 then G.Clear(); return end
+	local ok, why = Open77.debugDraw.set('pool.aim', { lines=lines, ttl=0.2, maxDistance=8, thickness=1.5 })
+	if not ok then refused=true; G.Clear(); OPX.Note('pool', 'aim guide unavailable: '..tostring(why)); return end
 	shown = true
 end

@@ -81,7 +81,7 @@ local function wireBalls()
  return result
 end
 local function packet(seq,time,owner)
-	return {epoch=1,sequence=seq,revision=1,owner=owner or 7,phase='ready',readyAt=0,
+	return {epoch=1,sequence=seq,revision=1,owner=owner or 7,assistance=3,phase='ready',readyAt=0,
 		frames={{time=time,balls=wireBalls()}}}
 end
 M.Client.Receive(packet(1,0))
@@ -199,6 +199,18 @@ assert(choice and choice.mode=='practice','actual menu did not send create')
 local accepted=packet(2,50);accepted.epoch=13;accepted.game=M.Match.New(choice.mode,7)
 M.Client.Receive(accepted);M.Client.Frame();M.Client.Frame()
 assert(cameraHeld,'real menu selection failed to arm camera')
+M.Stop()
+-- Only a valid local server grant draws the optical preview, with immediate clearing.
+M.Stop();M.Init();M.Start();M.Client.Watch()
+local optics=packet(1,0);optics.epoch=30;optics.assistance=0
+M.Client.Receive(optics);M.Client.Frame();M.Client.Guide()
+assert(not guideShown,'no-implant character received an optical preview')
+optics=packet(2,50);optics.epoch=30;optics.assistance=3
+M.Client.Receive(optics);M.Client.Frame();M.Client.Guide()
+assert(guideShown,'valid optical grant did not draw preview')
+optics=packet(3,100);optics.epoch=30;optics.assistance=0
+M.Client.Receive(optics)
+assert(not guideShown,'revoked optics left their preview visible')
 M.Stop()
 -- Registration of all fifteen hosts stays inside one client resume.
 M.Stop();M.Init();worst=math.max(worst,measured(M.Start,8000));M.Stop()

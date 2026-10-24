@@ -25,7 +25,17 @@ OPX.Config.MODULES.pool = {
 	SOLO_SHOTS = 10,
 	DUEL_TARGET = 5,
 	AUDIO_VOLUME = 0.65, -- 0 mutes the recorded table contacts
-	AIM_GUIDE = true, -- straight line to the first ball/cushion; no bounce prediction
+	AIM_GUIDE = true, -- master switch for the optical trajectory overlay
+	TRAJECTORY = {
+		ENABLED = true,
+		BASE_LEVEL = 0, -- 0: optics required; 1..3: minimum assistance for everyone
+		MIN_CONDITION = 1, -- installed implants at 0 condition do not grant a preview
+		MAX_BOUNCES = 2, MAX_DISTANCE = 4.5,
+		ANGLE_STEP = 0.005, POWER_STEP = 0.05, DEFAULT_POWER = 0.5,
+		IMPLANTS = {
+			kiroshi_optics = { SLOT = 'eyes', TIERS = { [1] = 1, [2] = 2, [3] = 3 } },
+		},
+	},
 	-- opx_pool_assets reserves these three native recreation aliases globally.
 	-- Do not use them as tents, sleeping bags or gym equipment on this world.
 	MODELS = {

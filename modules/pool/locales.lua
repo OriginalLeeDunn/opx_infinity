@@ -2,6 +2,9 @@
 -- @author dop42
 local M = OPX.Modules.Get('pool')
 local EN = {
+	['pool.preview1'] = 'Optical impact estimate',
+	['pool.preview2'] = 'Optical trajectory estimate',
+	['pool.preview3'] = 'Optical rebound estimate',
 	['pool.enter'] = 'Play pool',
 	['pool.aim'] = 'Aim / cancel',
 	['pool.charge'] = 'Hold to charge, release to shoot',
@@ -69,6 +72,9 @@ local EN = {
 	['pool.sessionEnded'] = "The table is available for a new session.",
 }
 local FR = {
+	['pool.preview1'] = 'Impact estimé par les optiques',
+	['pool.preview2'] = 'Trajectoires estimées par les optiques',
+	['pool.preview3'] = 'Rebonds estimés par les optiques',
 	['pool.enter'] = 'Jouer au billard',
 	['pool.aim'] = 'Viser / annuler',
 	['pool.charge'] = 'Maintenir pour doser, relâcher pour tirer',

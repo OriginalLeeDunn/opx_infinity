@@ -1037,9 +1037,39 @@ refusal, it retries once without that optional field and logs the legacy fallbac
 Destroying only the owned camera restores the native presentation. Actual local
 head/hair rendering and framing still require a live client check.
 
-The straight aiming guide stops at the first ball or cushion and shows a contact
-ring, without predicting rebounds. `AIM_GUIDE = false` hides it. `SENSITIVITY`
-defaults to `0.0018`, `CHARGE_SECONDS` to `1.8`. Real CC0 cue, ball and pocket
+The optical trajectory preview is configured under `TRAJECTORY` in
+`config/pool.lua`. `AIM_GUIDE = false` or `TRAJECTORY.ENABLED = false` disables it.
+By default `BASE_LEVEL = 0`: no implant means no overlay. Installed
+`kiroshi_optics` in the `eyes` slot grants level 1/2/3 for implant tier 1/2/3:
+
+- Level 1: the incoming line and first-impact ring, up to 1.5 m.
+- Level 2: incoming guidance plus separate estimated paths for the white ball
+  (cyan) and the first object ball (amber), up to 3 m per traced path.
+- Level 3: outgoing paths and cushion rebounds, subject to `MAX_BOUNCES` (0–2)
+  and `MAX_DISTANCE` (0.5–6 m; default 4.5 m).
+
+`IMPLANTS` maps a ripperdoc chrome ID to `SLOT` and a `TIERS` map from installed
+implant tier (1–5) to assistance level (0–3). Change it to support other optics.
+`MIN_CONDITION` defaults to 1: broken or unknown-condition implants grant no bonus.
+`BASE_LEVEL` can provide a minimum level without chrome if the operator wants one.
+The server reads the same installed `cyberware` metadata as ripperdoc, not inventory
+items or a level sent by the client. Only the current shooter receives their own
+numeric grant; no implant records are added to pool packets. The server refreshes
+it at least on each watch and once per second during a turn, so removal/tier changes
+do not depend on a client's cooperation. Character/session changes still clear the
+entire pool view. Missing or malformed grants disable preview without dropping
+ball playback, and revocation immediately clears existing lines when received.
+
+The HUD identifies the preview as an estimate. Its path responds to direction and
+charge power; before charging it uses `DEFAULT_POWER` (default 0.5). `ANGLE_STEP`
+(default 0.005 radians, coarser at lower levels) and `POWER_STEP` (default 0.05)
+quantize the estimate for a stable, deliberately approximate readout. It models
+stationary balls, drag, the first transfer of momentum and cushion losses. It
+stops at pockets or the next object collision, and does not promise multi-ball
+chains, spin or an exact final resting position. No preview modifies the real
+balls, scores, turns or server shot validation.
+
+`SENSITIVITY` defaults to `0.0018`, `CHARGE_SECONDS` to `1.8`. Real CC0 cue, ball and pocket
 recordings are delivered as PCM WAV by the asset resource; rails reuse the ball
 clip at lower gain. `AUDIO_VOLUME` (0–1, default 0.65) sets loudness, zero mutes.
 Server contacts carry bounded IDs/times; client audio follows the same 100 ms
@@ -1049,7 +1079,7 @@ client exports; that resource owns at most eight spatial voices. See its NOTICE
 and audio/sources.json for original recordings, CC0 links, exact hashes and edits.
 
 The camera needs `camera.script`; the bounded aiming guide uses `world.debug`.
-Its camera/prop work runs per frame; guide geometry is capped at 20 lines and
+Its camera/prop work runs per frame; preview geometry is capped at 20 lines and
 refreshed every 100 ms with a 200 ms native expiry. The power overlay consumes no
 pointer or keyboard and expires stale readings after 500 ms. These are client
 presentation features, not new permissions to decide shots or outcomes.
