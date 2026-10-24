@@ -8,6 +8,8 @@
 -- published and logged.
 
 local EN = {
+	['clothing.stale'] = 'Your outfit changed while this save was being processed. Try again.',
+	['clothing.unpaid'] = 'This outfit cannot be purchased right now. If this seems wrong, contact an administrator.',
 	['clothing.invalid'] = 'Those clothes could not be read as an outfit.',
 	['clothing.tooLarge'] = 'That outfit is too large to save.',
 	['clothing.unreadable'] = 'The saved clothes could not be read.',
@@ -109,6 +111,8 @@ local EN = {
 }
 
 local FR = {
+	['clothing.stale'] = 'Ta tenue a changé pendant cet enregistrement. Réessaie.',
+	['clothing.unpaid'] = "Cette tenue ne peut pas être achetée pour le moment. Si cela te semble être une erreur, contacte un administrateur.",
 	['clothing.invalid'] = "Ces vêtements n'ont pas pu être lus comme une tenue.",
 	['clothing.tooLarge'] = 'Cette tenue est trop volumineuse pour être enregistrée.',
 	['clothing.unreadable'] = "Les vêtements enregistrés n'ont pas pu être lus.",

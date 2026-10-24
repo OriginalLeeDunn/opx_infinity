@@ -277,8 +277,7 @@ end
 --- The charge a shop's fitting room puts on the save that leaves it.
 --
 -- Called by `appearance` with the slots IT computed, before the record is
--- written. Answers true -- with the undo that refunds it, should the write then
--- fail -- or false and `clothing.unpaid`, which refuses the save.
+-- written. Returns a price quote; appearance commits it with the outfit.
 local function chargeFor(shop)
 	return function(source, slots)
 		if not tuning.charge then return true end
@@ -286,21 +285,11 @@ local function chargeFor(shop)
 		if total <= 0 then return true end
 		local citizen = citizenOf(source)
 		if citizen == nil then return false, 'clothing.unpaid' end
-		local reason = ('clothing at %s'):format(shop.label)
-		local paid, refused = character.RemoveMoney(source, tuning.currency, total, reason)
-		if not paid then
-			refuse(source, unpaidKey(refused),
-				{ total = OPX.Locale.Money(total, tuning.currency) })
-			return false, 'clothing.unpaid'
-		end
-		OPX.NotifyLocale(source, 'shops.paid',
-			{ total = OPX.Locale.Money(total, tuning.currency), shop = shop.label }, 'success')
-		return true, nil, function()
-			local refunded = character.AddMoneyOffline(citizen, tuning.currency, total, 'refund: ' .. reason)
-			if type(refunded) ~= 'table' or not refunded.ok then
-				Open77.log.error(('[shops] %d %s could not be refunded to %s'):format(total, tuning.currency, citizen))
-			end
-		end
+
+		return true, nil, { moneyType = tuning.currency, amount = total, publish = function()
+			OPX.NotifyLocale(source, 'shops.paid',
+				{ total = OPX.Locale.Money(total, tuning.currency), shop = shop.label }, 'success')
+		end }
 	end
 end
 
@@ -403,20 +392,11 @@ local function onWear(source, payload)
 		bill = function(payer)
 			local citizen = citizenOf(payer)
 			if citizen == nil then return false, 'clothing.unpaid' end
-			local reason = ('%s at %s'):format(look.label, shop.label)
-			local paid, refused = character.RemoveMoney(payer, tuning.currency, look.cost, reason)
-			if not paid then
-				refuse(payer, unpaidKey(refused), { total = OPX.Locale.Money(look.cost, tuning.currency) })
-				return false, 'clothing.unpaid'
-			end
-			OPX.NotifyLocale(payer, 'shops.paid',
-				{ total = OPX.Locale.Money(look.cost, tuning.currency), shop = shop.label }, 'success')
-			return true, nil, function()
-				local refunded = character.AddMoneyOffline(citizen, tuning.currency, look.cost, 'refund: ' .. reason)
-				if type(refunded) ~= 'table' or not refunded.ok then
-					Open77.log.error(('[shops] %d %s could not be refunded to %s'):format(look.cost, tuning.currency, citizen))
-				end
-			end
+
+			return true, nil, { moneyType = tuning.currency, amount = look.cost, publish = function()
+				OPX.NotifyLocale(payer, 'shops.paid',
+					{ total = OPX.Locale.Money(look.cost, tuning.currency), shop = shop.label }, 'success')
+			end }
 		end
 	end
 

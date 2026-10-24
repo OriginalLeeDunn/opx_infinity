@@ -23,6 +23,20 @@ end
 
 local function section(name) print(('\n== %s'):format(name)) end
 
+function Host.SetMoney(env, player, moneyType, value)
+	dofile('tests/money-store.lua').Set(env, player, moneyType, value)
+end
+
+function Host.StandCharacter(env, control, source, citizenId, money)
+	local character = env.OPX.Modules.Get('character')
+	local account = control.accounts[source] or ('account-' .. source)
+	control.Admit(source, account)
+	local player = character.CreatePlayer({ source = source, citizenId = citizenId, userId = account,
+		charInfo = { firstName = 'Test', lastName = 'Character' }, money = money or { EDDIES = 500, BANK = 0 } }, false)
+	character.RegisterPlayer(player)
+	return player
+end
+
 --- Public image names and checksums; the actual pictures live in opx_images.
 function Host.ImageCatalogue()
 	local names = {}
@@ -72,6 +86,8 @@ local function boot(side, database, prelude, loaded)
 		-- The budget meter, when asked for, counts each scheduler job by name.
 		if file == 'core/client/scheduler.lua' then Host.MeterJobs(env.OPX.Scheduler) end
 	end
+
+	if side == 'server' then dofile('tests/money-store.lua').Install(env, database) end
 
 	-- The host always raises this for a starting resource, and the client half
 	-- does all its wiring from it. A helper that skipped it would be testing a
@@ -8156,8 +8172,16 @@ do
 	-- a fixture's.
 	local function bridge(rows, vehiclesWritten, dealersWritten, previewsWritten, accounts, ledger)
 		ledger = ledger or { rows = {}, nextId = 0 }
-		return Host.Database({
-			scalar = function() return 1 end,
+		ledger.sales, ledger.companyReceipts = {}, {}
+		local database = Host.Database({
+			scalar = function(sql, params)
+				if sql:find('opx77_dealership_payouts', 1, true) then
+					local count = 0
+					for _, row in ipairs(ledger.sales) do if row.op_id == params.id and not row.paid then count = count + 1 end end
+					return count
+				end
+				return 1
+			end,
 			-- THE LEDGER OF OWED DEPOSITS, settled the way the real one is: the
 			-- deposit and the strike-off commit together or not at all.
 			-- `ledger.down` is a database that refuses the company account.
@@ -8166,6 +8190,34 @@ do
 			-- of the ledger row named by id or token, so a settlement of a row that
 			-- is gone pays nothing. `ledger.settled` counts the ones that paid.
 			transaction = function(statements)
+                if statements[1].query:find('INSERT INTO opx77_money_ledger', 1, true) then
+                    if ledger.pendDown then return false, 'sale obligation unavailable' end
+                    for _, statement in ipairs(statements) do
+                        local q, v = statement.query, statement.values
+                        if q:find('INSERT INTO opx77_vehicles', 1, true) then
+                            local row = { plate = v[1], citizen_id = v[2], record = v[3], appearance = v[4],
+                                garage = v[5], state = v[6], health = v[7], body = v[8], paint = v[9], metadata = v[10], purchase_op = v[11] }
+                            rows[#rows + 1] = row
+                            vehiclesWritten[#vehiclesWritten + 1] = { plate = v[1], citizen = v[2], record = v[3], garage = v[5] }
+                        elseif q:find('INSERT INTO opx77_dealership_payouts', 1, true) then
+                            ledger.sales[#ledger.sales + 1] = { phase = v[1], citizen_id = v[2], kind = v[3], group_key = v[4],
+                                money_type = v[5], amount = v[6], plate = v[7], op_id = v[8] }
+                        end
+                    end
+                    return true
+                end
+                if statements[1].query:find('INSERT INTO opx77_company_ledger', 1, true) then
+                    if ledger.down then return false, 'down' end
+                    local v = statements[1].values
+                    if not ledger.companyReceipts[v[1]] then
+                        local key = v[2] .. ':' .. v[3]
+                        accounts[key] = (accounts[key] or 0) + v[4]
+                        ledger.companyReceipts[v[1]] = { kind = v[2], group_key = v[3], delta = v[4],
+                            balance_after = accounts[key], attempt_token = v[7] }
+                    end
+                    if ledger.loseAnswer then ledger.loseAnswer = nil; return false, 'connection reset' end
+                    return true
+                end
 				if ledger.down then return false, 'down' end
 				local strike = statements[#statements]
 				local byToken = strike.query:find('token = ?', 1, true) ~= nil
@@ -8186,6 +8238,13 @@ do
 				return true
 			end,
 			update = function(sql, params)
+				params = params or {}
+                if sql:find('SET paid = 1', 1, true) then
+                    for _, row in ipairs(ledger.sales) do
+                        if row.op_id == params.id and row.phase == params.phase then row.paid = true end
+                    end
+                    return 1
+                end
 				if sql:find('opx77_company_pending', 1, true) then
 					if ledger.pendDown then error('the ledger is down too', 0) end
 					for index = 1, #ledger.rows do
@@ -8237,6 +8296,11 @@ do
 				return 0
 			end,
 			query = function(sql, params)
+                if sql:find('opx77_dealership_payouts', 1, true) then
+                    local pending = {}
+                    for _, row in ipairs(ledger.sales) do if not row.paid then pending[#pending + 1] = row end end
+                    return pending
+                end
 				if sql:find('opx77_company_pending', 1, true) then
 					local copy = {}
 					for index = 1, #ledger.rows do copy[index] = ledger.rows[index] end
@@ -8260,6 +8324,11 @@ do
 			-- `*`, which matches "COUNT*" and never "COUNT(*)", so the ceiling
 			-- would answer zero for every character.
 			single = function(sql, params)
+                if sql:find('opx77_company_ledger', 1, true) then return ledger.companyReceipts[params.op] end
+                if sql:find('purchase_op = @id', 1, true) then
+                    for _, row in ipairs(rows) do if row.purchase_op == params.id then return row end end
+                    return nil
+                end
 				if sql:find('COUNT(*)', 1, true) ~= nil then return { total = #rows } end
 				if sql:find('opx77_company_accounts', 1, true) then
 					local key = tostring(params.kind) .. ':' .. tostring(params.group)
@@ -8275,6 +8344,15 @@ do
 				return nil
 			end,
 		})
+        database.unitMoneyGuard = function(guard)
+            if guard.query:find('opx77_vehicles', 1, true) then
+                local count = 0
+                for _, row in ipairs(rows) do if row.citizen_id == guard.values[1] then count = count + 1 end end
+                return count < guard.values[2]
+            end
+            return true
+        end
+        return database
 	end
 
 	local rows, vehiclesWritten, dealersWritten = {}, {}, {}
@@ -8638,7 +8716,7 @@ do
 		check('a connection with no character cannot buy',
 			contract.Buy(999, 'yard', 'hella', nil).error == 'dealership.noCharacter')
 		local written = #vehiclesWritten
-		character.Players[src].PlayerData.money.EDDIES = 10
+		Host.SetMoney(env, character.Players[src], 'EDDIES', 10)
 		check('a purchase beyond the balance is refused before anything is charged',
 			refused('yard', 'hella') == 'dealership.cannotAfford')
 		check('and nothing was registered for any of those refusals',
@@ -8646,7 +8724,7 @@ do
 
 		-- ── the purchase ───────────────────────────────────────────────────
 		local hella = Access.Entry('hella')
-		character.Players[src].PlayerData.money.EDDIES = 2000000
+		Host.SetMoney(env, character.Players[src], 'EDDIES', 2000000)
 		local balance = character.Players[src].PlayerData.money.EDDIES
 		-- THE PUBLIC BUS, heard the way another resource hears it: a bare
 		-- handler on the server name. See `core/server/publish.lua`.
@@ -8695,7 +8773,7 @@ do
 		-- The two extra rows this costs are taken back afterwards: the ceiling is
 		-- a count, and the sales further down are sized against it.
 		local rowsBefore = #rows
-		character.Players[src].PlayerData.money.EDDIES = 2000000
+		Host.SetMoney(env, character.Players[src], 'EDDIES', 2000000)
 		local beside = contract.Buy(src, 'yard', 'hella', nil)
 		local second = control.vehicleCreates[#control.vehicleCreates]
 		local gap = second and math.sqrt((second.position.x - 1.0) ^ 2 + (second.position.y - 1.0) ^ 2)
@@ -8712,7 +8790,7 @@ do
 				position = { x = 1.0, y = 1.0 + step * 4.5, z = 5.0 }, yaw = 0.0, bucket = 0 })
 		end
 		local createdBefore = #control.vehicleCreates
-		character.Players[src].PlayerData.money.EDDIES = 2000000
+		Host.SetMoney(env, character.Players[src], 'EDDIES', 2000000)
 		local waiting = contract.Buy(src, 'yard', 'hella', nil)
 		check('with every spot taken the sale still stands, and no car is created inside another',
 			waiting.ok == true and waiting.value.spawned == false
@@ -8760,7 +8838,7 @@ do
 
 		-- ── an AV, which is lifted off the pad it stands on ────────────────
 		local manticore = Access.Entry('manticore')
-		character.Players[src].PlayerData.money.EDDIES = 2000000
+		Host.SetMoney(env, character.Players[src], 'EDDIES', 2000000)
 		local avBuy = contract.Buy(src, 'pad', 'manticore', nil)
 		check('an AV is sold at a pad', avBuy.ok == true, avBuy and tostring(avBuy.error))
 		handOver = control.vehicleCreates[#control.vehicleCreates]
@@ -8786,7 +8864,7 @@ do
 		vehicleConfig.PER_CHARACTER = 1
 		local warnMark = #control.log.warn
 		balance = 500000
-		character.Players[src].PlayerData.money.EDDIES = balance
+		Host.SetMoney(env, character.Players[src], 'EDDIES', balance)
 		written = #vehiclesWritten
 		local unpaid = contract.Buy(src, 'yard', 'hella', nil)
 		check('a registration the ownership half refuses is refused to the buyer',
@@ -8795,9 +8873,7 @@ do
 			character.Players[src].PlayerData.money.EDDIES == balance,
 			tostring(character.Players[src].PlayerData.money.EDDIES))
 		check('and nothing was written for it', #vehiclesWritten == written)
-		check('and the refund is said out loud, with what was bought and refused',
-			#control.log.warn > warnMark and names(control.log.warn, 'refunded'),
-			table.concat(control.log.warn, ' | '))
+		check('a refused atomic purchase needs no compensation', not names(control.log.warn, 'refunded'))
 		vehicleConfig.PER_CHARACTER = shippedCeiling
 
 		-- ── a throw is a refusal, not a disappearance ──────────────────────
@@ -8808,27 +8884,25 @@ do
 		-- back, and the message kept. The contract table is the very one the
 		-- module holds, so this is the real call site being exercised.
 		local vehiclesApi = env.OPX.Api.Get('vehicles')
-		local realRegister = vehiclesApi ~= nil and vehiclesApi.Register or nil
+		local realRegister = vehiclesApi ~= nil and vehiclesApi.Purchase or nil
 		if vehiclesApi ~= nil then
-			vehiclesApi.Register = function() error('the store threw') end
+			vehiclesApi.Purchase = function() error('the store threw') end
 		end
 		local throwMark = #control.log.error
 		balance = 500000
-		character.Players[src].PlayerData.money.EDDIES = balance
+		Host.SetMoney(env, character.Players[src], 'EDDIES', balance)
 		written = #vehiclesWritten
 		local blewUp = contract.Buy(src, 'yard', 'hella', nil)
 		check('a throw inside the vehicle store is refused to the buyer',
-			blewUp.ok == false and blewUp.error == 'dealership.registerFailed',
+			blewUp.ok == false and blewUp.error == 'money.pending',
 			blewUp and tostring(blewUp.error))
 		check('and the money goes back rather than nowhere',
 			character.Players[src].PlayerData.money.EDDIES == balance,
 			tostring(character.Players[src].PlayerData.money.EDDIES))
 		check('and nothing was written for it', #vehiclesWritten == written)
-		check('and the throw is in the log, with the module and the reason',
-			#control.log.error > throwMark and names(control.log.error, 'threw')
-				and names(control.log.error, 'the store threw'),
-			table.concat(control.log.error, ' | '):sub(-200))
-		if vehiclesApi ~= nil then vehiclesApi.Register = realRegister end
+		check('an unknown ownership answer is logged without compensation',
+			#control.log.error > throwMark and names(control.log.error, 'durable vehicle purchase'))
+		if vehiclesApi ~= nil then vehiclesApi.Purchase = realRegister end
 
 		-- ── a refund goes to who PAID, not to whoever holds the connection ──
 		-- `Register` yields. A buyer who went back to the selection screen and
@@ -8836,20 +8910,20 @@ do
 		-- character on the connection NOW -- money that character never spent.
 		if vehiclesApi ~= nil then
 			local otherCitizen = 'citizen-dealer-alt'
-			vehiclesApi.Register = function()
+			vehiclesApi.Purchase = function()
 				-- The swap, done inside the yield the real Register makes.
 				local alt = load(src, otherCitizen, 0)
-				alt.PlayerData.money.EDDIES = 0
+				Host.SetMoney(env, alt, 'EDDIES', 0)
 				return env.OPX.Result.Err('vehicle.limit', '1')
 			end
-			character.Players[src].PlayerData.money.EDDIES = 500000
+			Host.SetMoney(env, character.Players[src], 'EDDIES', 500000)
 			local swapped = contract.Buy(src, 'yard', 'hella', nil)
 			check('a purchase refused after the buyer swapped character is refused',
 				swapped.ok == false, swapped and tostring(swapped.error))
 			check('and the refund does NOT land on the character who never paid',
 				character.Players[src].PlayerData.money.EDDIES == 0,
 				tostring(character.Players[src].PlayerData.money.EDDIES))
-			vehiclesApi.Register = realRegister
+			vehiclesApi.Purchase = realRegister
 			character.Registry.byCitizenId[otherCitizen] = nil
 			load(src, 'citizen-dealer', 2000000)
 		end
@@ -8860,13 +8934,13 @@ do
 		-- flight, whichever door it came through.
 		if vehiclesApi ~= nil then
 			local inner, outer
-			vehiclesApi.Register = function(...)
+			vehiclesApi.Purchase = function(...)
 				if inner == nil then inner = contract.Buy(src, 'yard', 'hella', nil) end
 				return realRegister(...)
 			end
-			character.Players[src].PlayerData.money.EDDIES = 2000000
+			Host.SetMoney(env, character.Players[src], 'EDDIES', 2000000)
 			outer = contract.Buy(src, 'yard', 'hella', nil)
-			vehiclesApi.Register = realRegister
+			vehiclesApi.Purchase = realRegister
 			check('a purchase started while the same character\'s is in flight is refused',
 				inner ~= nil and inner.ok == false and inner.error == 'error.tooFast',
 				inner and tostring(inner.error))
@@ -8918,7 +8992,7 @@ do
 		end
 		control.Pump(60)
 		local noticesBefore = #control.notices
-		character.Players[src].PlayerData.money.EDDIES = 2000000
+		Host.SetMoney(env, character.Players[src], 'EDDIES', 2000000)
 		env.source = src
 		control.netEvents[dealership.Event.BUY]('yard', 'hella', nil)
 		env.source = nil
@@ -9138,6 +9212,8 @@ do
 		check('and owns the vehicle', #vehiclesWritten == madeRows + 1,
 			#vehiclesWritten - madeRows)
 
+		settle(control, function() return accounts['job:fixer'] == banked
+			and character.Players[seller].PlayerData.money.EDDIES == sellerBefore + cut end, 100)
 		-- WHERE THE MONEY WENT. The company bank of the seller's own group, and
 		-- the configured percentage of it to the seller.
 		check('the seller is paid the configured percentage',
@@ -9179,6 +9255,7 @@ do
 		end)
 		check('that sale settles too',
 			settle(control, function() return gangSettled ~= nil end, 60))
+		settle(control, function() return accounts['gang:valentinos'] == banked end, 80)
 		check('and the money lands in the GANG\'s account',
 			accounts['gang:valentinos'] == banked, tostring(accounts['gang:valentinos']))
 
@@ -9207,7 +9284,7 @@ do
 		check('and a sale face to face is raised to every other resource, with that garage',
 			#offerSold == 1 and offerSold[1].source == buyer and offerSold[1].payload.kind == 'offer'
 				and offerSold[1].payload.garage == 'garage_dock'
-				and offerSold[1].payload.pending == false,
+				and type(offerSold[1].payload.pending) == 'boolean',
 			#offerSold == 1 and tostring(offerSold[1].payload.garage) or #offerSold)
 		check('and the row is filed under that garage, not the default',
 			vehiclesWritten[#vehiclesWritten].garage == 'garage_dock',
@@ -9223,94 +9300,65 @@ do
 			wrongAnswer ~= nil and wrongAnswer.error == 'dealership.noSuchGarage',
 			wrongAnswer and tostring(wrongAnswer.error))
 
-		-- A DEPOSIT THAT DID NOT LAND IS OWED, NOT FORGOTTEN. It used to be one
-		-- log line asking somebody to settle it by hand.
-		local fixerBefore = accounts['job:fixer'] or 0
-		ledger.down = true
-		contract.Offer(seller, buyer, 'hella')
-		local downAsked = lastEvent(dealership.Event.OFFERED)
-		local downSettled
-		env.CreateThread(function()
-			downSettled = contract.Accept(buyer, downAsked[1].token, true)
-		end)
-		settle(control, function() return downSettled ~= nil end, 60)
-		check('a sale whose deposit failed still completes for the buyer',
-			downSettled ~= nil and downSettled.ok == true, downSettled and tostring(downSettled.error))
-		check('and it is still raised as sold, marked pending for the company share',
-			#offerSold >= 2 and offerSold[#offerSold].payload.kind == 'offer'
-				and offerSold[#offerSold].payload.pending == true
-				and offerSold[#offerSold].payload.plate == downSettled.value.plate,
-			#offerSold)
-		check('and the money is in the pending ledger, not in the account',
-			#ledger.rows == 1 and ledger.rows[1].amount == banked
-				and (accounts['job:fixer'] or 0) == fixerBefore, #ledger.rows)
-		local swept
-		env.CreateThread(function() swept = dealership.SettlePending() end)
-		settle(control, function() return swept ~= nil end, 60)
-		check('a sweep while the database is still down pays nothing twice',
-			swept == 0 and #ledger.rows == 1 and (accounts['job:fixer'] or 0) == fixerBefore)
-		ledger.down = false
-		swept = nil
-		env.CreateThread(function() swept = dealership.SettlePending() end)
-		-- Whichever sweep reaches it first -- this one or the module's own timer,
-		-- which the pumping above has been driving -- it is paid in exactly once.
-		-- The timer's pass may be mid-flight, in which case this one answers 0 at
-		-- once (one pass, never two) and the row is paid when that pass resumes:
-		-- so wait for the row, not for this call.
-		settle(control, function() return swept ~= nil and #ledger.rows == 0 end, 60)
-		check('and once it answers the sweep pays it in and strikes it off',
-			swept ~= nil and #ledger.rows == 0 and accounts['job:fixer'] == fixerBefore + banked,
-			('%s swept, %d left, %s now, %s before, %s banked'):format(tostring(swept), #ledger.rows,
-				tostring(accounts['job:fixer']), tostring(fixerBefore), tostring(banked)))
-		swept = nil
-		env.CreateThread(function() swept = dealership.SettlePending() end)
-		settle(control, function() return swept ~= nil end, 60)
-		check('and a second sweep finds nothing to pay again',
-			swept == 0 and accounts['job:fixer'] == fixerBefore + banked)
+		-- Obligations are committed with ownership, and receipts make payout retry safe.
+		do
+        local function owed()
+            local pending = {}
+            for _, row in ipairs(ledger.sales) do if not row.paid then pending[#pending + 1] = row end end
+            return pending
+        end
+        env.CreateThread(function() dealership.SettleSales() end)
+        settle(control, function() return #owed() == 0 end, 100)
+        local fixerBefore = accounts['job:fixer'] or 0
+        ledger.down = true
+        contract.Offer(seller, buyer, 'hella')
+        local downAsked = lastEvent(dealership.Event.OFFERED)
+        local downSettled
+        env.CreateThread(function() downSettled = contract.Accept(buyer, downAsked[1].token, true) end)
+        settle(control, function() return downSettled ~= nil end, 60)
+        check('an unavailable company account does not undo ownership', downSettled and downSettled.ok)
+        local pending = owed()
+        check('the fixed company payout remains durable and owed', #pending == 1 and pending[1].phase == 'company'
+            and pending[1].amount == banked and (accounts['job:fixer'] or 0) == fixerBefore)
+        local swept
+        env.CreateThread(function() swept = dealership.SettlePending() end)
+        settle(control, function() return swept ~= nil end, 60)
+        check('a retry while the company is down does not pay twice', #owed() == 1 and accounts['job:fixer'] == fixerBefore)
+        ledger.down = false
+        swept = nil
+        env.CreateThread(function() swept = dealership.SettlePending() end)
+        settle(control, function() return swept ~= nil and #owed() == 0 end, 100)
+        check('recovery credits the fixed company once', #owed() == 0 and accounts['job:fixer'] == fixerBefore + banked)
+        env.CreateThread(function() dealership.SettlePending() end)
+        control.Pump(10)
+        check('another pass cannot credit the obligation again', accounts['job:fixer'] == fixerBefore + banked)
+        local lostBefore = accounts['job:fixer'] or 0
+        ledger.loseAnswer = true
+        contract.Offer(seller, buyer, 'hella')
+        local lostAsked = lastEvent(dealership.Event.OFFERED)
+        local lostSettled
+        env.CreateThread(function() lostSettled = contract.Accept(buyer, lostAsked[1].token, true) end)
+        settle(control, function() return lostSettled ~= nil end, 100)
+        env.CreateThread(function() dealership.SettlePending() end)
+        settle(control, function() return #owed() == 0 end, 100)
+        check('a lost company acknowledgement replays its receipt, not its credit',
+            lostSettled and lostSettled.ok and accounts['job:fixer'] == lostBefore + banked and #owed() == 0)
+        ledger.loseAnswer = nil
+        -- A failed obligation INSERT aborts the buyer/ownership transaction too.
+        local buyerBefore = character.Players[buyer].PlayerData.money.EDDIES
+        local ownedBefore = #vehiclesWritten
+        ledger.pendDown = true
+        contract.Offer(seller, buyer, 'hella')
+        local bothAsked = lastEvent(dealership.Event.OFFERED)
+        local bothSettled
+        env.CreateThread(function() bothSettled = contract.Accept(buyer, bothAsked[1].token, true) end)
+        settle(control, function() return bothSettled ~= nil end, 100)
+        check('an obligation write failure aborts ownership and debit together',
+            bothSettled and not bothSettled.ok and #vehiclesWritten == ownedBefore
+            and character.Players[buyer].PlayerData.money.EDDIES == buyerBefore and #owed() == 0)
+        ledger.pendDown = false
+		end
 
-		-- A DEPOSIT THAT COMMITTED AND WHOSE ANSWER WAS LOST. It used to be
-		-- written to the ledger as owed as well, and the sweep paid it again.
-		local lostBefore = accounts['job:fixer'] or 0
-		ledger.loseAnswer = true
-		contract.Offer(seller, buyer, 'hella')
-		local lostAsked = lastEvent(dealership.Event.OFFERED)
-		local lostSettled
-		env.CreateThread(function()
-			lostSettled = contract.Accept(buyer, lostAsked[1].token, true)
-		end)
-		settle(control, function() return lostSettled ~= nil end, 60)
-		swept = nil
-		env.CreateThread(function() swept = dealership.SettlePending() end)
-		settle(control, function() return swept ~= nil end, 60)
-		check('a deposit whose answer was lost after it committed is paid in once, not twice',
-			lostSettled ~= nil and lostSettled.ok == true
-				and accounts['job:fixer'] == lostBefore + banked and #ledger.rows == 0,
-			('%s now, %s before, %s banked'):format(tostring(accounts['job:fixer']),
-				tostring(lostBefore), tostring(banked)))
-		ledger.loseAnswer = nil
-
-		-- AND WHEN THE LEDGER CANNOT BE WRITTEN EITHER, it is held in memory and
-		-- written by the sweep once it can be: owed, still, and paid once.
-		fixerBefore = accounts['job:fixer']
-		ledger.down, ledger.pendDown = true, true
-		contract.Offer(seller, buyer, 'hella')
-		local bothAsked = lastEvent(dealership.Event.OFFERED)
-		local bothSettled
-		env.CreateThread(function()
-			bothSettled = contract.Accept(buyer, bothAsked[1].token, true)
-		end)
-		settle(control, function() return bothSettled ~= nil end, 60)
-		check('a deposit whose ledger row also failed is not lost',
-			bothSettled ~= nil and bothSettled.ok == true and #ledger.rows == 0
-				and accounts['job:fixer'] == fixerBefore,
-			('%s / %s rows / %s'):format(bothSettled and tostring(bothSettled.error), #ledger.rows,
-				tostring(accounts['job:fixer'])))
-		ledger.down, ledger.pendDown = false, false
-		env.CreateThread(function() dealership.SettlePending() end)
-		settle(control, function() return accounts['job:fixer'] == fixerBefore + banked end, 60)
-		check('and the sweep writes it to the ledger and pays it in, once',
-			accounts['job:fixer'] == fixerBefore + banked and #ledger.rows == 0,
-			tostring(accounts['job:fixer']))
 		vehicleConfig.PER_CHARACTER = heldCeiling
 
 		-- OUT OF THE ROOM IS OUT OF THE SALE. Both ends are proved, and proved
@@ -20387,159 +20435,61 @@ do
 	end
 end
 
-section('crafting: an order the full shelf turns away gives everything back')
+section('crafting: materials, fees and orders use one atomic trade')
 do
 	local env, control, why = boot('server')
 	check('the server boots', why == nil, why)
-
 	if why == nil then
 		local OPX = env.OPX
-		local crafting = OPX.Modules.Get('crafting')
-		local contract = OPX.Api.Get('crafting')
-		local registered = contract.RegisterBench('tests:race', { owner = 'tests', queue = 1,
+		local crafting, api = OPX.Modules.Get('crafting'), OPX.Api.Get('crafting')
+		api.RegisterBench('tests:race', { owner = 'tests', queue = 1,
 			recipes = { { KEY = 'rounds', OUTPUT = 'ammo_handgun', SECONDS = 60, PRICE = 25,
 				MONEY = 'EDDIES', INPUTS = { scrap_metal = 2 } } } })
-		check('the bench registers', registered.ok == true, tostring(registered.error))
-
-		local bag, purse = { scrap_metal = 2 }, 100
-		local realInventory, realCharacter = crafting.Contracts.inventory,
-			crafting.Contracts.character
-		crafting.Contracts.inventory = setmetatable({
-			GetItemCount = function(_, name) return OPX.Result.Ok(bag[name] or 0) end,
-			RemoveItem = function(_, name, count)
-				if (bag[name] or 0) < count then return OPX.Result.Err('not_enough') end
-				bag[name] = bag[name] - count
-				return OPX.Result.Ok(true)
+		local identity, refused, trade, token = 'ABC12345', nil, nil, nil
+		crafting.Contracts.character = {
+			GetPlayer = function() return { PlayerData = { citizenId = identity } } end,
+			GetMoney = function() return { EDDIES = 100 } end,
+		}
+		crafting.Contracts.inventory = {
+			GetItemCount = function() return OPX.Result.Ok(2) end,
+			AtomicTrade = function(cid, money, delta, changes, reason, id, participant)
+				trade = { cid = cid, money = money, delta = delta, changes = changes }
+				local op = { id = 'craft-test-token', citizenId = cid, attempt = 'attempt' }
+				local builder = participant(op)
+				local statements, guard = builder(op)
+				trade.statements, trade.guard = statements, guard
+				token = op.id
+				return refused and OPX.Result.Err(refused) or OPX.Result.Ok({})
 			end,
-			AddItem = function(_, name, count)
-				bag[name] = (bag[name] or 0) + count
-				return OPX.Result.Ok(true)
-			end,
-		}, { __index = realInventory })
-		crafting.Contracts.character = setmetatable({
-			GetPlayer = function() return { PlayerData = { citizenId = 'ABC12345' } } end,
-			GetMoney = function() return { EDDIES = purse } end,
-			RemoveMoney = function(_, _, amount) purse = purse - amount return true end,
-			-- THE CONNECTION IS GONE by the time the refund is due, as it is
-			-- when the player leaves during the insert: by connection, the
-			-- refund is refused, and the answer used to be ignored.
-			AddMoney = function() return false, 'error.notLoggedIn' end,
-			AddMoneyOffline = function(citizenId, _, amount)
-				if citizenId ~= 'ABC12345' then return OPX.Result.Err('character.notFound') end
-				purse = purse + amount
-				return OPX.Result.Ok({ balance = purse, offline = true })
-			end,
-		}, { __index = realCharacter })
-		local inventoryTargets = {}
-		local fakeAdd = crafting.Contracts.inventory.AddItem
-		rawset(crafting.Contracts.inventory, 'AddItem', function(target, name, count)
-			inventoryTargets[#inventoryTargets + 1] = target
-			return fakeAdd(target, name, count)
-		end)
-
-		-- The shelf read says there is room; by the time the row is filed,
-		-- another order has taken it.
-		local realShelf, realPlace = crafting.Storage.Shelf, crafting.Storage.Place
+		}
 		crafting.Storage.Shelf = function() return OPX.Result.Ok({ cooking = 0, tail = 0 }) end
-		local queued
-		crafting.Storage.Place = function(_, _, _, _, queue)
-			queued = queue
-			return OPX.Result.Ok(nil)
+		crafting.Storage.Placed = function(_, supplied)
+			return OPX.Result.Ok(supplied == token and 77 or nil)
 		end
-
-		local answer
-		env.CreateThread(function() answer = contract.Order(1, 'tests:race', 'rounds') end)
-		settle(control, function() return answer ~= nil end, 20)
-		check('the order is refused as a full shelf',
-			answer ~= nil and answer.ok == false and answer.error == crafting.Refusal.QUEUE_FULL,
-			answer and tostring(answer.error))
-		check('the bench\'s cap travels with the insert', queued == 1, tostring(queued))
-		check('the materials come back', bag.scrap_metal == 2, bag.scrap_metal)
-		check('and so does the fee, to the character, whether or not the connection is still there',
-			purse == 100, purse)
-		check('the materials go back to the bag of the character, not to whoever holds the connection',
-			#inventoryTargets > 0 and inventoryTargets[1] == 'ABC12345', tostring(inventoryTargets[1]))
-
-		-- AN ANSWER LOST AFTER THE INSERT COMMITTED. It looks exactly like an
-		-- insert that never ran, and refunding it paid back the materials and
-		-- the price of an order that was cooking all the same.
-		local realPlaced = crafting.Storage.Placed
-		local tokens = {}
-		crafting.Storage.Place = function(_, _, _, _, _, token)
-			tokens[#tokens + 1] = token
-			return OPX.Result.Err('transaction-raised', 'connection reset')
-		end
-		crafting.Storage.Placed = function(_, token)
-			return OPX.Result.Ok(token == tokens[#tokens] and 77 or nil)
-		end
-		bag.scrap_metal, purse = 2, 100
-		answer = nil
-		env.CreateThread(function() answer = contract.Order(1, 'tests:race', 'rounds') end)
-		settle(control, function() return answer ~= nil end, 20)
-		check('a placement whose answer was lost but which went in stands as placed',
-			answer ~= nil and answer.ok == true and answer.value.id == 77,
-			answer and tostring(answer.error))
-		check('and nothing is refunded for it', bag.scrap_metal == 0 and purse == 75,
-			('%d / %d'):format(bag.scrap_metal, purse))
-
-		-- And one that really did not go in is refunded, as before.
-		crafting.Storage.Placed = function() return OPX.Result.Ok(nil) end
-		bag.scrap_metal, purse = 2, 100
-		answer = nil
-		env.CreateThread(function() answer = contract.Order(1, 'tests:race', 'rounds') end)
-		settle(control, function() return answer ~= nil end, 20)
-		check('a placement that is not there after all is refunded in full',
-			answer ~= nil and answer.ok == false and bag.scrap_metal == 2 and purse == 100,
-			('%d / %d'):format(bag.scrap_metal, purse))
-		check('and every placement carries its own token', #tokens == 2 and tokens[1] ~= tokens[2]
-			and type(tokens[1]) == 'string')
-
-		-- And when the database can say neither, nothing is refunded and the
-		-- journal says what to settle by hand.
-		crafting.Storage.Placed = function() return OPX.Result.Err('no-database', 'down') end
-		bag.scrap_metal, purse = 2, 100
-		answer = nil
-		local loud = #control.log.error
-		env.CreateThread(function() answer = contract.Order(1, 'tests:race', 'rounds') end)
-		settle(control, function() return answer ~= nil end, 60)
-		check('a placement nobody can confirm either way refunds nothing and says so',
-			answer ~= nil and answer.ok == false and purse == 75 and #control.log.error > loud
-				and control.log.error[#control.log.error]:find('NOTHING WAS REFUNDED', 1, true) ~= nil,
-			('%d / %d'):format(bag.scrap_metal, purse))
-		crafting.Storage.Placed = realPlaced
-
-		-- A slow shelf/bag read must not authorize the world as it stood before.
-		local identity, gate = 'ABC12345', true
-		crafting.Contracts.character.GetPlayer = function()
-			return { PlayerData = { citizenId = identity } }
-		end
-		contract.RegisterBench('tests:stale', { owner = 'tests',
-			position = { x = 10, y = 0, z = 0 }, reach = 2,
-			canUse = function() return gate end,
-			recipes = { { KEY = 'rounds', OUTPUT = 'ammo_handgun', SECONDS = 60, PRICE = 25,
-				MONEY = 'EDDIES', INPUTS = { scrap_metal = 2 } } } })
-		local countItem = crafting.Contracts.inventory.GetItemCount
-		for _, change in ipairs({ 'identity', 'position', 'gate' }) do
-			identity, gate = 'ABC12345', true
-			bag.scrap_metal, purse = 2, 100
-			control.Stand(1, 10, 0, 0)
-			crafting.Contracts.inventory.GetItemCount = function(...)
-				local result = countItem(...)
-				if change == 'identity' then identity = 'OTHER001'
-				elseif change == 'position' then control.Stand(1, 100, 0, 0)
-				else gate = false end
-				return result
-			end
-			answer = nil
-			env.CreateThread(function() answer = contract.Order(1, 'tests:stale', 'rounds') end)
+		local function order()
+			local answer
+			env.CreateThread(function() answer = api.Order(1, 'tests:race', 'rounds') end)
 			settle(control, function() return answer ~= nil end, 20)
-			check('an order rechecks ' .. change .. ' after reading the bag',
-				answer ~= nil and not answer.ok and bag.scrap_metal == 2 and purse == 100)
+			return answer
 		end
-		crafting.Contracts.inventory.GetItemCount = countItem
-		crafting.Storage.Shelf, crafting.Storage.Place = realShelf, realPlace
-		crafting.Contracts.inventory, crafting.Contracts.character = realInventory, realCharacter
-		contract.UnregisterBenches('tests')
+		local answer = order()
+		check('a successful trade resolves the committed order', answer and answer.ok and answer.value.id == 77)
+		check('materials and fee travel in the same trade', trade and trade.cid == identity and trade.delta == -25
+			and trade.changes[1].name == 'scrap_metal' and trade.changes[1].count == -2)
+		check('the queue is a locked SQL eligibility guard', trade and trade.guard.values[3] == 1
+			and trade.guard.query:find('FOR UPDATE', 1, true) ~= nil)
+		refused = 'queue_full'
+		answer = order()
+		check('a full queue is refused without compensation calls', answer and not answer.ok and answer.error == 'queue_full')
+		refused = 'money.pending'
+		answer = order()
+		check('an unknown commit remains pending without refunding materials or money', answer and answer.error == 'money.pending')
+		local saved = crafting.Contracts.inventory.GetItemCount
+		crafting.Contracts.inventory.GetItemCount = function() identity = 'OTHER001'; return OPX.Result.Ok(2) end
+		trade = nil
+		answer = order()
+		check('a character switch during the bag read prevents the trade', answer and not answer.ok and trade == nil)
+		crafting.Contracts.inventory.GetItemCount = saved
 	end
 end
 
@@ -22082,6 +22032,7 @@ do
 		-- `OPX.Api.Get` for the functions it needs, and these are the smallest
 		-- things that can stand in for a trunk, a bag and a logged-in wallet.
 		local trunks, bags, paid = {}, {}, {}
+		local wallet = nil
 		local function tagOf(meta) return type(meta) == 'table' and meta.site or '?' end
 		local function take(store, key, meta, count)
 			local held = store[key] or {}
@@ -22119,7 +22070,18 @@ do
 				return put(bags, player, meta, count)
 			end,
 		}
-		local wallet = nil
+		inventory.AtomicTrade = function(target, kind, amount, changes, reason)
+			local nextTrunks, nextBags = OPX.Table.DeepCopy(trunks), OPX.Table.DeepCopy(bags)
+			for _, change in ipairs(changes) do
+				local answer = change.vehicleId and take(nextTrunks, change.vehicleId, change.metadata, -change.count)
+					or take(nextBags, target, change.metadata, -change.count)
+				if not answer.ok then return answer end
+			end
+			if not wallet or not wallet.AddMoney(target, kind, amount, reason) then return OPX.Result.Err('money.vetoed') end
+			trunks, bags = nextTrunks, nextBags
+			return OPX.Result.Ok({})
+		end
+
 		-- The key ring: which player holds a key to which vehicle. A trunk at a
 		-- drop-off is sold out of only by its owner or a key holder.
 		local keyring = { [2] = { ['veh-1'] = true } }
@@ -22305,9 +22267,7 @@ do
 		check('and the crates are put back in the trunk, so nothing was lost for nothing',
 			trunks['veh-1'].docks == 2, trunks['veh-1'].docks)
 
-		-- ── a put-back the trunk refuses falls back to the bag ───────────────
-		-- The put-back's own answers were dropped: a trunk the owner locked during
-		-- the yields left the player with no crates, no money and no line saying so.
+		-- A refused atomic sale leaves crates in their original container.
 		wallet = { AddMoney = function()
 			lockedTrunks['veh-1'] = true
 			return false, 'money.vetoed'
@@ -22317,38 +22277,9 @@ do
 		fire(2, M.Event.BEGIN, Step.DELIVER, SELLER)
 		at = at + Access.DELIVER_MS + 1
 		fire(2, M.Event.FINISH)
-		check('a trunk locked during the sale sends its crates to the bag instead',
-			lastAnswer()[2] == 'not_paid' and trunks['veh-1'].docks == 0
-				and (bags[2] or {}).docks == 2,
-			tostring(lastAnswer()[2]) .. ' ' .. tostring((bags[2] or {}).docks))
-
-		-- ── and with nowhere at all, the loss is written down to be refunded ─
+		check('a refused sale leaves crates in the original trunk without inverse writes',
+			lastAnswer()[2] == 'not_paid' and trunks['veh-1'].docks == 2 and bags[2] == nil)
 		lockedTrunks['veh-1'] = nil
-		trunks['veh-1'].docks, bags[2] = 2, nil
-		wallet = { AddMoney = function()
-			lockedTrunks['veh-1'] = true
-			fullBags[2] = 1
-			return false, 'money.vetoed'
-		end }
-		local errorsBefore = #control.log.error
-		at = at + 10000
-		fire(2, M.Event.BEGIN, Step.DELIVER, SELLER)
-		at = at + Access.DELIVER_MS + 1
-		fire(2, M.Event.FINISH)
-		check('a bag with room for one keeps one, one at a time',
-			(bags[2] or {}).docks == 1, (bags[2] or {}).docks)
-		check('and the player is told some crates were lost, in words they have',
-			lastAnswer()[2] == 'not_paid_lost'
-				and OPX.Locale.Exists('hauling.refused.not_paid_lost'),
-			tostring(lastAnswer()[2]))
-		local loud = table.concat(control.log.error, '\n', errorsBefore + 1)
-		check('the loss is on the journal at error, with the refund owed',
-			loud:find('CRATES LOST', 1, true) ~= nil
-				and loud:find(('Refund %d'):format(Access.Pay('docks')), 1, true) ~= nil, loud)
-		check('and in the audit, under its own event', loud:find('hauling.crateLost', 1, true) ~= nil,
-			loud)
-		lockedTrunks['veh-1'], fullBags[2], bags[2] = nil, nil, nil
-		trunks['veh-1'].docks = 2
 
 		-- ── a seller in another bucket is not in front of you ────────────────
 		positions[2].bucket = 4
@@ -22385,59 +22316,25 @@ do
 			#paid == 1 and paid[1].reason)
 		check('and the trunk is empty after', trunks['veh-1'].docks == 0, trunks['veh-1'].docks)
 
-		-- A CHARACTER SWITCHED IN THE WORLD WHILE THE CRATES WERE BEING TAKEN.
-		-- The pay follows the character who sold, not whoever holds the slot.
+		-- A pending commit cannot trigger inverse writes of already sold crates.
+		local realTrade, seenTarget = inventory.AtomicTrade, nil
 		local holder = 'SELLER01'
-		local offline = {}
-		wallet = {
-			GetPlayer = function() return { PlayerData = { citizenId = holder } } end,
-			AddMoney = function(player, kind, amount, reason)
-				paid[#paid + 1] = { player = player, kind = kind, amount = amount, reason = reason }
-				return true
-			end,
-			AddMoneyOffline = function(citizenId, kind, amount)
-				offline[#offline + 1] = { citizenId = citizenId, kind = kind, amount = amount }
-				return { ok = true, value = { offline = true } }
-			end,
-		}
-		trunks['veh-1'].docks = 2
-		local realRemove = inventory.RemoveFromTrunk
-		inventory.RemoveFromTrunk = function(...)
+		wallet.GetPlayer = function() return { PlayerData = { citizenId = holder } } end
+		inventory.AtomicTrade = function(target)
+			seenTarget = target
 			holder = 'SOMEBODY'
-			return realRemove(...)
+			return OPX.Result.Err('money.pending')
 		end
-		local paidBefore = #paid
+		trunks['veh-1'].docks = 2
 		at = at + 10000
 		fire(2, M.Event.BEGIN, Step.DELIVER, SELLER)
 		at = at + Access.DELIVER_MS + 1
 		fire(2, M.Event.FINISH)
-		inventory.RemoveFromTrunk = realRemove
-		check('a sale whose seller switched character mid-sale pays the seller, by citizen id',
-			#offline == 1 and offline[1].citizenId == 'SELLER01'
-				and offline[1].amount == Access.Pay('docks') * 2,
-			#offline == 1 and tostring(offline[1].citizenId) or #offline)
-		check('and pays nothing to the character now on the connection', #paid == paidBefore,
-			#paid - paidBefore)
-		holder = 'SELLER01'
-		trunks['veh-1'].docks = 2
-		wallet.AddMoneyOffline = function() return { ok = false, error = 'money.vetoed' } end
-		inventory.RemoveFromTrunk = function(...)
-			holder = 'SOMEBODY'
-			lockedTrunks['veh-1'] = true
-			return realRemove(...)
-		end
-		at = at + 10000
-		fire(2, M.Event.BEGIN, Step.DELIVER, SELLER)
-		at = at + Access.DELIVER_MS + 1
-		fire(2, M.Event.FINISH)
-		inventory.RemoveFromTrunk = realRemove
-		check('an unpaid switched seller gets the crates back in their own bag',
-			(bags.SELLER01 or {}).docks == 2 and (bags.SOMEBODY or {}).docks == nil)
-		lockedTrunks['veh-1'], bags.SELLER01 = nil, nil
-		wallet = { AddMoney = function(player, kind, amount, reason)
-			paid[#paid + 1] = { player = player, kind = kind, amount = amount, reason = reason }
-			return true
-		end }
+		check('the trade names the seller citizen even if the connection changes', seenTarget == 'SELLER01')
+		check('a pending sale never restores or consumes crates independently', trunks['veh-1'].docks == 2
+			and (bags.SELLER01 or {}).docks == nil and #paid == 1)
+		inventory.AtomicTrade, wallet.GetPlayer = realTrade, nil
+		trunks['veh-1'].docks = 0
 
 		-- ── crates carried in a bag sell too ─────────────────────────────────
 		-- At a rate an operator moved on the panel: HAUL_PAY_PER_CRATE is
@@ -22502,8 +22399,8 @@ do
 		-- inventory call yields. Here they really do yield: the handler must
 		-- return at once, and the sale finish on a thread of its own.
 		trunks['veh-1'].docks = 1
-		local yieldingRemove = inventory.RemoveFromTrunk
-		inventory.RemoveFromTrunk = function(...)
+		local yieldingRemove = inventory.AtomicTrade
+		inventory.AtomicTrade = function(...)
 			coroutine.yield()
 			return yieldingRemove(...)
 		end
@@ -22528,7 +22425,7 @@ do
 			coroutine.resume(sale)
 			if coroutine.status(sale) == 'dead' then break end
 		end
-		inventory.RemoveFromTrunk = yieldingRemove
+		inventory.AtomicTrade = yieldingRemove
 		check('and the sale still completes and is paid, on its own thread',
 			#paid == paidAt + 1 and trunks['veh-1'].docks == 0, #paid - paidAt)
 		OPX.Api.Get = realGet
@@ -25076,8 +24973,8 @@ do
 
 		--- Puts a loaded character on the roster, with a clothing row or without.
 		local function load(stored)
-			character.Players[PLAYER] = { PlayerData = {
-				citizenId = CITIZEN, source = PLAYER, clothing = stored } }
+			local player = Host.StandCharacter(env, control, PLAYER, CITIZEN, { EDDIES = 10000, BANK = 0 })
+			player.PlayerData.clothing = stored
 		end
 
 		--- Fires the save door and answers the refusal code sent back, or nil.
@@ -25218,10 +25115,18 @@ do
 			-- Reset the same character's clothes; replacing the Player would model
 			-- a logout, which correctly retires the fitting-room grant.
 			local player = character.Players[PLAYER]
-			if player == nil then player = { PlayerData = {} }; character.Players[PLAYER] = player end
+			if player == nil then player = Host.StandCharacter(env, control, PLAYER, CITIZEN, { EDDIES = 10000, BANK = 0 }) end
 			player.PlayerData.citizenId, player.PlayerData.source = CITIZEN, PLAYER
 			player.PlayerData.userId = control.accounts[PLAYER]
 			player.PlayerData.clothing = STORED
+		end
+
+		character.Storage.UnitMoney.OnCommit = function(_, effects)
+			for _, effect in ipairs(effects or {}) do
+				if effect.query:find('INSERT INTO opx77_character_clothing', 1, true) then
+					return appearance.Storage.SaveClothing(effect.values[1], effect.values[2])
+				end
+			end
 		end
 
 		--- A record that is the stored one with `change` laid over its equipment.
@@ -25368,8 +25273,8 @@ do
 				type(granted) == 'table' and type(granted.bill) == 'function')
 			if type(granted) == 'table' and type(granted.bill) == 'function' then
 				local ok, _, undo = granted.bill(PLAYER)
-				check('and that bill is the price of the look, with an undo',
-					ok == true and taken == 1 and type(undo) == 'function', tostring(ok))
+				check('that bill quotes the look price without moving money',
+					ok == true and taken == 0 and type(undo) == 'table' and undo.amount > 0, tostring(ok))
 			end
 			money.RemoveMoney = realRemove
 			contract.AllowClothingSave = realAllow
@@ -25426,8 +25331,8 @@ do
 			money.RemoveMoney = function(_, _, amount) taken[#taken + 1] = amount; return true end
 			local ok, _, undo = seen.charge(PLAYER, { 'OuterChest' })
 			money.RemoveMoney = realRemove
-			check('the shop charges the slots it is handed at its own prices',
-				ok == true and (taken[1] or 0) > 0 and type(undo) == 'function', tostring(taken[1]))
+			check('the shop quotes slots at its own prices without charging separately',
+				ok == true and #taken == 0 and type(undo) == 'table' and undo.amount > 0, tostring(taken[1]))
 		end
 
 		character.Players[PLAYER] = nil
@@ -34307,7 +34212,7 @@ end
 local function creatorBridge(state)
 	state.offline = state.offline or {}
 	state.balance = state.balance or 0
-	return Host.Database({
+	local bridge = Host.Database({
 		scalar = function(sql)
 			if sql:find('JSON_EXTRACT', 1, true) then return state.balance end
 			if sql:find('COUNT(*)', 1, true) and sql:find('opx77_characters', 1, true) then
@@ -34336,6 +34241,8 @@ local function creatorBridge(state)
 		insert = function() return 1 end,
 		transaction = function() return true end,
 	})
+	bridge.unitMoneyState = state
+	return bridge
 end
 
 --- A loaded character in the roster, the way the money section stands one up.
@@ -34994,7 +34901,7 @@ do
 		local paid = call('payroll', 'AddMoneyOffline', AWAY, 'BANK', 100, 'salary')
 		check('an offline character is paid', paid ~= nil and paid.ok == true,
 			paid and tostring(paid.error))
-		check('by ONE atomic increment of the stored balance, never a read and a save',
+		check('by one journalled transaction of the stored balance',
 			#state.offline == 1 and state.offline[1].path == '$.BANK'
 				and state.offline[1].amount == 100 and state.offline[1].citizen == AWAY,
 			#state.offline)
@@ -35574,7 +35481,7 @@ do
 		local HELD = OPX.CitizenId.Generate()
 		local writes = #state.offline
 		db.park = function(method, sql)
-			return method == 'update' and sql:find('JSON_SET', 1, true) ~= nil
+			return method == 'transaction' and type(sql) == 'table' and sql[1].query:find('opx77_money_ledger', 1, true) ~= nil
 		end
 		local cancelled, cwhy = control.AbandonExport('payroll', 6, 'AddMoneyOffline',
 			HELD, 'BANK', 5, 'bonus')
@@ -36422,7 +36329,7 @@ do
 			player.PlayerData.money.EDDIES)
 
 		-- A logout during the hook: the Player has left the roster and been saved.
-		player.PlayerData.money.EDDIES = 100
+		Host.SetMoney(env, player, 'EDDIES', 100)
 		local late
 		OPX.Hooks.Remove(hook)
 		hook = OPX.Hooks.Register('money:beforeAdd', function()
@@ -41659,8 +41566,8 @@ do
 						if attacker.PlayerData.money.EDDIES ~= 500
 							or victim.PlayerData.money.EDDIES ~= 777 then
 							note(charged, label)
-							attacker.PlayerData.money.EDDIES = 500
-							victim.PlayerData.money.EDDIES = 777
+							Host.SetMoney(env, attacker, 'EDDIES', 500)
+							Host.SetMoney(env, victim, 'EDDIES', 777)
 						end
 					end
 				end
@@ -41689,7 +41596,7 @@ do
 			end
 			if attacker.PlayerData.money.EDDIES ~= 500 then
 				note(replayed, name .. ': money moved')
-				attacker.PlayerData.money.EDDIES = 500
+				Host.SetMoney(env, attacker, 'EDDIES', 500)
 			end
 		end
 		check('a packet replayed twenty times raises nowhere and charges nothing', #replayed == 0,
@@ -42433,7 +42340,7 @@ do
 		end
 
 		-- Not enough money.
-		money.EDDIES = 0
+		Host.SetMoney(env, player, 'EDDIES', 0)
 		bagOf(env, id):set('fuel', 30)
 		control.Advance(1000)
 		ok, code = fuel.Refuel(P, { method = 'EDDIES' })
@@ -42441,7 +42348,7 @@ do
 			not ok and code == 'not_enough_money', code)
 
 		-- A wallet that runs short pours only what it pays for.
-		money.EDDIES = 50
+		Host.SetMoney(env, player, 'EDDIES', 50)
 		control.Advance(1000)
 		ok = fuel.Refuel(P, { method = 'EDDIES' })
 		bar = fuelAnswer(control, progress.Event.START, P)
@@ -42452,7 +42359,7 @@ do
 			and math.abs(bagOf(env, id).fuel - 42.5) < 0.01, money.EDDIES)
 
 		-- Seated, away from a pump, a bad method, a refused hand-off.
-		money.EDDIES = 500
+		Host.SetMoney(env, player, 'EDDIES', 500)
 		bagOf(env, id):set('fuel', 30)
 		control.Seat(P, { vehicleId = id, seat = -1 })
 		control.Advance(1000)
@@ -42593,7 +42500,10 @@ do
 			if tostring(call.sql):find('ADD COLUMN fuel', 1, true) then schema = true end
 		end
 		check('the fuel column is added to opx77_vehicles by OPX.Schema.AddColumns', schema
-			or OPX.Modules.Get('vehicles').Storage.COLUMNS[1].COLUMN == 'fuel')
+			or (function()
+				for _, column in ipairs(OPX.Modules.Get('vehicles').Storage.COLUMNS) do if column.COLUMN == 'fuel' then return true end end
+				return false
+			end)())
 
 		local spawned
 		local thread = coroutine.create(function() spawned = vehicles.Spawn(P, 'FU111EL') end)
@@ -43065,7 +42975,7 @@ do
 			blocked and blocked.code)
 
 		-- Settled, and signed.
-		money.BANK = 20000
+		Host.SetMoney(env, patient, 'BANK', 20000)
 		control.Advance(2000)
 		medical.Server.OnSubscribe(PATIENT, { service = 'trauma', desk = 1, payDebt = true })
 		record = patient.PlayerData.metadata.medical
@@ -43362,10 +43272,10 @@ local function contractsConfig(env, file)
 		end
 		S.Reserve = function(op)
 			local row = store.ledger[op.id]
-			if row then return { ok = true, value = { fresh = false, state = row.state } } end
-			store.ledger[op.id] = { state = 'reserved', amount = op.amount, citizenId = op.citizenId,
+			if row then return { ok = true, value = { fresh = false, state = row.state, durable = row.durable_version == 1 } } end
+			store.ledger[op.id] = { state = 'reserved', durable_version = 1, amount = op.amount, citizenId = op.citizenId,
 				phase = op.phase, contractId = op.contractId }
-			return { ok = true, value = { fresh = true, state = 'reserved' } }
+			return { ok = true, value = { fresh = true, state = 'reserved', durable = true } }
 		end
 		S.Settle = function(id, state)
 			local row = store.ledger[id]
@@ -43374,7 +43284,7 @@ local function contractsConfig(env, file)
 		end
 		S.Rearm = function(id)
 			local row = store.ledger[id]
-			if row and row.state == 'cancelled' then row.state = 'reserved' return { ok = true, value = true } end
+			if row and row.state == 'cancelled' and row.durable_version == 1 then row.state = 'reserved' return { ok = true, value = true } end
 			return { ok = true, value = false }
 		end
 		S.Pending = function()
@@ -43382,10 +43292,15 @@ local function contractsConfig(env, file)
 			for id, row in pairs(store.ledger) do
 				if row.state == 'reserved' then
 					out[#out + 1] = { id = id, contractId = row.contractId, phase = row.phase,
-						citizenId = row.citizenId, amount = row.amount }
+						citizenId = row.citizenId, amount = row.amount, durable = row.durable_version == 1 }
 				end
 			end
 			return { ok = true, value = out }
+		end
+		S.OpInfo = function(id)
+			local row = store.ledger[id]
+			return { ok = true, value = row and { state = row.state, durable_version = row.durable_version or 0,
+				amount = row.amount, contract_id = row.contractId, phase = row.phase, citizen_id = row.citizenId } }
 		end
 		S.Committed = function(id)
 			return { ok = true, value = store.ledger[id] ~= nil and store.ledger[id].state == 'committed' }
@@ -43693,14 +43608,14 @@ do
 			ok and fixer.PlayerData.money.EDDIES == cash - 50, fixer.PlayerData.money.EDDIES)
 
 		-- Not enough money, and the cap on open gigs.
-		fixer.PlayerData.money.EDDIES = 200
+		Host.SetMoney(env, fixer, 'EDDIES', 200)
 		ok, why = contractsRun(env, control, function()
 			return Server.Post(F, { type = 'manual', target = '', title = 'Broke', reward = 500, cut = 10,
 				deadline = 3600, tier = 1 })
 		end)
 		check('a fixer who cannot cover reward and fee is refused, and nothing is taken',
 			not ok and why == 'not_enough_money' and fixer.PlayerData.money.EDDIES == 200, why)
-		fixer.PlayerData.money.EDDIES = 100000
+		Host.SetMoney(env, fixer, 'EDDIES', 100000)
 		ok, why = contractsRun(env, control, function()
 			return Server.Post(F, { type = 'deliver_item', target = 'z:test_zone', title = 'Mismatch',
 				reward = 500, cut = 10, deadline = 3600, tier = 1 })
@@ -44121,7 +44036,7 @@ end
 section('underworld: robberies, dealers, fronts, labs and drugs on the server')
 do
 	-- What the database fake keeps: batches, escrow rows, and every write.
-	local db = { batches = {}, escrow = {}, writes = {}, nextBatch = 0 }
+	local db = { batches = {}, escrow = {}, writes = {}, nextBatch = 0, sequence = 0, mints = {}, operations = {} }
 	local bridge = Host.Database({
 		query = function(sql, params)
 			if sql:find('FROM opx77_underworld_batches', 1, true) then
@@ -44129,16 +44044,26 @@ do
 				for _, batch in ipairs(db.batches) do
 					if batch.citizen == params.citizen and batch.front == params.front and batch.collected == 0 then
 						rows[#rows + 1] = { id = batch.id, dirty = batch.dirty, clean = batch.clean,
-							payout = batch.payout, remaining = batch.remaining }
+							payout = batch.payout, remaining = batch.remaining, durable_version = batch.durable_version or 0 }
 					end
 				end
 				return rows
 			end
-			if sql:find('FROM opx77_underworld_escrow', 1, true) then return db.escrow end
+			if sql:find('FROM opx77_underworld_escrow', 1, true) then
+				local rows = {}; for _, row in ipairs(db.escrow) do if not row.quarantined then rows[#rows + 1] = row end end; return rows
+			end
 			return {}
 		end,
 		single = function() return nil end,
 		scalar = function(sql, params)
+            if sql:find('UUID()', 1, true) then db.sequence = db.sequence + 1; return 'underworld-unit-' .. db.sequence end
+            if sql:find('SUM(amount)', 1, true) then
+                local sum = 0
+                for _, row in ipairs(db.mints) do
+                    if row.citizen == params.citizen and row.source:sub(1, #params.kind - 1) == params.kind:sub(1, -2) then sum = sum + row.amount end
+                end
+                return sum
+            end
 			if sql:find('SUM(dirty)', 1, true) then
 				local sum = 0
 				for _, batch in ipairs(db.batches) do
@@ -44159,6 +44084,9 @@ do
 			return 1
 		end,
 		update = function(sql, params)
+            if sql:find('SET quarantined = 1', 1, true) then
+                for _, row in ipairs(db.escrow) do if row.op_id == params.id then row.quarantined = true end end
+            end
 			db.writes[#db.writes + 1] = { sql = tostring(sql), params = type(params) == 'table' and params or {} }
 			if sql:find('SET collected = 1', 1, true) then
 				for _, batch in ipairs(db.batches) do
@@ -44171,8 +44099,46 @@ do
 			end
 			return 1
 		end,
-		transaction = function() return true end,
+        transaction = function(plan)
+            local op = db.operations[plan[1].values[1]]
+            for _, statement in ipairs(plan) do
+                local q, v = statement.query, statement.values
+                if q:find('INSERT INTO opx77_underworld_ledger', 1, true) then
+                    db.mints[#db.mints + 1] = { citizen = op.citizenId, source = v[1], amount = v[2] }
+                    db.writes[#db.writes + 1] = { sql = q, params = { source = v[1], amount = v[2] } }
+                elseif q:find('INSERT INTO opx77_underworld_batches', 1, true) then
+                    db.nextBatch = db.nextBatch + 1
+                    db.batches[#db.batches + 1] = { id = db.nextBatch, citizen = op.citizenId, front = v[1], dirty = v[2],
+                        clean = v[3], payout = v[4], remaining = v[5], durable_version = 1, collected = 0 }
+                elseif q:find('UPDATE opx77_underworld_batches', 1, true) then
+                    for _, row in ipairs(db.batches) do if row.id == v[1] then row.collected = 1 end end
+                end
+            end
+            return true
+        end,
 	})
+
+    bridge.unitMoneyGuard = function(guard)
+        if guard.query:find('opx77_underworld_ledger', 1, true) then
+            local sum, v = 0, guard.values
+            for _, row in ipairs(db.mints) do
+                if row.citizen == v[1] and row.source:sub(1, #v[2] - 1) == v[2]:sub(1, -2) then sum = sum + row.amount end
+            end
+            return sum <= v[4]
+        elseif guard.query:find('SUM(dirty)', 1, true) then
+            local sum = 0
+            for _, row in ipairs(db.batches) do if row.citizen == guard.values[1] then sum = sum + row.dirty end end
+            return sum <= guard.values[2]
+        elseif guard.query:find('opx77_underworld_batches', 1, true) then
+            local v = guard.values
+            for _, row in ipairs(db.batches) do
+                if row.id == v[1] and row.citizen == v[2] and row.front == v[3] and row.clean == v[4]
+                    and row.payout == v[5] and row.collected == 0 and row.remaining <= 0 and row.durable_version == 1 then return true end
+            end
+            return false
+        end
+        return true
+    end
 
 	-- One surveyed entry of each kind, patched in after the config loads.
 	local function fixture(env, file)
@@ -44269,6 +44235,50 @@ do
 			if name == 'inventory' then return fake end
 			return realGet(name, minimum)
 		end
+
+        -- Preserve the real wallet receipt orchestration; only bags/SQL effects are doubles.
+        fake.AtomicTrade = function(target, kind, delta, changes, reason, id, participant)
+            local player = OPX.Api.Get('character').GetPlayerByCitizenId(target)
+            if not player then return OPX.Result.Err('not_loaded') end
+            return OPX.Api.Get('character').AtomicMoney(player, kind, math.abs(delta),
+                delta == 0 and 'touch' or delta > 0 and 'add' or 'remove', reason, id, function(op)
+                    local staged = {}; for name, count in pairs(bagOf(target)) do staged[name] = count end
+                    for _, change in ipairs(changes) do
+                        staged[change.name] = (staged[change.name] or 0) + change.count
+                        if staged[change.name] < 0 then return nil, 'not_enough_items' end
+                    end
+                    op.apply = function()
+                        local bag = bagOf(target)
+                        for name in pairs(bag) do bag[name] = nil end
+                        for name, count in pairs(staged) do bag[name] = count end
+                    end
+                    return participant and participant(op, staged) or function() return {} end
+                end)
+        end
+        fake.AtomicPeerTrade = function(seller, buyer, _, amount, changes)
+            assert(amount == 0, 'this fixture covers dirty peer swaps; clean wallets are core-tested')
+            local staged = {}
+            for _, target in ipairs({ seller, buyer }) do
+                staged[target] = {}; for name, count in pairs(bagOf(target)) do staged[target][name] = count end
+            end
+            for _, change in ipairs(changes) do
+                local from, into = change.reverse and buyer or seller, change.reverse and seller or buyer
+                if (staged[from][change.name] or 0) < change.count then return OPX.Result.Err('not_enough_items') end
+                staged[from][change.name] = staged[from][change.name] - change.count
+                staged[into][change.name] = (staged[into][change.name] or 0) + change.count
+            end
+            for target, entries in pairs(staged) do
+                local bag = bagOf(target)
+                for name in pairs(bag) do bag[name] = nil end
+                for name, count in pairs(entries) do bag[name] = count end
+            end
+            return OPX.Result.Ok(true)
+        end
+        local realStatements = OPX.Modules.Get('character').Storage.MoneyStatements
+        OPX.Modules.Get('character').Storage.MoneyStatements = function(op, ...)
+            db.operations[op.id] = op
+            return realStatements(op, ...)
+        end
 
 		local ROBBER, COP, BUYER = 81, 82, 83
 		local robber = standCharacter(env, control, ROBBER, 'UWROB001', { EDDIES = 500, BANK = 0 })
@@ -44417,13 +44427,13 @@ do
 		answer = ask(E.BUY, ROBBER, { dealer = 'test_dealer', index = 2, count = 1, pay = 'clean' })
 		check('a dirty-only line refuses clean money', answer.code == 'dirty_only', answer.code)
 		answer = ask(E.BUY, ROBBER, { dealer = 'test_dealer', index = 1, count = 2, pay = 'dirty' })
-		check('the dirty price leaves the bag BEFORE the bar ends (reserved into escrow)',
-			bagOf(ROBBER).dirty_eddies == dirtyBefore - 160, bagOf(ROBBER).dirty_eddies)
+		check('the price remains owned until the completed atomic trade',
+			bagOf(ROBBER).dirty_eddies == dirtyBefore, bagOf(ROBBER).dirty_eddies)
 		local escrowed = false
 		for _, write in ipairs(db.writes) do
 			if write.sql:find('INSERT INTO opx77_underworld_escrow', 1, true) then escrowed = true end
 		end
-		check('and an escrow row is written for a crash to find', escrowed)
+		check('no unproven escrow is written before the trade', not escrowed)
 		answer = finishBar(ROBBER)
 		check('the bar done, the goods are in the bag', answer.ok and answer.code == 'bought'
 			and bagOf(ROBBER).glitter == 2, answer.code)
@@ -44432,7 +44442,7 @@ do
 		dirtyBefore = bagOf(ROBBER).dirty_eddies
 		answer = ask(E.BUY, ROBBER, { dealer = 'test_dealer', index = 1, count = 1, pay = 'clean' })
 		local money = robber.PlayerData.money
-		check('clean money pays the premium, out of cash', money.EDDIES == 500 - 112, money.EDDIES)
+		check('clean money remains owned while progress is cancellable', money.EDDIES == 500, money.EDDIES)
 		answer = finishBar(ROBBER, nil, 'cancelled')
 		check('a cancelled deal hands the money back and keeps the stock', answer.code == 'cancelled'
 			and money.EDDIES == 500 and bagOf(ROBBER).dirty_eddies == dirtyBefore, answer.code)
@@ -44444,7 +44454,7 @@ do
 		bagOf(ROBBER).stolen_goods = 3
 		dirtyBefore = bagOf(ROBBER).dirty_eddies
 		answer = ask(E.SELL, ROBBER, { dealer = 'test_dealer', index = 1, count = 2 })
-		check('selling to a fence takes the goods first', bagOf(ROBBER).stolen_goods == 1)
+		check('selling to a fence leaves goods owned until commit', bagOf(ROBBER).stolen_goods == 3)
 		answer = finishBar(ROBBER)
 		check('and pays dirty eddies for them once the bar is done', answer.code == 'sold'
 			and bagOf(ROBBER).dirty_eddies == dirtyBefore + 360, answer.code)
@@ -44464,7 +44474,7 @@ do
 		answer = ask(E.LAUNDER, ROBBER, { front = 'test_front', amount = 5000 })
 		check('more than PER_TX_MAX at once is refused bad_amount', answer.code == 'bad_amount', answer.code)
 		answer = ask(E.LAUNDER, ROBBER, { front = 'test_front', amount = 2000 })
-		check('a deposit takes the dirty eddies before the bar', bagOf(ROBBER).dirty_eddies == 1000)
+		check('a deposit consumes dirty eddies only with its durable batch', bagOf(ROBBER).dirty_eddies == 3000)
 		answer = finishBar(ROBBER)
 		check('and files a batch of 75% clean', answer.code == 'deposited' and db.batches[1] ~= nil
 			and db.batches[1].clean == 1500 and db.batches[1].dirty == 2000, answer.code)
@@ -44484,6 +44494,25 @@ do
 			answer.code)
 		answer = ask(E.COLLECT, ROBBER, { front = 'test_front' })
 		check('and only once', answer.code == 'nothing_ready' and money.BANK == bank + 1500, answer.code)
+        do
+            -- A committed collection whose reply vanished must never be uncollected/refunded.
+            local C = OPX.Modules.Get('character')
+            local originalChange, lose = C.Storage.MoneyChange, true
+            db.batches[#db.batches + 1] = { id = 99, citizen = robber.PlayerData.citizenId,
+                front = 'test_front', dirty = 20, clean = 15, payout = 'BANK', remaining = 0, collected = 0, durable_version = 1 }
+            C.Storage.MoneyChange = function(op, build)
+                local result = originalChange(op, build)
+                if result.ok and lose then lose = false; error('lost collect acknowledgement') end
+                return result
+            end
+            ask(E.COLLECT, ROBBER, { front = 'test_front' })
+            check('an unknown collect stays marked together with its durable wallet receipt', db.batches[#db.batches].collected == 1)
+            control.Pump(40)
+            C.Storage.MoneyChange = originalChange
+            check('recovery credits the unknown collection once', money.BANK == bank + 1515)
+            ask(E.COLLECT, ROBBER, { front = 'test_front' })
+            check('retry cannot uncollect or repay that batch', money.BANK == bank + 1515 and db.batches[#db.batches].collected == 1)
+        end
 		control.Stand(ROBBER, 400.5, 0.0, 0.0)
 		answer = ask(E.LAUNDER, ROBBER, { front = 'claws_front', amount = 100 })
 		check('a front behind a gang refuses an outsider gang_required', answer.code == 'gang_required',
@@ -44574,11 +44603,11 @@ do
 		control.Pump(10)
 		local closed = false
 		for _, write in ipairs(db.writes) do
-			if write.sql:find('DELETE FROM opx77_underworld_escrow', 1, true) and write.params
-				and write.params.op == 'deadbeef0000000100aa' then closed = true end
+			if write.sql:find('SET quarantined = 1', 1, true) and write.params
+				and write.params.id == 'deadbeef0000000100aa' then closed = true end
 		end
-		check('an escrow row a crash left open is refunded at start, and closed', recovered
-			and bagOf(BUYER).dirty_eddies == 80 and closed, bagOf(BUYER).dirty_eddies)
+		check('an old ambiguous escrow is quarantined without an automatic refund', recovered
+			and bagOf(BUYER).dirty_eddies == 10 and closed, bagOf(BUYER).dirty_eddies)
 
 		-- ── staff ─────────────────────────────────────────────────────────
 		check('the staff commands are registered', control.commands[M.Command.LEDGER] ~= nil
@@ -45326,6 +45355,20 @@ do
 			end,
 			CanCarry = function() return { ok = true, value = true } end,
 		}
+		bag.AtomicTrade = function(cid, money, delta, changes, reason)
+			local character = OPX.Api.Get('character')
+			local player = character.GetPlayerByCitizenId(cid)
+			return character.AtomicMoney(player, money, math.abs(delta), delta == 0 and 'touch' or 'add', reason, nil, function(op)
+				local nextSlots = OPX.Table.DeepCopy(slots)
+				for _, change in ipairs(changes) do
+					local stack = nextSlots[change.slot]
+					if not stack or stack.name ~= change.name then return nil, 'empty_slot' end
+					nextSlots[change.slot] = nil
+				end
+				op.apply = function() slots = nextSlots end
+				return function() return {} end
+			end)
+		end
 		local doorlock = {
 			GetFromName = function(name)
 				local door = doors[name]
@@ -45513,8 +45556,8 @@ do
 		control.Stand(P, 300.5, 0.0, 0.0)
 		control.Advance(1000)
 		local value = added[1].metadata.value
-		local removeShard, saleTarget = bag.RemoveFromSlot, nil
-		bag.RemoveFromSlot = function(target, ...)
+		local removeShard, saleTarget = bag.AtomicTrade, nil
+		bag.AtomicTrade = function(target, ...)
 			saleTarget = target
 			return removeShard(target, ...)
 		end
@@ -45522,7 +45565,7 @@ do
 		check('a hot shard sells at half price at the Kabuki fence', ok and code == 'sold_hot'
 			and runner.PlayerData.money.EDDIES == math.floor(value * 1.0 * 0.5), runner.PlayerData.money.EDDIES)
 		check('the broker removes shards from the original citizen bag', saleTarget == RUNNER_CID)
-		bag.RemoveFromSlot = removeShard
+		bag.AtomicTrade = removeShard
 		local shardsLeft = 0
 		for _, stack in pairs(slots) do
 			if stack.name == 'data_shard' then shardsLeft = shardsLeft + 1 end
@@ -46133,7 +46176,7 @@ do
 				and record.jail == nil)
 
 			-- The desk settles the debt.
-			suspect.PlayerData.money.BANK = 1000
+			Host.SetMoney(env, suspect, 'BANK', 1000)
 			control.Stand(SUSPECT, 505.5, 0.0, 0.0)
 			control.Advance(1000)
 			police.Server.OnDesk(SUSPECT, { station = 'test_precinct' })
@@ -46646,7 +46689,7 @@ do
 				and ledger.moves[1].opId:find('^bar:') ~= nil, ledger.balance .. '/' .. tender.PlayerData.money.BANK)
 
 		bagOf(BT).rogue = 1
-		customer.PlayerData.money.BANK = 10
+		Host.SetMoney(env, customer, 'BANK', 10)
 		wait()
 		bar.Serve(BT, CU, 'rogue')
 		control.Fire('onPlayerInteractionCompleted', asked.interactions[#asked.interactions])
@@ -46655,7 +46698,7 @@ do
 			lastCode(BT) == 'customer_short' and bagOf(BT).rogue == 1 and (bagOf(CU).rogue or 0) == 0
 				and customer.PlayerData.money.BANK == 10, lastCode(BT))
 
-		customer.PlayerData.money.BANK = 1000
+		Host.SetMoney(env, customer, 'BANK', 1000)
 		useInvoices(true)
 		wait()
 		bar.Serve(BT, CU, 'rogue')
@@ -46969,7 +47012,7 @@ do
 		check('a ride under the minimum is free', free and free.code == 'fare_free', free and free.code)
 
 		-- A customer who cannot pay.
-		customer.PlayerData.money.BANK = 0
+		Host.SetMoney(env, customer, 'BANK', 0)
 		seats[CUSTOMER] = { vehicleId = 500, seat = 'seat_front_right' }
 		control.Stand(DRIVER, 0.0, 0.0, 0.0)
 		S.OnHail(DRIVER)
@@ -48587,10 +48630,14 @@ local function invoicesStore(env, file)
 	end
 	S.Reserve = function(op)
 		local row = store.ledger[op.id]
-		if row then return { ok = true, value = { fresh = false, state = row.state } } end
+		if row then return { ok = true, value = { fresh = false, state = row.state, durable = row.durable, destination = row.destination } } end
 		store.ledger[op.id] = { state = 'reserved', amount = op.amount, citizenId = op.citizenId,
-			phase = op.phase, invoiceId = op.invoiceId }
-		return { ok = true, value = { fresh = true, state = 'reserved' } }
+			phase = op.phase, invoiceId = op.invoiceId, durable = true, destination = op.destination }
+		return { ok = true, value = { fresh = true, state = 'reserved', durable = true, destination = op.destination } }
+	end
+	S.OpInfo = function(id)
+		local row = store.ledger[id]
+		return { ok = true, value = row and { state = row.state, durable_version = row.durable and 1 or 0, destination = row.destination } or nil }
 	end
 	S.OpState = function(id) return { ok = true, value = store.ledger[id] and store.ledger[id].state or nil } end
 	S.Settle = function(id, state)
@@ -48608,7 +48655,7 @@ local function invoicesStore(env, file)
 		for id, row in pairs(store.ledger) do
 			if row.state == 'reserved' then
 				out[#out + 1] = { id = id, invoiceId = row.invoiceId, phase = row.phase,
-					citizenId = row.citizenId, amount = row.amount }
+					citizenId = row.citizenId, amount = row.amount, durable = row.durable }
 			end
 		end
 		return { ok = true, value = out }
@@ -48647,7 +48694,8 @@ end
 		local driver = contractsCharacter(env, control, D, 'DRV', 'cabbie', 0, 0)
 		local customer = contractsCharacter(env, control, C, 'CUS', 'merc', 0, 0)
 		local stranger = contractsCharacter(env, control, X, 'STR', 'merc', 0, 0)
-		driver.PlayerData.money.BANK, customer.PlayerData.money.BANK = 0, 1000
+		Host.SetMoney(env, driver, 'BANK', 0)
+		Host.SetMoney(env, customer, 'BANK', 1000)
 		local heard = {}
 		for _, name in ipairs({ 'ON_ISSUED', 'ON_PAID', 'ON_REFUSED', 'ON_EXPIRED', 'ON_CANCELLED' }) do
 			env.AddEventHandler(Event[name], function(_, payload)
@@ -48737,7 +48785,8 @@ end
 		accountsUp = true
 
 		-- Bank short, cash covers it.
-		customer.PlayerData.money.BANK, customer.PlayerData.money.EDDIES = 10, 600
+		Host.SetMoney(env, customer, 'BANK', 10)
+		Host.SetMoney(env, customer, 'EDDIES', 600)
 		cool()
 		run(function() return Server.PlayerIssue(D, C, 400, 'Night fare') end)
 		local third = store.nextId
@@ -48746,7 +48795,8 @@ end
 			and customer.PlayerData.money.BANK == 10 and store.rows[third].paidWith == 'EDDIES')
 
 		-- Broke: on the tab, paid later.
-		customer.PlayerData.money.BANK, customer.PlayerData.money.EDDIES = 0, 0
+		Host.SetMoney(env, customer, 'BANK', 0)
+		Host.SetMoney(env, customer, 'EDDIES', 0)
 		cool()
 		run(function() return Server.PlayerIssue(D, C, 300, 'Airport run') end)
 		local fourth = store.nextId
@@ -48762,7 +48812,7 @@ end
 		check('the contract lists it', pending.ok and #pending.value.rows == 1 and pending.value.rows[1].id == fourth)
 		ok, why = run(function() return Server.Pay(X, fourth) end)
 		check('a stranger cannot pay somebody else\'s tab', not ok and why == 'no_such_bill', why)
-		customer.PlayerData.money.BANK = 1000
+		Host.SetMoney(env, customer, 'BANK', 1000)
 		ok, why = run(function() return Server.Pay(C, fourth) end)
 		check('paid later from the tab: the cancelled charge is taken again, once', ok == true
 			and customer.PlayerData.money.BANK == 700 and store.rows[fourth].state == 'paid', why)
@@ -48801,7 +48851,7 @@ end
 		driver.PlayerData.job.onDuty = true
 
 		-- The contract: another module names the account and the cut.
-		customer.PlayerData.money.BANK = 5000
+		Host.SetMoney(env, customer, 'BANK', 5000)
 		issued = run(function() return api.Issue({ issuer = X, target = C, amount = 1000, reason = 'Brakes',
 			account = { kind = 'job', key = 'mechanic' }, cutPct = 20, source = 'mechanic' }) end)
 		check('a module bills through the contract with its own account', issued.ok and type(issued.value.id) == 'number')
@@ -48865,7 +48915,10 @@ end
 				source = 'taxi', issuedAt = 0, expiresAt = 0 }
 		end
 		row(901, 'settling')
-		store.ledger['invoices:901:charge'] = { state = 'committed', amount = 1000, phase = 'charge', invoiceId = 901 }
+		Host.SetMoney(env, customer, 'BANK', 2000)
+		assert(OPX.Modules.Get('character').RemoveMoney(customer, 'BANK', 1000, 'invoice:901', 'invoices:901:charge'))
+		store.ledger['invoices:901:charge'] = { state = 'committed', amount = 1000, phase = 'charge', invoiceId = 901,
+			durable = true, destination = 'character' }
 		row(902, 'asked')
 		row(903, 'settling')
 		store.ledger['invoices:903:charge'] = { state = 'reserved', amount = 1000, phase = 'charge', invoiceId = 903 }
@@ -48998,6 +49051,20 @@ local function corpoBag(OPX)
 		end,
 		CanCarry = function() return { ok = true, value = true } end,
 	}
+	api.AtomicTrade = function(cid, money, amount, changes, reason, opId)
+		local character = OPX.Api.Get('character')
+		return character.AtomicMoney(cid, money, amount, amount > 0 and 'add' or 'touch', reason, opId, function(op)
+			local staged = OPX.Table.DeepCopy(of(cid))
+			for _, change in ipairs(changes) do
+				local item = staged[change.slot]
+				if not item or item.name ~= change.name then return nil, 'empty_slot' end
+				staged[change.slot] = nil
+			end
+			op.apply = function() bags[cid] = staged end
+			return function() return {} end
+		end)
+	end
+
 	local function count(player, name, test)
 		local n = 0
 		for _, stack in pairs(of(player)) do
@@ -49376,6 +49443,12 @@ do
 			end,
 			Deposit = function(kind, key, amount) deposited[#deposited + 1] = { key = key, amount = amount } return { ok = true } end,
 		}
+		accounts.PayCitizen = function(kind, key, cid, money, amount, reason, opId, changes)
+			local funded = accounts.Withdraw(kind, key, amount, reason, opId)
+			if not funded.ok then return funded end
+			if changes then return bag.AtomicTrade(cid, money, amount, changes, reason, opId) end
+			return realGet('character').AtomicMoney(cid, money, amount, 'add', reason, opId)
+		end
 		OPX.Api.Get = function(name, minimum)
 			if name == 'inventory' then return bag end
 			if name == 'contracts' then return contracts end
@@ -49902,14 +49975,14 @@ do
 			local row = db.ledger[op]
 			if row then row.balance_after = db.accounts[acct(row.kind, row.group_key)] end
 		end
-		local function insertLedger(op, kind, group, delta, reason, actor)
+		local function insertLedger(op, kind, group, delta, reason, actor, attempt)
 			if db.ledger[op] ~= nil then return false end
 			db.ledger[op] = { op_id = op, kind = kind, group_key = group, delta = delta, reason = reason,
-				actor = actor, at = 0 }
+				actor = actor, attempt_token = attempt, at = 0 }
 			db.order[#db.order + 1] = op
 			return true
 		end
-		return Host.Database({
+		local bridge = Host.Database({
 			scalar = function() return 1 end,
 			insert = function() return 1 end,
 			transaction = function(list)
@@ -49925,33 +49998,39 @@ do
 				end
 				for _, statement in ipairs(list) do
 					local q, v = statement.query, statement.values
-					if q:find('^INSERT INTO opx77_company_ledger') and q:find('VALUES') then
+					if q:find('^INSERT INTO opx77_company_ledger') and q:find('FROM opx77_money_ledger', 1, true) then
 						if not insertLedger(v[1], v[2], v[3], v[4], v[5], v[6]) then return rollback() end
+					elseif q:find('^INSERT INTO opx77_company_accounts') and q:find('FROM opx77_money_ledger', 1, true) then
+						local key = acct(v[1], v[2]); db.accounts[key] = db.accounts[key] or 0
+					elseif q:find('SET a.balance = a.balance + ?', 1, true) then
+						local key = acct(v[4], v[5]); db.accounts[key] = (db.accounts[key] or 0) + v[3]
+						if db.ledger[v[1]] then db.ledger[v[1]].applied = true end
+					elseif q:find('^INSERT INTO opx77_company_ledger') and q:find('COALESCE') and not q:find('balance >=', 1, true) then
+						local balance = db.accounts[acct(v[8], v[9])] or 0
+						if balance <= v[10] and not insertLedger(v[1], v[2], v[3], v[4], v[5], v[6], v[7]) then return rollback() end
 					elseif q:find('^INSERT INTO opx77_company_ledger') and q:find('FROM opx77_company_accounts') then
-						local key = acct(v[5], v[6])
-						if (db.accounts[key] or -1) >= v[7] then
-							if not insertLedger(v[1], v[5], v[6], v[2], v[3], v[4]) then return rollback() end
+						local key = acct(v[6], v[7])
+						local fits = not v[9] or (db.accounts[acct(v[9], v[10])] or 0) <= v[11]
+						if (db.accounts[key] or -1) >= v[8] and fits then
+							if not insertLedger(v[1], v[6], v[7], v[2], v[3], v[4], v[5]) then return rollback() end
 						end
 					elseif q:find('^INSERT INTO opx77_company_ledger') and q:find('FROM opx77_company_ledger') then
-						local out = db.ledger[v[4]]
-						if out ~= nil then
-							if not insertLedger(v[1], v[2], v[3], -out.delta, out.reason, out.actor) then
-								return rollback()
-							end
+						local out = db.ledger[v[5]]
+						if out and out.attempt_token == v[6] then
+							if not insertLedger(v[1], v[2], v[3], -out.delta, out.reason, out.actor, v[4]) then return rollback() end
 						end
-					elseif q:find('^INSERT INTO opx77_company_accounts') and q:find('VALUES') then
-						local key = acct(v[1], v[2])
-						db.accounts[key] = (db.accounts[key] or 0) + v[3]
 					elseif q:find('^INSERT INTO opx77_company_accounts') then
 						local row = db.ledger[v[1]]
-						if row then
+						if row and row.attempt_token == v[2] then
 							local key = acct(row.kind, row.group_key)
-							db.accounts[key] = db.accounts[key] or 0
+							local delta = q:find('group_key, delta FROM', 1, true) and row.delta or 0
+							db.accounts[key] = (db.accounts[key] or 0) + delta
+							if delta ~= 0 then row.applied = true end
 						end
 					elseif q:find('SET a.balance = a.balance %+ l.delta') then
-						for index = 1, #v do
+						for index = 1, #v - 1 do
 							local row = db.ledger[v[index]]
-							if row and row.applied == nil then
+							if row and row.attempt_token == v[#v] and row.applied == nil then
 								row.applied = true
 								local key = acct(row.kind, row.group_key)
 								db.accounts[key] = (db.accounts[key] or 0) + row.delta
@@ -49972,7 +50051,7 @@ do
 					local row = db.ledger[params.op]
 					if row == nil then return nil end
 					return { kind = row.kind, group_key = row.group_key, delta = row.delta,
-						balance_after = row.balance_after }
+						balance_after = row.balance_after, attempt_token = row.attempt_token }
 				end
 				if sql:find('FROM opx77_company_accounts', 1, true) then
 					local value = db.accounts[acct(params.kind, params.group)]
@@ -50025,8 +50104,13 @@ do
 					return 1
 				end
 				return 1
-			end,
-		})
+			end,		})
+		bridge.unitMoneyGuard = function(guard)
+			local balance = db.accounts[acct(guard.values[1], guard.values[2])] or 0
+			if guard.query:find('COALESCE', 1, true) then return balance <= guard.values[3] end
+			return balance >= guard.values[3]
+		end
+		return bridge
 	end
 
 	-- A loaded character with a job, a gang, cash and a membership row.
@@ -50282,30 +50366,33 @@ do
 			check('a grade without bankAuth cannot touch the treasury', not ok and code == 'not_boss', code)
 			db.down = true
 			ok, code = run(env, control, function() return Server.Deposit(B, 'job', 'ncpd', 300) end)
-			check('a deposit the treasury refuses gives the cash back',
+			check('a refused atomic deposit never takes the cash',
 				not ok and boss.PlayerData.money.EDDIES == 3500 and db.accounts['job:ncpd'] == 1500, code)
 			db.down = false
 
-			-- Every payout targets the original citizen after a yielding account call.
-			local realWithdraw, realDeposit = business.Accounts.Withdraw, business.Accounts.Deposit
-			local character = OPX.Api.Get('character')
-			local realAdd, realOffline = character.AddMoney, character.AddMoneyOffline
-			local paidCitizen, paidConnection
-			character.AddMoney = function(...) paidConnection = true; return realAdd(...) end
-			character.AddMoneyOffline = function(citizen, _, amount)
-				paidCitizen = citizen
-				return OPX.Result.Ok({ balance = amount, offline = true })
+			-- Switch the slot during participant preparation, after its citizen was fixed.
+			local character = OPX.Modules.Get('character')
+			local originalBuilder = business.Storage.WalletStatements
+			local replacement
+			business.Storage.WalletStatements = function(...)
+				local statements, guard = originalBuilder(...)
+				character.UnregisterPlayer(boss)
+				replacement = standCharacter(env, control, B, OPX.CitizenId.Generate(), { EDDIES = 0, BANK = 0 })
+				return statements, guard
 			end
-			business.Accounts.Withdraw = function() return OPX.Result.Ok({ balance = 1500 }) end
+			local beforeCash = boss.PlayerData.money.EDDIES
 			ok = run(env, control, function() return Server.Withdraw(B, 'job', 'ncpd', 10) end)
-			check('a treasury payout addresses the citizen rather than a recycled connection',
-				ok and paidCitizen == bossCid and not paidConnection)
-			paidCitizen = nil
-			business.Accounts.Deposit = function() return OPX.Result.Err('accounts.failed') end
+			check('an atomic treasury payout stays on its citizen after the slot changes',
+				ok and boss.PlayerData.money.EDDIES == beforeCash + 10 and replacement.PlayerData.money.EDDIES == 0)
+			character.UnregisterPlayer(replacement); character.RegisterPlayer(boss)
+			db.down = true
+			beforeCash = boss.PlayerData.money.EDDIES
 			ok = run(env, control, function() return Server.Deposit(B, 'job', 'ncpd', 10) end)
-			check('a treasury refund also addresses the original citizen', not ok and paidCitizen == bossCid)
-			character.AddMoney, character.AddMoneyOffline = realAdd, realOffline
-			business.Accounts.Withdraw, business.Accounts.Deposit = realWithdraw, realDeposit
+			check('a failed atomic transfer neither charges the original nor refunds a replacement',
+				not ok and boss.PlayerData.money.EDDIES == beforeCash and replacement.PlayerData.money.EDDIES == 0)
+			db.down = false
+			character.UnregisterPlayer(replacement); character.RegisterPlayer(boss)
+			business.Storage.WalletStatements = originalBuilder
 
 			-- Gangs too, through SetGang.
 			local jefe = staff(env, control, db, 95, 'Jefe', 'unemployed', 0, 'valentinos', 3, 0)
@@ -50781,7 +50868,7 @@ do
 			check('somebody else cannot release it', notYours and notYours.code == 'not_yours',
 				notYours and notYours.code)
 
-			owner.PlayerData.money.BANK = 2000
+			Host.SetMoney(env, owner, 'BANK', 2000)
 			world.accountsOn = true
 			control.Advance(2000)
 			mechanic.Server.OnRelease(OWNER_ID, { shop = 'autofixer_arroyo', plate = 'TOWME001' })
@@ -50795,7 +50882,7 @@ do
 			-- A release the registry refuses is not charged.
 			world.rows.TOWME001.state = 2
 			world.refuseState = 'vehicle.busy'
-			owner.PlayerData.money.BANK = 2000
+			Host.SetMoney(env, owner, 'BANK', 2000)
 			control.Advance(2000)
 			mechanic.Server.OnRelease(OWNER_ID, { shop = 'autofixer_arroyo', plate = 'TOWME001' })
 			local failed = fuelAnswer(control, Event.ANSWER, OWNER_ID)

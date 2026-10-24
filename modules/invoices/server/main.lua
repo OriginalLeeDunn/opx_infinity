@@ -19,10 +19,10 @@
 -- bill goes back to the tab and nothing else happens. Taken, the cut and the
 -- company share follow; a payout that fails leaves the bill `settling` and the
 -- sweep tries it again with the same operation ids, so it can be late but never
--- double. A row a crash left `reserved` is marked `orphaned` at boot and audited
--- for staff: a charge nobody can vouch for makes the bill `disputed` (no payout
--- from money that may never have been taken); a payout nobody can vouch for is
--- not made again.
+-- double. Durable phases are replayed against wallet/company receipts after a
+-- restart. Legacy operations without that proof are quarantined for staff; no
+-- new payout is made against a charge that cannot be vouched for. The recipient
+-- of each share is fixed in its reservation before any payment is attempted.
 --
 -- WHERE THE RACE IS WON. The VM is single-threaded and coroutines interleave
 -- only at a yield, so `claims[id]` (read and written with nothing between) is
@@ -243,24 +243,29 @@ local function withClaim(id, fn)
 end
 
 --- Runs one money operation under its ledger row. `run()` answers `ok, why`.
-local function operate(inv, phase, citizenId, amount, run)
+local function operate(inv, phase, citizenId, amount, run, destination)
 	amount = math.tointeger(amount) or 0
 	if amount <= 0 then return true end
 	local op = { id = ('invoices:%d:%s'):format(inv.id, phase), invoiceId = inv.id, phase = phase,
-		citizenId = citizenId, amount = amount }
+		citizenId = citizenId, amount = amount, destination = destination or 'character' }
 	local reserved = M.Storage.Reserve(op)
 	if not reserved.ok then return false, 'storage' end
 	if not reserved.value.fresh then
 		local state = reserved.value.state
-		if state == 'committed' then return true end
+		if not reserved.value.durable then return false, 'orphaned' end
+		if state == 'committed' then
+			if phase == Phase.REST then inv.restTo = reserved.value.destination end
+			return true
+		end
 		if state == 'orphaned' then return false, 'orphaned' end
-		if state ~= 'cancelled' then return false, 'in_flight' end
-		local rearmed = M.Storage.Rearm(op.id)
-		if not rearmed.ok or rearmed.value ~= true then return false, 'in_flight' end
+		if state == 'cancelled' then
+			local rearmed = M.Storage.Rearm(op.id)
+			if not rearmed.ok or rearmed.value ~= true then return false, 'in_flight' end
+		elseif state ~= 'reserved' then return false, 'in_flight' end
 	end
-	local called, ok, why = pcall(run)
-	if not called then ok, why = false, ok end
-	local settled = M.Storage.Settle(op.id, ok and 'committed' or 'cancelled')
+	local called, ok, why = pcall(run, op.id, reserved.value.destination or destination)
+	if not called then ok, why = false, 'money.pending' end
+	local settled = ok and M.Storage.Settle(op.id, 'committed') or { ok = true }
 	if not settled.ok then
 		Open77.log.error(('[invoices] %s moved=%s but the ledger was not updated: %s')
 			:format(op.id, tostring(ok), safe(settled.detail or settled.error)))
@@ -277,10 +282,10 @@ local function operate(inv, phase, citizenId, amount, run)
 end
 
 --- Pays a character, online or not.
-local function payCitizen(citizenId, amount, reason)
+local function payCitizen(citizenId, amount, reason, opId)
 	local api = characterApi()
 	if api == nil or type(api.AddMoneyOffline) ~= 'function' then return false, 'no_character' end
-	local answer = api.AddMoneyOffline(citizenId, config().moneyType, amount, reason)
+	local answer = api.AddMoneyOffline(citizenId, config().moneyType, amount, reason, opId)
 	if type(answer) == 'table' and answer.ok == true then return true end
 	return false, type(answer) == 'table' and answer.error or 'not_paid'
 end
@@ -288,45 +293,42 @@ end
 --- The company share: into the account when `accounts` runs and takes it,
 --- else to the issuer. Inside ONE ledger row whichever way it went, so a
 --- replay can never pay both.
-local function payRest(inv, amount, opId)
-	local accounts = inv.account and OPX.Api.Get('accounts') or nil
-	if accounts ~= nil and type(accounts.Deposit) == 'function' then
+local function payRest(inv, amount, opId, destination)
+	if destination == 'account' then
+		local accounts = inv.account and OPX.Api.Get('accounts') or nil
+		if accounts == nil or type(accounts.Deposit) ~= 'function' then return false, 'payout_pending' end
 		local called, answer = pcall(accounts.Deposit, inv.account.kind, inv.account.key, amount,
 			('invoice:%d'):format(inv.id), opId)
-		if called and type(answer) == 'table' and answer.ok == true then
+		if called and type(answer) == 'table' and answer.ok then
 			inv.restTo = 'account'
 			return true
 		end
-		-- A lost answer can conceal a committed treasury credit. Keep the payout
-		-- pending and retry the same idempotency key; paying the issuer now can
-		-- create the company's share twice.
-		if not called or (type(answer) == 'table' and answer.error == 'accounts.unknown') then
-			Open77.log.error(('[invoices] invoice %d: treasury credit outcome unknown; payout pending')
-				:format(inv.id))
-			return false, 'accounts.unknown'
-		end
-		OPX.Audit.Log({ event = 'invoices.depositFallback', severity = 'warn',
-			message = ('invoice %d: %s/%s refused the deposit, the issuer is paid instead')
-				:format(inv.id, inv.account.kind, inv.account.key),
-			data = { invoice = inv.id, error = safe(called and type(answer) == 'table' and answer.error or answer) } })
+		-- The recipient is fixed by the reservation. An unreadable/unknown
+		-- company receipt must never redirect the same share to the issuer.
+		return false, called and type(answer) == 'table' and answer.error or 'accounts.unknown'
 	end
 	inv.restTo = 'issuer'
-	return payCitizen(inv.issuerCid, amount, ('invoice:%d'):format(inv.id))
+	return payCitizen(inv.issuerCid, amount, ('invoice:%d'):format(inv.id), opId)
 end
 
 --- Everything after a committed charge: the cut, the rest, `paid`.
 local function finish(inv)
 	local cut, rest = Model.Split(inv.amount, inv.cutPct, inv.account ~= nil)
-	local okCut, why = operate(inv, Phase.CUT, inv.issuerCid, cut, function()
-		return payCitizen(inv.issuerCid, cut, ('invoice:%d:cut'):format(inv.id))
+	local okCut, why = operate(inv, Phase.CUT, inv.issuerCid, cut, function(opId)
+		return payCitizen(inv.issuerCid, cut, ('invoice:%d:cut'):format(inv.id), opId)
 	end)
-	if not okCut and why ~= 'orphaned' then return false, 'payout_pending' end
-	local restOp = ('invoices:%d:%s'):format(inv.id, Phase.REST)
+	if not okCut then
+		if why == 'orphaned' then move(inv, State.DISPUTED); return false, 'disputed' end
+		return false, 'payout_pending'
+	end
 	local okRest
-	okRest, why = operate(inv, Phase.REST, inv.account == nil and inv.issuerCid or nil, rest, function()
-		return payRest(inv, rest, restOp)
-	end)
-	if not okRest and why ~= 'orphaned' then return false, 'payout_pending' end
+	okRest, why = operate(inv, Phase.REST, inv.account == nil and inv.issuerCid or nil, rest, function(opId, destination)
+		return payRest(inv, rest, opId, destination)
+	end, inv.account and OPX.Api.Get('accounts') and 'account' or 'issuer')
+	if not okRest then
+		if why == 'orphaned' then move(inv, State.DISPUTED); return false, 'disputed' end
+		return false, 'payout_pending'
+	end
 	local moved
 	moved, why = move(inv, State.PAID, { paidWith = inv.paidWith })
 	if not moved then return false, why end
@@ -350,14 +352,25 @@ local function charge(inv, player)
 	local cfg = config()
 	local used
 	local ok
-	ok, why = operate(inv, Phase.CHARGE, inv.targetCid, inv.amount, function()
+	ok, why = operate(inv, Phase.CHARGE, inv.targetCid, inv.amount, function(opId)
+		local api = characterApi()
+		local receipt = api.MoneyReceipt(opId)
+		if not receipt.ok then return false, 'money.pending' end
+		if receipt.value then
+			local row = receipt.value
+			if row.citizen_id ~= inv.targetCid or row.action ~= 'remove' or tonumber(row.amount) ~= inv.amount then
+				return false, 'orphaned'
+			end
+			used = row.money_type
+			return true
+		end
 		if citizenOf(player) ~= inv.targetCid then return false, 'character_changed' end
 		local api = characterApi()
 		local reason = ('invoice:%d'):format(inv.id)
-		local took, code = api.RemoveMoney(player, cfg.moneyType, inv.amount, reason)
+		local took, code = api.RemoveMoney(player, cfg.moneyType, inv.amount, reason, opId)
 		if took then used = cfg.moneyType return true end
 		if code == 'money.insufficient' and cfg.fallbackType ~= nil then
-			took, code = api.RemoveMoney(player, cfg.fallbackType, inv.amount, reason)
+			took, code = api.RemoveMoney(player, cfg.fallbackType, inv.amount, reason, opId)
 			if took then used = cfg.fallbackType return true end
 		end
 		return false, code
@@ -368,7 +381,12 @@ local function charge(inv, player)
 			audit(inv, 'disputed', 'error', 'the charge cannot be vouched for')
 			return false, 'disputed'
 		end
-		-- Nothing moved: back on the tab, with its lapse kept or started.
+		if why ~= 'money.insufficient' and why ~= 'money.vetoed' and why ~= 'character_changed'
+			and why ~= 'error.notLoggedIn' and why ~= 'money.offline' then
+			return false, 'payment_pending'
+		end
+		M.Storage.Settle(('invoices:%d:%s'):format(inv.id, Phase.CHARGE), 'cancelled')
+		-- A definite refusal goes back on the tab; unknown payments stay settling.
 		local expires = inv.expiresAt
 		if from == State.ASKED then expires = cfg.unpaidTtlS > 0 and wall() + cfg.unpaidTtlS or 0 end
 		move(inv, State.UNPAID, { expiresAt = expires })
@@ -389,14 +407,45 @@ end
 -- Claim held by the caller.
 local function resume(inv)
 	if inv.state ~= State.SETTLING then return false, 'no_such_bill' end
-	local read = M.Storage.OpState(('invoices:%d:%s'):format(inv.id, Phase.CHARGE))
-	if not read.ok then return false, 'storage' end
-	if read.value == 'committed' then return finish(inv) end
-	if read.value == 'orphaned' or read.value == 'reserved' then
+	local opId = ('invoices:%d:%s'):format(inv.id, Phase.CHARGE)
+	local info = M.Storage.OpInfo(opId)
+	if not info.ok then return false, 'storage' end
+	local prior = info.value
+	if prior and (tonumber(prior.durable_version) ~= 1 or prior.state == 'orphaned') then
 		move(inv, State.DISPUTED)
-		audit(inv, 'disputed', 'error', 'the charge cannot be vouched for')
+		audit(inv, 'disputed', 'error', 'legacy charge has no durable wallet proof')
 		return false, 'disputed'
 	end
+	local api = characterApi()
+	if api.IsMoneyPending(inv.targetCid, opId) then return false, 'payment_pending' end
+	local paid = api.MoneyReceipt(opId)
+	if not paid.ok then return false, 'payment_pending' end
+	if paid.value then
+		local row = paid.value
+		if row.citizen_id ~= inv.targetCid or row.action ~= 'remove' or tonumber(row.amount) ~= inv.amount then
+			move(inv, State.DISPUTED)
+			return false, 'disputed'
+		end
+		inv.paidWith = row.money_type
+		if not prior then
+			local reserved = M.Storage.Reserve({ id = opId, invoiceId = inv.id, phase = Phase.CHARGE,
+				citizenId = inv.targetCid, amount = inv.amount, destination = 'character' })
+			if not reserved.ok then return false, 'storage' end
+		elseif prior.state == 'cancelled' then
+			local rearmed = M.Storage.Rearm(opId)
+			if not rearmed.ok then return false, 'storage' end
+		end
+		local settled = M.Storage.Settle(opId, 'committed')
+		if not settled.ok then return false, 'storage' end
+		return finish(inv)
+	end
+	if api.IsMoneyPending(inv.targetCid, opId) then return false, 'payment_pending' end
+	if prior and prior.state == 'committed' then
+		move(inv, State.DISPUTED)
+		audit(inv, 'disputed', 'error', 'committed invoice has no matching wallet receipt')
+		return false, 'disputed'
+	end
+	if prior then M.Storage.Settle(opId, 'cancelled') end
 	return move(inv, State.UNPAID)
 end
 
@@ -649,10 +698,12 @@ local function reconcile()
 	local pending = M.Storage.Pending()
 	if pending.ok then
 		for _, op in ipairs(pending.value) do
-			M.Storage.Settle(op.id, 'orphaned')
-			OPX.Audit.Log({ event = 'invoices.orphaned', severity = 'error',
+			if not op.durable then
+				M.Storage.Settle(op.id, 'orphaned')
+				OPX.Audit.Log({ event = 'invoices.orphaned', severity = 'error',
 				message = ('%s %d left reserved by a crash: check it by hand'):format(op.id, op.amount),
 				citizenId = op.citizenId, data = { invoice = op.invoiceId, phase = op.phase, amount = op.amount } })
+			end
 		end
 	end
 	local open = M.Storage.LoadOpen()
@@ -719,6 +770,7 @@ function M.Init()
 	invoices, claims, asking, lastIssue, windows, retried = {}, {}, {}, {}, {}, {}
 	loaded = false
 	OPX.Schema.Add(M.Storage.SCHEMA)
+	OPX.Schema.AddColumns(M.Storage.COLUMNS)
 end
 
 --- Publishes the contract.

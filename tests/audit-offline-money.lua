@@ -1,31 +1,37 @@
---- Checks the offline balance ceiling at the actual storage boundary.
+--- Offline and online credits use the same SQL ceiling and durable journal.
 -- @author dop42
---
--- Run with `lua tests/audit-offline-money.lua`. The simulated database applies
--- the UPDATE predicate and checks that its limit is bound, so removing the
--- atomic condition makes the overflow case fail rather than silently passing.
-
-local maximum, balance, present = 9007199254740991, 0, true
-local Result = { Ok = function(value) return { ok = true, value = value } end,
-	Err = function(code) return { ok = false, error = code } end }
-local M = {}
-local storage = {
-	Execute = function(sql, params)
-		assert(sql:find('<= @remaining', 1, true), 'offline UPDATE lacks an atomic ceiling')
-		assert(params.remaining == maximum - params.amount)
-		if not present or balance > params.remaining then return Result.Ok(0) end
-		balance = balance + params.amount
-		return Result.Ok(1)
-	end,
-	Scalar = function() return Result.Ok(present and 1 or 0) end,
-}
-local env = setmetatable({ OPX = { Modules = { Get = function() return M end },
-	Result = Result, Storage = storage } }, { __index = _G })
+-- Real execution, overflow and rollback are exercised by economy-sql.py.
+local Host = dofile('tests/host.lua')
+local env = Host.Environment('server')
+local module, saved = {}, nil
+local OPX = { Modules = { Get = function() return module end } }
+env.OPX = OPX
+assert(loadfile('lib/shared/result.lua', 't', env))()
+assert(loadfile('lib/server/storage.lua', 't', env))()
 assert(loadfile('modules/character/server/storage.lua', 't', env))()
-assert(M.Storage.AddMoney('citizen', 'EDDIES', maximum).ok)
-assert(balance == maximum)
-assert(M.Storage.AddMoney('citizen', 'EDDIES', 1).error == 'money.tooLarge')
-assert(balance == maximum, 'refused payment changed the balance')
-present = false
-assert(M.Storage.AddMoney('missing', 'EDDIES', 1).error == 'character.notFound')
-print('offline money audit regression checks passed')
+local maximum = 9007199254740991
+local op = { id = 'offline-test', attempt = 'attempt', citizenId = 'TEST', moneyType = 'EDDIES',
+	action = 'add', amount = maximum, reason = 'test' }
+local plan = module.Storage.MoneyStatements(op)
+assert(plan.ok and #plan.value == 2)
+local insert = plan.value[1]
+assert(insert.query:find('FOR UPDATE', 1, true), 'balance eligibility is not locked')
+assert(insert.query:find('attempt_token', 1, true), 'receipt lacks attempt ownership')
+assert(plan.value[2].query:find('attempt_token', 1, true), 'wallet update can reuse another attempt')
+local zero = false
+for _, value in ipairs(insert.values) do if value == 0 then zero = true end end
+assert(zero, 'maximum credit must bind a zero remaining ceiling')
+-- The actual store distinguishes an absent/deleted character from overflow.
+OPX.Storage.Single = function() return OPX.Result.Ok(nil) end
+OPX.Storage.Scalar = function(query)
+	return OPX.Result.Ok(query == 'SELECT UUID()' and 'missing-attempt' or 0)
+end
+OPX.Storage.Transaction = function() return OPX.Result.Ok(true) end
+assert(module.Storage.MoneyChange(op).error == 'character.notFound')
+local called = false
+module.Storage.MoneyChange = function(received)
+	called = received.citizenId == 'TEST' and received.action == 'add' and received.amount == maximum
+	return OPX.Result.Ok({ balance = maximum })
+end
+assert(module.Storage.AddMoney('TEST', 'EDDIES', maximum).ok and called, 'offline credit bypasses shared durable ledger')
+print('offline credit shares locked wallet ceiling and journal')

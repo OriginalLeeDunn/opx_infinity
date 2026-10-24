@@ -283,7 +283,7 @@ The two categories are the garages ones, and they decide what may be sold where:
 record disagrees with the dealer's kind is refused rather than redirected. The rules
 are re-derived on the server — the distance across the ground, the routing bucket,
 whether THAT dealer sells THAT row, and whether the money is really there — and the
-charge goes first, because the vehicles contract can refund and cannot uncreate. A
+charge, ownership row and any seller/company payout obligations share one SQL transaction. A
 registration that is refused after payment is refunded in full and the failure is
 logged with what was bought; a hand-over that is refused is *not* a failed sale: the
 vehicle is owned and filed, and only the convenience of driving it away is reported.
@@ -748,10 +748,11 @@ available after reconnect; the custom objective tick rebuilds the route index.
 ### Underworld
 
 `modules/underworld` + `config/underworld.lua`. Dirty money is the `dirty_eddies` item
-(never a balance); every valued action goes through `server/op.lua` -- check, escrow the
-inputs before the bar, server-timed bar, re-check, destroy the escrow, create the value
-last, refund once on any other ending -- with a ledger row per movement
-(`/opx.underworld.ledger <cid>`) and per-hour mint caps. Black-market dealers rotate
+(never a balance); every valued action goes through `server/op.lua`: check inputs,
+run the server-timed progress, re-check and commit inputs, outputs and owned rows
+in one durable transaction. Cancelling before that commit takes nothing. Mint caps
+and laundering limits are checked under SQL locks with their ledger writes
+(`/opx.underworld.ledger <cid>`). Black-market dealers rotate
 between spots, sell for dirty or (dearer) clean money and fence stolen goods; stores
 hold regrowing register charges, need a weapon in hand and police on duty, and raise
 an alarm (`police.Report` when that contract exists, else on-duty NCPD and MaxTac);
@@ -1395,8 +1396,9 @@ their behaviour.
 
 Every eddie moves through one rule: a ledger row keyed `contracts:<id>:<phase>`
 (`opx77_contract_ledger`) is reserved, the money moves, the row is committed. A replay
-finds the receipt and moves nothing; a row a crash left `reserved` is marked
-`orphaned` and audited for staff, never guessed at. A gig that ends is written
+finds the durable wallet receipt and moves nothing. Versioned reservations can be
+resumed with their original operation ids; legacy reservations without durable
+proof are quarantined for staff rather than automatically repeated or refunded. A gig that ends is written
 `settling` first, so a restart finishes paying it. Payouts use `AddMoneyOffline`: a
 merc who logged off is still paid.
 
@@ -1494,6 +1496,59 @@ source? }` -> `Result{ id }` (yields; no reach or job check -- the caller decide
 `opx:on:invoices:issued`, `paid`, `refused`, `expired`, `cancelled` as `(source, { id,
 amount, account, source, issuerCid, targetCid })`. NCPD ships without an entry on purpose:
 a citation is a fine, not a service.
+
+---
+
+## Economic persistence
+
+Wallet writes (`AddMoney`, `RemoveMoney`, `SetMoney`, `AddMoneyOffline`) are durable
+before success is returned. Character autosaves do not rewrite money. Money types
+retain the configured negative-balance rules and the JavaScript safe-integer limit.
+All external writes must use the awaited export form below, including online cash.
+
+`opx77_money_ledger` records each operation id, character, currency, amount and
+resulting balance. Participant writes use both that id and a fresh attempt nonce.
+The internal `inventory.AtomicTrade` and `AtomicPeerTrade` contracts couple wallets
+with staged bags, trunks or peer inventories. Currency-note conversions, company
+desk transfers, crafting orders/collection, shard sales, hauling sales, corporate
+item hand-ins, underworld trades and paid clothing use this boundary. Crafting
+computes each deadline from the locked SQL queue tail.
+
+A lost database reply returns `money.pending`. The runtime keeps affected wallets
+and containers locked, reconciles the same operation id and publishes its result
+once. Never interpret this refusal as permission to refund or retry under a new
+id. `money.opIdConflict` means the id already belongs to a different movement.
+Internal operation ids are server-generated; clients cannot choose them.
+
+Vehicle purchases persist the debit, vehicle ownership and seller/company payout
+obligations together. A delayed payout retains its original recipient and currency;
+it is retried by its receipt id. A purchased car remains available through its garage
+when the immediate handover cannot finish. Invoice and contract phases also retain
+stable payment ids across restarts. A company payout with an uncertain result is
+never redirected to a character as a fallback.
+
+Migration is additive. Existing invoice/contract phase rows and laundering batches
+remain version zero; historical escrow without durable proof is preserved for
+manual reconciliation. Do not promote these records to version one or delete money
+receipts to force a retry. Back up the database and configuration before upgrading.
+Old laundering batches must be reviewed by an administrator rather than collected
+automatically under the new payment rules.
+
+Built-in shop billing returns price quotes to appearance. The outfit and the
+combined charge commit together; no charge is made when a fitting room is cancelled.
+Legacy custom charge callbacks remain callable, but new integrations should return
+`true, nil, { moneyType, amount, publish? }`, with `publish` used only for optional
+post-commit notices. Quotes in one save must use the same currency.
+
+`CONSUMPTION.REQUIRE_OPEN_STATION` in `config/fuel.lua` defaults to `true`. OPX pauses
+its own fuel consumption until at least one station has surveyed, enabled points.
+This does not change point placement or another resource's fuel loop.
+
+The Lua audits use explicit storage doubles; `tests/economy-sql.py` additionally
+executes the actual storage builders against an isolated MariaDB server. CI tests
+rollback boundaries, lost replies/replay, concurrent credits, both sides of peer
+trades, migrations, crafting queues, clothing and ownership/payout obligations.
+Native world effects and two-client acceptance still require an in-game check.
 
 ---
 

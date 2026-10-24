@@ -22,6 +22,11 @@ local Result = OPX.Result
 local Storage = OPX.Storage
 
 M.Storage = {}
+M.Storage.COLUMNS = {
+	{ TABLE = 'opx77_invoice_ledger', COLUMN = 'durable_version', DEFINITION = 'TINYINT UNSIGNED NOT NULL DEFAULT 0' },
+	{ TABLE = 'opx77_invoice_ledger', COLUMN = 'destination',
+		DEFINITION = 'VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL' },
+}
 
 M.Storage.SCHEMA = {
 	[[
@@ -57,6 +62,8 @@ CREATE TABLE IF NOT EXISTS opx77_invoice_ledger (
     citizen_id VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL,
     amount INT UNSIGNED NOT NULL,
     state VARCHAR(12) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    durable_version TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    destination VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL,
     at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_opx77_invoice_ledger_state (state),
     KEY idx_opx77_invoice_ledger_invoice (invoice_id)
@@ -182,32 +189,41 @@ end
 -- @return Result { fresh, state }
 function M.Storage.Reserve(op)
 	local inserted = Storage.Update([[
-INSERT IGNORE INTO opx77_invoice_ledger (op_id, invoice_id, phase, citizen_id, amount, state)
-VALUES (@op, @invoice, @phase, NULLIF(@citizen, ''), @amount, 'reserved')
+INSERT IGNORE INTO opx77_invoice_ledger (op_id, invoice_id, phase, citizen_id, amount, state, durable_version, destination)
+VALUES (@op, @invoice, @phase, NULLIF(@citizen, ''), @amount, 'reserved', 1, @destination)
 ]], {
 		['@op'] = op.id,
 		['@invoice'] = op.invoiceId,
 		['@phase'] = op.phase,
 		['@citizen'] = nullable(op.citizenId),
 		['@amount'] = op.amount,
+		['@destination'] = op.destination or 'character',
 	})
 	if not inserted.ok then return inserted end
-	if (tonumber(inserted.value) or 0) > 0 then return Result.Ok({ fresh = true, state = 'reserved' }) end
-	local read = M.Storage.OpState(op.id)
+	if (tonumber(inserted.value) or 0) > 0 then
+		return Result.Ok({ fresh = true, state = 'reserved', durable = true, destination = op.destination or 'character' })
+	end
+	local read = M.Storage.OpInfo(op.id)
 	if not read.ok then return read end
-	return Result.Ok({ fresh = false, state = read.value or 'reserved' })
+	local row = read.value or {}
+	return Result.Ok({ fresh = false, state = row.state or 'reserved',
+		durable = tonumber(row.durable_version) == 1, destination = row.destination })
 end
 
 --- The state of one operation, or nil when it was never reserved.
 -- @author dop42
 -- @param opId string
 -- @return Result string|nil
-function M.Storage.OpState(opId)
-	local read = Storage.Single([[
-SELECT state FROM opx77_invoice_ledger WHERE op_id = @op
+function M.Storage.OpInfo(opId)
+	return Storage.Single([[
+SELECT state, durable_version, destination FROM opx77_invoice_ledger WHERE op_id = @op
 ]], { ['@op'] = opId })
+end
+
+function M.Storage.OpState(opId)
+	local read = M.Storage.OpInfo(opId)
 	if not read.ok then return read end
-	return Result.Ok(type(read.value) == 'table' and read.value.state ~= nil and tostring(read.value.state) or nil)
+	return Result.Ok(type(read.value) == 'table' and tostring(read.value.state) or nil)
 end
 
 --- Marks a reserved operation committed, cancelled or orphaned.
@@ -228,7 +244,7 @@ end
 -- @return Result boolean
 function M.Storage.Rearm(opId)
 	local moved = Storage.Update([[
-UPDATE opx77_invoice_ledger SET state = 'reserved' WHERE op_id = @op AND state = 'cancelled'
+UPDATE opx77_invoice_ledger SET state = 'reserved' WHERE op_id = @op AND state = 'cancelled' AND durable_version = 1
 ]], { ['@op'] = opId })
 	if not moved.ok then return moved end
 	return Result.Ok((tonumber(moved.value) or 0) > 0)
@@ -239,7 +255,7 @@ end
 -- @return Result table[] { id, invoiceId, phase, citizenId, amount }
 function M.Storage.Pending()
 	local read = Storage.Query([[
-SELECT op_id, invoice_id, phase, citizen_id, amount
+SELECT op_id, invoice_id, phase, citizen_id, amount, durable_version
   FROM opx77_invoice_ledger WHERE state = 'reserved'
 ]], {})
 	if not read.ok then return read end
@@ -247,7 +263,7 @@ SELECT op_id, invoice_id, phase, citizen_id, amount
 	for _, row in ipairs(type(read.value) == 'table' and read.value or {}) do
 		out[#out + 1] = { id = tostring(row.op_id), invoiceId = math.tointeger(tonumber(row.invoice_id)),
 			phase = tostring(row.phase), citizenId = text(row.citizen_id),
-			amount = math.tointeger(tonumber(row.amount)) or 0 }
+			amount = math.tointeger(tonumber(row.amount)) or 0, durable = tonumber(row.durable_version) == 1 }
 	end
 	return Result.Ok(out)
 end

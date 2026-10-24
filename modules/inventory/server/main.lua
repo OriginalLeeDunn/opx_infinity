@@ -293,6 +293,11 @@ local function withTrunk(vehicleId, source, body)
 	return body(trunk)
 end
 
+--- Resolves a trusted trade's trunk using the same ownership and lock rules.
+function M.EconomicTrunk(vehicleId, source)
+	return withTrunk(vehicleId, source, function(container) return Result.Ok(container) end)
+end
+
 --- Adds catalogue items to a vehicle's trunk.
 -- @author dop42
 -- @param vehicleId integer|string
@@ -897,6 +902,7 @@ function M.DeleteContainer(kind, owner)
 	local held = Containers.Find(kind, owner)
 	if held then
 		if held.transient then return Result.Err('bad_argument', 'kind') end
+		if held.economicLock then return Result.Err('busy') end
 		Containers.Discard(held.id)
 	end
 
@@ -970,6 +976,8 @@ end
 -- @author dop42
 function M.Api()
 	OPX.Api.Provide('inventory', 1, {
+		AtomicTrade = M.Economy.Trade,
+		AtomicPeerTrade = M.Economy.PeerTrade,
 		AddItem = M.AddItem,
 		RemoveItem = M.RemoveItem,
 		RemoveFromSlot = M.RemoveFromSlot,
@@ -1070,6 +1078,13 @@ function M.Start()
 	AddEventHandler(OPX.Event(OPX.Channel.INTERNAL, 'character', 'deleted'),
 		function(_, citizenId)
 			if type(citizenId) ~= 'string' or citizenId == '' then return end
+			local deadline = OPX.Now() + 35000
+			local bag = Containers.Find(M.KIND.CHARACTER, citizenId)
+			while bag and bag.economicLock and OPX.Now() < deadline do Wait(50) end
+			if bag and bag.economicLock then
+				Open77.log.error('[inventory] deleted character cleanup waits for economic reconciliation')
+				return
+			end
 			local purged = M.Storage.PurgeCharacter(citizenId)
 			if purged ~= nil and not purged.ok then
 				Open77.log.warn(('[inventory] the containers of the deleted %s were not ' ..

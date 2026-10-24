@@ -252,7 +252,7 @@ end
 -- @author dop42
 -- @param containers table[] each { id, rows }
 -- @return Result
-function Store.Save(containers)
+function Store.Save(containers, atomic)
 	-- Each container's statements, kept together: they are one unit.
 	local groups = {}
 
@@ -308,6 +308,11 @@ function Store.Save(containers)
 	end
 
 	if #groups == 0 then return Result.Ok(0) end
+	if atomic then
+		local count = 0
+		for index = 1, #groups do count = count + #groups[index] end
+		if count > MAX_STATEMENTS then return Result.Err('transaction_too_large') end
+	end
 
 	-- Packed greedily into transactions of at most MAX_STATEMENTS. A failure
 	-- stops the save and is answered; the containers of a transaction that DID
@@ -503,11 +508,13 @@ end
 -- goes out on the next sweep.
 local dirty = {}
 local saving = {}
+local revisions = {}
 
 --- Marks a container unwritten, keeping the time of its oldest change.
 -- @author dop42
 -- @param id integer
 function Store.MarkDirty(id)
+	revisions[id] = (revisions[id] or 0) + 1
 	if dirty[id] == nil then dirty[id] = OPX.Now() end
 end
 
@@ -552,7 +559,7 @@ function Store.Write(list)
 	local snapshots, ids = {}, {}
 	for index = 1, #list do
 		local container = list[index]
-		if not container.transient and not saving[container.id] then
+		if not container.transient and not container.economicLock and not saving[container.id] then
 			snapshots[#snapshots + 1] = { id = container.id, rows = rowsOf(container) }
 			ids[#ids + 1] = container.id
 			saving[container.id] = true
@@ -597,6 +604,7 @@ end
 -- @param container table
 -- @return boolean
 function Store.SaveUntilClean(container)
+	if container.economicLock then return false end
 	local failures = 0
 	while true do
 		local deadline = OPX.Now() + 35000
@@ -627,7 +635,8 @@ function Store.Sweep()
 	for id, since in pairs(dirty) do
 		if not saving[id] and now - since >= delayMs then
 			local container = M.Containers.Get(id)
-			if container then due[#due + 1] = container else dirty[id] = nil end
+			if container and not container.economicLock then due[#due + 1] = container
+			elseif not container then dirty[id] = nil end
 		end
 	end
 
@@ -670,4 +679,68 @@ function Store.FlushAll()
 		end
 	end
 	return dispatched
+end
+
+
+--- Stops new snapshots and waits for an older deferred save to finish. Yields.
+-- Set economicLock before calling, so no new writer can pass the old one.
+function Store.EconomicFence(container, token)
+	local deadline = OPX.Now() + 35000
+	while saving[container.id] and OPX.Now() < deadline do Wait(50) end
+	if saving[container.id] or container.economicLock ~= token then return nil, 'busy' end
+	return revisions[container.id] or 0
+end
+
+--- Clears only dirt included in the committed snapshot, preserving later ammo.
+function Store.EconomicAccepted(container, revision)
+	if (revisions[container.id] or 0) == revision then dirty[container.id] = nil end
+end
+
+--- Inventory participant for a wallet receipt, guarded on id AND attempt.
+-- Every old/new stack and the wallet are in the same SQL transaction. A retry
+-- matching no wallet row must not delete or insert inventory rows on its own.
+function Store.MoneyStatements(container, op)
+	local statements = {
+		{ query = 'DELETE FROM opx77_inventory_items WHERE inventory_id = ? AND EXISTS ' ..
+			'(SELECT 1 FROM opx77_money_ledger WHERE op_id = ? AND attempt_token = ?)',
+			values = { container.id, op.id, op.attempt } },
+	}
+	local rows = rowsOf(container)
+	local perInsert = (MAX_PARAMETERS - 2) // VALUES_PER_ROW
+	for first = 1, #rows, perInsert do
+		local selects, values = {}, {}
+		for index = first, math.min(first + perInsert - 1, #rows) do
+			local row = rows[index]
+			selects[#selects + 1] = "SELECT ? AS inventory_id, ? AS slot, ? AS name, ? AS quantity, NULLIF(?, '') AS metadata"
+			values[#values + 1] = container.id
+			values[#values + 1] = row.slot
+			values[#values + 1] = row.name
+			values[#values + 1] = row.count
+			values[#values + 1] = Storage.Nullable(row.metadata)
+		end
+		values[#values + 1], values[#values + 2] = op.id, op.attempt
+		statements[#statements + 1] = {
+			query = 'INSERT INTO opx77_inventory_items (inventory_id, slot, name, quantity, metadata) ' ..
+				'SELECT r.inventory_id, r.slot, r.name, r.quantity, r.metadata FROM (' ..
+				table.concat(selects, ' UNION ALL ') .. ') r JOIN opx77_money_ledger l ' ..
+				'ON l.op_id = ? AND l.attempt_token = ?', values = values,
+		}
+	end
+	statements[#statements + 1] = {
+		query = 'UPDATE opx77_inventories SET updated_at = CURRENT_TIMESTAMP WHERE id = ? AND EXISTS ' ..
+			'(SELECT 1 FROM opx77_money_ledger WHERE op_id = ? AND attempt_token = ?)',
+		values = { container.id, op.id, op.attempt },
+	}
+	return statements
+end
+
+
+--- Both sides of a transfer must fit ONE transaction, never separate batches.
+function Store.SaveAtomic(containers)
+	local snapshots = {}
+	for index = 1, #containers do
+		local container = containers[index]
+		if not container.transient then snapshots[#snapshots + 1] = { id = container.id, rows = rowsOf(container) } end
+	end
+	return Store.Save(snapshots, true)
 end

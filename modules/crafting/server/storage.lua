@@ -263,3 +263,23 @@ INSERT INTO opx77_crafting_orders (citizen_id, bench, recipe, ready_at)
 VALUES (@citizen, @bench, @recipe, UTC_TIMESTAMP())
 ]], { ['@citizen'] = citizenId, ['@bench'] = bench, ['@recipe'] = recipe })
 end
+
+--- Materials, fee and the order share the character wallet's receipt.
+function M.Storage.OrderStatements(op, bench, recipe, seconds, queue)
+	local guard = { query = '(SELECT COUNT(*) FROM opx77_crafting_orders WHERE citizen_id = ? AND bench = ? FOR UPDATE) < ?',
+		values = { op.citizenId, bench, queue }, error = 'queue_full' }
+	return { { query = 'INSERT INTO opx77_crafting_orders (citizen_id, bench, recipe, ready_at, token) ' ..
+		'SELECT ?, ?, ?, DATE_ADD(GREATEST(UTC_TIMESTAMP(), COALESCE(tail.ready_at, UTC_TIMESTAMP())), INTERVAL ? SECOND), ? ' ..
+		'FROM opx77_money_ledger m LEFT JOIN (SELECT MAX(ready_at) AS ready_at FROM opx77_crafting_orders ' ..
+		'WHERE citizen_id = ? AND bench = ? FOR UPDATE) tail ON 1 = 1 WHERE m.op_id = ? AND m.attempt_token = ?',
+		values = { op.citizenId, bench, recipe, seconds, op.id, op.citizenId, bench, op.id, op.attempt } } }, guard
+end
+
+--- Removing the ready order and installing its output are one commit.
+function M.Storage.CollectionStatements(op, orderId)
+	return { { query = 'DELETE FROM opx77_crafting_orders WHERE id = ? AND citizen_id = ? ' ..
+		'AND EXISTS (SELECT 1 FROM opx77_money_ledger WHERE op_id = ? AND attempt_token = ?)',
+		values = { orderId, op.citizenId, op.id, op.attempt } } },
+		{ query = 'EXISTS (SELECT 1 FROM opx77_crafting_orders WHERE id = ? AND citizen_id = ? AND ready_at <= UTC_TIMESTAMP() FOR UPDATE)',
+			values = { orderId, op.citizenId }, error = 'no_such_order' }
+end

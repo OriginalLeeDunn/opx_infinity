@@ -35,6 +35,9 @@ OPX.Locale.Register('en', {
 	['session.newCharacter'] = 'Building a new character. Reconnect to make them.',
 	['session.characterDeleted'] = 'That character is gone. Reconnect to play another.',
 
+	['money.pending'] = 'This payment is still being checked. Please do not repeat it. Contact an administrator if it remains pending.',
+	['money.opIdConflict'] = 'This payment could not be completed. If you think this is a mistake, contact an administrator.',
+	['money.useLedger'] = 'Please use the money operations to change a balance.',
 	['money.insufficient'] = 'You do not have enough money.',
 	['money.badType'] = 'That is not a currency on this server.',
 	['money.badAmount'] = 'That amount is not valid.',
@@ -205,6 +208,9 @@ OPX.Locale.Register('fr', {
 	['session.newCharacter'] = 'Nouveau personnage. Reconnectez-vous pour le construire.',
 	['session.characterDeleted'] = 'Ce personnage est supprimé. Reconnectez-vous.',
 
+	['money.pending'] = 'Ce paiement est en cours de vérification. Ne le répétez pas. Contactez un administrateur si cela persiste.',
+	['money.opIdConflict'] = 'Ce paiement ne peut pas être effectué. Si vous pensez que c’est une erreur, contactez un administrateur.',
+	['money.useLedger'] = 'Utilisez les opérations monétaires pour modifier un solde.',
 	['money.insufficient'] = "Vous n'avez pas assez d'argent.",
 	['money.badType'] = "Ce n'est pas une devise sur ce serveur.",
 	['money.badAmount'] = "Ce montant n'est pas valide.",

@@ -629,65 +629,48 @@ end
 
 -- ── the treasury desk ───────────────────────────────────────────────────────
 
-local function deposit(source, kind, key, amount)
+local function walletTransfer(source, kind, key, amount, depositing)
 	amount = Access.Amount(amount)
 	if amount == nil then return false, 'bad_amount' end
 	local desk, why = deskOf(source, kind, key)
 	if desk == nil then return false, why end
 	if not Access.BankAuth(kind, key, desk.level) then return false, 'no_bank' end
 	local api = characterApi()
-	local reason = ('business:deposit:%s:%s'):format(kind, key)
-	local ok, took, code = pcall(api.RemoveMoney, source, Access.POCKET, amount, reason)
-	if not ok or not took then return false, (ok and code) or 'no_money' end
+	if type(api.AtomicMoney) ~= 'function' then return false, 'generic' end
+	local player = api.GetPlayer(source)
+	if not player or player.PlayerData.citizenId ~= desk.citizenId then return false, 'no_money' end
+	local direction = depositing and 'deposit' or 'withdraw'
+	local reason = ('business:%s:%s:%s'):format(direction, kind, key)
+	local opId = Accounts.Mint(depositing and 'boss-dep' or 'boss-wdr')
+	local answer = api.AtomicMoney(player, Access.POCKET, amount, depositing and 'remove' or 'add',
+		reason, opId, function(context)
+			context.publish = function()
+				local receipt = M.Storage.Receipt(context.id)
+				if receipt.ok and receipt.value then
+					Accounts.WalletCommitted(kind, key, depositing and amount or -amount,
+						tonumber(receipt.value.balance_after), reason, context.id, desk.citizenId)
+				end
+			end
+			return function(operation)
+				return M.Storage.WalletStatements(operation, kind, key, amount, depositing)
+			end
+		end)
+	if not answer.ok then return false, answer.error end
+	local receipt = M.Storage.Receipt(opId)
+	local current = api.GetPlayer(source)
+	if receipt.ok and receipt.value and current and current.PlayerData.citizenId == desk.citizenId then
+		tell(source, depositing and 'business.bank.deposited' or 'business.bank.withdrew',
+			{ amount = money(amount), balance = money(tonumber(receipt.value.balance_after) or 0) }, 'success')
+	end
+	return true
+end
 
-	local put = Accounts.Deposit(kind, key, amount, reason, Accounts.Mint('boss-dep'), desk.citizenId)
-	if put.ok then
-		tell(source, 'business.bank.deposited', { amount = money(amount), balance = money(put.value.balance) },
-			'success')
-		return true
-	end
-	if put.error == 'accounts.unknown' then
-		-- Neither refunded nor forgotten: staff settle it from the ledger.
-		OPX.Audit.Log({ event = 'money.company.unknown', severity = 'error', source = source,
-			citizenId = desk.citizenId, message = ('deposit of %d to %s:%s, op %s, outcome unknown')
-			:format(amount, kind, key, safe(put.detail)) })
-		return false, 'unknown'
-	end
-	-- The account write yielded: this connection may now hold another citizen.
-	local back = call('AddMoneyOffline', desk.citizenId, Access.POCKET, amount, 'business:refund')
-	if not back.ok then
-		OPX.Audit.Log({ event = 'money.company.unknown', severity = 'error', source = source,
-			citizenId = desk.citizenId, message = ('deposit of %d to %s:%s failed and the refund '
-				.. 'did not land'):format(amount, kind, key) })
-	end
-	return false, put.error
+local function deposit(source, kind, key, amount)
+	return walletTransfer(source, kind, key, amount, true)
 end
 
 local function withdraw(source, kind, key, amount)
-	amount = Access.Amount(amount)
-	if amount == nil then return false, 'bad_amount' end
-	local desk, why = deskOf(source, kind, key)
-	if desk == nil then return false, why end
-	if not Access.BankAuth(kind, key, desk.level) then return false, 'no_bank' end
-	local reason = ('business:withdraw:%s:%s'):format(kind, key)
-	local opId = Accounts.Mint('boss-wdr')
-	local took = Accounts.Withdraw(kind, key, amount, reason, opId, desk.citizenId)
-	if not took.ok then return false, took.error end
-
-	local paid = call('AddMoneyOffline', desk.citizenId, Access.POCKET, amount, reason)
-	if not paid.ok then
-		local undo = Accounts.Deposit(kind, key, amount, reason .. ':undo', opId .. ':undo',
-			desk.citizenId)
-		if not undo.ok then
-			OPX.Audit.Log({ event = 'money.company.unknown', severity = 'error', source = source,
-				citizenId = desk.citizenId, message = ('withdrawal %s of %d from %s:%s was debited, '
-					.. 'not paid and not credited back'):format(opId, amount, kind, key) })
-		end
-		return false, 'generic'
-	end
-	tell(source, 'business.bank.withdrew', { amount = money(amount), balance = money(took.value.balance) },
-		'success')
-	return true
+	return walletTransfer(source, kind, key, amount, false)
 end
 
 -- ── the door ────────────────────────────────────────────────────────────────
@@ -780,6 +763,7 @@ function M.Api()
 		Deposit = Accounts.Deposit,
 		Withdraw = Accounts.Withdraw,
 		Transfer = Accounts.Transfer,
+		PayCitizen = Accounts.PayCitizen,
 		History = Accounts.History,
 		-- Beyond v1, for a writer that banks into the same table on its own
 		-- (the dealership): records the movement for the history and the bus.
@@ -804,6 +788,7 @@ function M.Init()
 	windows, offers, offerOf, nextOffer, changing, hiring = {}, {}, {}, 0, {}, {}
 	Accounts.Reset()
 	OPX.Schema.Add(M.Storage.SCHEMA)
+	OPX.Schema.AddColumns(M.Storage.COLUMNS)
 end
 
 --- Wires the requests, the commands and the offer sweep.

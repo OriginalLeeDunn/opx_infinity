@@ -24,6 +24,9 @@ local Result = OPX.Result
 local Storage = OPX.Storage
 
 M.Storage = {}
+M.Storage.COLUMNS = {
+	{ TABLE = 'opx77_contract_ledger', COLUMN = 'durable_version', DEFINITION = 'TINYINT UNSIGNED NOT NULL DEFAULT 0' },
+}
 
 M.Storage.SCHEMA = {
 	[[
@@ -64,6 +67,7 @@ CREATE TABLE IF NOT EXISTS opx77_contract_ledger (
     citizen_id VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL,
     amount INT UNSIGNED NOT NULL,
     state VARCHAR(12) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    durable_version TINYINT UNSIGNED NOT NULL DEFAULT 0,
     at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_opx77_contract_ledger_state (state),
     KEY idx_opx77_contract_ledger_contract (contract_id)
@@ -231,8 +235,8 @@ end
 -- @return Result { fresh, state }
 function M.Storage.Reserve(op)
 	local inserted = Storage.Update([[
-INSERT IGNORE INTO opx77_contract_ledger (op_id, contract_id, phase, citizen_id, amount, state)
-VALUES (@op, @contract, @phase, NULLIF(@citizen, ''), @amount, 'reserved')
+INSERT IGNORE INTO opx77_contract_ledger (op_id, contract_id, phase, citizen_id, amount, state, durable_version)
+VALUES (@op, @contract, @phase, NULLIF(@citizen, ''), @amount, 'reserved', 1)
 ]], {
 		['@op'] = op.id,
 		['@contract'] = op.contractId,
@@ -241,13 +245,19 @@ VALUES (@op, @contract, @phase, NULLIF(@citizen, ''), @amount, 'reserved')
 		['@amount'] = op.amount,
 	})
 	if not inserted.ok then return inserted end
-	if (tonumber(inserted.value) or 0) > 0 then return Result.Ok({ fresh = true, state = 'reserved' }) end
+	if (tonumber(inserted.value) or 0) > 0 then return Result.Ok({ fresh = true, state = 'reserved', durable = true }) end
 	local read = Storage.Single([[
-SELECT state FROM opx77_contract_ledger WHERE op_id = @op
+SELECT state, durable_version, amount, contract_id, phase, citizen_id FROM opx77_contract_ledger WHERE op_id = @op
 ]], { ['@op'] = op.id })
 	if not read.ok then return read end
+	local row = read.value
+	if type(row) ~= 'table' then return Result.Err('storage') end
+	if tonumber(row.contract_id) ~= op.contractId or row.phase ~= op.phase
+		or row.citizen_id ~= op.citizenId or tonumber(row.amount) ~= op.amount then
+		return Result.Err('money.opIdConflict')
+	end
 	local state = type(read.value) == 'table' and tostring(read.value.state) or 'reserved'
-	return Result.Ok({ fresh = false, state = state })
+	return Result.Ok({ fresh = false, state = state, durable = type(read.value) == 'table' and tonumber(read.value.durable_version) == 1 })
 end
 
 --- Marks a reserved operation done or abandoned.
@@ -269,7 +279,7 @@ end
 -- @return Result boolean whether this caller holds it now
 function M.Storage.Rearm(opId)
 	local moved = Storage.Update([[
-UPDATE opx77_contract_ledger SET state = 'reserved' WHERE op_id = @op AND state = 'cancelled'
+UPDATE opx77_contract_ledger SET state = 'reserved' WHERE op_id = @op AND state = 'cancelled' AND durable_version = 1
 ]], { ['@op'] = opId })
 	if not moved.ok then return moved end
 	return Result.Ok((tonumber(moved.value) or 0) > 0)
@@ -280,7 +290,7 @@ end
 -- @return Result table[] { id, contractId, phase, citizenId, amount }
 function M.Storage.Pending()
 	local read = Storage.Query([[
-SELECT op_id, contract_id, phase, citizen_id, amount
+SELECT op_id, contract_id, phase, citizen_id, amount, durable_version
   FROM opx77_contract_ledger WHERE state = 'reserved'
 ]], {})
 	if not read.ok then return read end
@@ -288,9 +298,14 @@ SELECT op_id, contract_id, phase, citizen_id, amount
 	for _, row in ipairs(type(read.value) == 'table' and read.value or {}) do
 		out[#out + 1] = { id = tostring(row.op_id), contractId = math.tointeger(tonumber(
 			row.contract_id)), phase = tostring(row.phase), citizenId = row.citizen_id ~= nil
-			and tostring(row.citizen_id) or nil, amount = math.tointeger(tonumber(row.amount)) or 0 }
+			and tostring(row.citizen_id) or nil, amount = math.tointeger(tonumber(row.amount)) or 0, durable = tonumber(row.durable_version) == 1 }
 	end
 	return Result.Ok(out)
+end
+
+--- Reservation provenance, including legacy operations that cannot be replayed.
+function M.Storage.OpInfo(opId)
+	return Storage.Single('SELECT state, durable_version, amount, contract_id, phase, citizen_id FROM opx77_contract_ledger WHERE op_id = @op', { ['@op'] = opId })
 end
 
 --- Whether an operation was committed.

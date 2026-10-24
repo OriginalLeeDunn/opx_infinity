@@ -7,18 +7,9 @@
 -- cannot reach. The screen is a renderer; `shared/recipes.lua` builds what it
 -- renders, on this side, from what the bag and the purse actually hold.
 --
--- THE MONEY IS THE CHARACTER MODULE'S AND STAYS THERE. `RemoveMoney` and
--- `AddMoney` through the contract, with a reason string, and no balance of any
--- kind is kept here -- a second ledger is how a framework loses the first one.
---
--- WHAT IS NOT ATOMIC, SAID OUT LOUD. Placing an order touches three things that
--- are not in one transaction: the bag, the purse and this module's table. The
--- order below is chosen so the compensation is always possible -- materials
--- first, because putting a stack straight back into the bag it just left cannot
--- fail for room; then the fee, which is one call with one inverse; then the row.
--- A failure at any step undoes the steps before it, in reverse, and the failure
--- of an UNDO is the one thing loud enough to be an `error` line naming exactly
--- what the player is owed.
+-- Wallet changes belong to character. AtomicTrade couples the materials,
+-- fee and order row; collection couples the output and ready-order deletion.
+-- Unknown database replies reconcile their receipt without compensation.
 
 local M = OPX.Modules.Get('crafting')
 
@@ -297,72 +288,6 @@ local function view(player, benchKey)
 		labelOf, function(recipeKey) return gateOk(bench, player, recipeKey) end))
 end
 
---- Puts materials back after something later in the sequence refused.
--- A stack that has just left this bag fits back into it, so a failure here is
--- not a case to handle but a case to SHOUT about: the player is owed items the
--- server could not give back, and that line is the only trace of it.
---
--- TO THE CHARACTER, NOT THE CONNECTION. The refusal that sends things back can
--- come after `Storage.Place` yielded, and by then the player may have left (the
--- bag already unloaded, without the inputs) or switched character in the world
--- (and the inputs went to the other one). The inventory contract takes a
--- citizen id, online or not, and gives back to the bag they came out of.
-local function restore(citizenId, taken)
-	local inventory = M.Contracts.inventory
-	for index = #taken, 1, -1 do
-		local back = inventory.AddItem(citizenId, taken[index].item, taken[index].count)
-		if type(back) ~= 'table' or not back.ok then
-			Open77.log.error(('[crafting] %dx %s could not be returned to %s: %s')
-				:format(taken[index].count, taken[index].item, citizenId,
-					type(back) == 'table' and tostring(back.error) or 'no answer'))
-		end
-	end
-end
-
---- Gives a price back to the character that paid it, here or not. Yields.
--- `AddMoney` by connection answered `error.notLoggedIn` for a player who had
--- left during the order, and the answer was never read: the money was simply
--- gone. `AddMoneyOffline` pays a loaded character in memory and an absent one
--- in its row, under the character module's ledger.
-local function refund(player, citizenId, recipe, bench)
-	local character = M.Contracts.character
-	local reason = ('crafting:refund:%s'):format(bench.key)
-	local paid, code
-	if type(character.AddMoneyOffline) == 'function' then
-		local answer = character.AddMoneyOffline(citizenId, recipe.money, recipe.price, reason)
-		paid = type(answer) == 'table' and answer.ok == true
-		code = type(answer) == 'table' and answer.error or nil
-	else
-		paid, code = character.AddMoney(player, recipe.money, recipe.price, reason)
-	end
-	if not paid then
-		Open77.log.error(('[crafting] %d %s could not be refunded to %s at %s: %s')
-			:format(recipe.price, tostring(recipe.money), citizenId, bench.key, tostring(code)))
-	end
-end
-
--- A placement's own name: a tag drawn once per boot (so a restart never reuses
--- one) and a counter. 6 + 6 hex digits and a decimal, well inside the column.
-local bootTag = ('%06x%s'):format(math.random(0, 0xFFFFFF),
-	(tostring({}):match('(%x%x%x%x%x%x)$') or ''))
-local nextToken = 0
-
---- How long `order` keeps asking whether a failed placement went in after all.
-local PLACED_TRIES = 3
-local PLACED_RETRY_MS = 500
-
---- Whether a placement whose answer was a failure is in the table anyway. Yields.
--- @return integer|nil the order id when it is, false when it is not, nil when
--- the database could not say
-local function placedAnyway(citizenId, token)
-	for attempt = 1, PLACED_TRIES do
-		local found = M.Storage.Placed(citizenId, token)
-		if found.ok then return found.value or false end
-		if attempt < PLACED_TRIES then Wait(PLACED_RETRY_MS) end
-	end
-	return nil
-end
-
 --- Places one order. Yields.
 -- @author dop42
 -- @param player Source
@@ -425,73 +350,36 @@ local function orderOnce(player, benchKey, recipeKey)
 	if not may then return Result.Err(why) end
 
 	local inventory = M.Contracts.inventory
-	local taken = {}
+	if type(inventory.AtomicTrade) ~= 'function' then return Result.Err(Refusal.UNAVAILABLE) end
+	local changes = {}
 	for index = 1, #recipe.inputs do
 		local input = recipe.inputs[index]
-		local removed = inventory.RemoveItem(citizenId, input.item, input.count)
-		if type(removed) ~= 'table' or not removed.ok then
-			restore(citizenId, taken)
-			return Result.Err(Refusal.SHORT)
-		end
-		taken[#taken + 1] = input
+		changes[index] = { name = input.item, count = -input.count }
 	end
-
-	if citizenOf(player) ~= citizenId then
-		restore(citizenId, taken)
-		return Result.Err(Refusal.NO_CHARACTER)
-	end
-	if recipe.price > 0 then
-		local paid, refusalKey = M.Contracts.character.RemoveMoney(player, recipe.money,
-			recipe.price, ('crafting:%s'):format(bench.key))
-		if not paid then
-			restore(citizenId, taken)
-			Open77.log.info(('[crafting] player %d could not pay %d %s at %s: %s')
-				:format(player, recipe.price, recipe.money, bench.key, tostring(refusalKey)))
-			return Result.Err(Refusal.CANNOT_PAY)
-		end
-	end
-
 	local seconds = Recipes.ReadyIn(shelf.value.tail, recipe.seconds)
-	nextToken = nextToken + 1
-	local token = ('%s-%d'):format(bootTag, nextToken)
-	local placed = M.Storage.Place(citizenId, bench.key, recipe.key, seconds, bench.queue, token)
-	if not placed.ok then
-		-- AN ANSWER LOST IS NOT A ROW MISSING. The insert may have committed and
-		-- only its answer failed to come back; refunding then handed back the
-		-- materials and the price of an order that was cooking all the same.
-		local found = placedAnyway(citizenId, token)
-		if found then
-			Open77.log.warn(('[crafting] the order at %s answered %s but was filed as %d; ' ..
-				'it stands'):format(bench.key, tostring(placed.detail), found))
-			placed = Result.Ok(found)
-		elseif found == nil then
-			-- Neither answer: refunding could pay twice and keeping could lose it.
-			-- Kept, and said with everything needed to settle it by hand.
-			Open77.log.error(('[crafting] the order %s of %s at %s (%s) could not be filed ' ..
-				'or found (%s); NOTHING WAS REFUNDED. If no order with that token exists, ' ..
-				'refund %d %s and the materials by hand'):format(token, citizenId, bench.key,
-					recipe.key, tostring(placed.detail), recipe.price, tostring(recipe.money)))
-			return Result.Err(Refusal.UNAVAILABLE)
-		end
+	local token
+	local paid = inventory.AtomicTrade(citizenId, recipe.money or 'EDDIES', -recipe.price,
+		changes, 'crafting:' .. bench.key, nil, function(op)
+			if citizenOf(player) ~= citizenId then return nil, Refusal.NO_CHARACTER end
+			local eligible, code = gateOk(bench, player, recipe.key)
+			if not eligible then return nil, code end
+			eligible, code = reachOk(player, bench)
+			if not eligible then return nil, code end
+			token = op.id
+			return function(attempt)
+				return M.Storage.OrderStatements(attempt, bench.key, recipe.key, recipe.seconds, bench.queue)
+			end
+		end)
+	if not paid.ok then
+		local code = paid.error
+		if code == 'money.insufficient' or code == 'money.vetoed' then code = Refusal.CANNOT_PAY
+		elseif code == 'not_enough' or code == 'empty_slot' then code = Refusal.SHORT end
+		return Result.Err(code or Refusal.UNAVAILABLE)
 	end
-	if placed.ok and placed.value == nil then
-		-- THE SHELF FILLED BETWEEN THE CHECK ABOVE AND THE ROW: another order of
-		-- this character's landed first. Nothing was promised, so everything
-		-- taken goes back, exactly as for a row that could not be written.
-		restore(citizenId, taken)
-		if recipe.price > 0 then refund(player, citizenId, recipe, bench) end
-		return Result.Err(Refusal.QUEUE_FULL)
-	end
-	if not placed.ok then
-		-- THE ROW IS LAST FOR EXACTLY THIS CASE. Everything before it has an
-		-- inverse and every inverse is run here; nothing has been promised to the
-		-- player yet, so the order simply did not happen.
-		restore(citizenId, taken)
-		if recipe.price > 0 then refund(player, citizenId, recipe, bench) end
-		Open77.log.error(('[crafting] the order at %s could not be filed: %s')
-			:format(bench.key, tostring(placed.detail)))
-		return Result.Err(Refusal.UNAVAILABLE)
-	end
+	-- Failure of this read cannot refund an order already committed with its
+	-- materials and fee. The next shelf refresh shows it with its real id.
+	local placed = M.Storage.Placed(citizenId, token)
+	if not placed.ok or not placed.value then return Result.Err(Refusal.UNAVAILABLE) end
 
 	OPX.Audit.Log({ event = 'crafting.order', message = ('%s at %s'):format(recipe.key,
 		bench.key), citizenId = citizenId, source = player,
@@ -567,29 +455,14 @@ local function collect(player, orderId)
 		return Result.Err(Refusal.NO_ROOM)
 	end
 
-	local claimed = M.Storage.Claim(citizenId, id)
-	if not claimed.ok then
-		Open77.log.error(('[crafting] order %d could not be claimed: %s')
-			:format(id, tostring(claimed.detail)))
-		return Result.Err(Refusal.UNAVAILABLE)
-	end
-	-- Somebody else took it between the read and the DELETE, or the deadline had
-	-- not actually passed by the database's clock. Either way this caller is not
-	-- the one handing it over.
-	if claimed.value ~= true then return Result.Err(Refusal.NO_SUCH_ORDER) end
-
-	-- To the character the order is filed under: the claim yielded, and a
-	-- connection that switched character meanwhile is somebody else's bag now.
-	local given = inventory.AddItem(citizenId, recipe.output, recipe.count)
-	if type(given) ~= 'table' or not given.ok then
-		local back = M.Storage.Reshelve(citizenId, bench.key, recipe.key)
-		if not back.ok then
-			Open77.log.error(('[crafting] %dx %s was claimed for %s and could neither be given ' ..
-				'nor re-shelved: %s'):format(recipe.count, recipe.output, citizenId,
-				tostring(back.detail)))
-		end
-		return Result.Err(Refusal.NO_ROOM)
-	end
+	if citizenOf(player) ~= citizenId then return Result.Err(Refusal.NO_CHARACTER) end
+	if type(inventory.AtomicTrade) ~= 'function' then return Result.Err(Refusal.UNAVAILABLE) end
+	local given = inventory.AtomicTrade(citizenId, recipe.money or 'EDDIES', 0,
+		{ { name = recipe.output, count = recipe.count } }, 'crafting:collect:' .. id,
+		'crafting:collect:' .. id, function()
+			return function(attempt) return M.Storage.CollectionStatements(attempt, id) end
+		end)
+	if not given.ok then return Result.Err(given.error or Refusal.UNAVAILABLE) end
 
 	OPX.Audit.Log({ event = 'crafting.collect', message = ('%dx %s from %s')
 		:format(recipe.count, recipe.output, bench.key), citizenId = citizenId,

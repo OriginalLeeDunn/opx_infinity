@@ -34,17 +34,35 @@ local function fixtures(env, file)
 		end
 		S.Reserve = function(op)
 			local row = store.ledger[op.id]
-			if row then return result({ fresh = false, state = row.state }) end
-			store.ledger[op.id] = copy(op); store.ledger[op.id].state = 'reserved'
-			return result({ fresh = true, state = 'reserved' })
+			if row then return result({ fresh = false, state = row.state, durable = row.durable_version == 1 }) end
+			store.ledger[op.id] = copy(op); store.ledger[op.id].state = 'reserved'; store.ledger[op.id].durable_version = 1
+			return result({ fresh = true, state = 'reserved', durable = true })
 		end
-		S.Settle = function(id, state) store.ledger[id].state = state; return result(true) end
+		S.Settle = function(id, state)
+			local row = store.ledger[id]
+			if row and row.state == 'reserved' then row.state = state end
+			return result(true)
+		end
 		S.Rearm = function(id)
 			local row = store.ledger[id]
-			if row and row.state == 'cancelled' then row.state = 'reserved'; return result(true) end
+			if row and row.state == 'cancelled' and row.durable_version == 1 then row.state = 'reserved'; return result(true) end
 			return result(false)
 		end
-		S.Pending = function() return result({}) end
+		S.Pending = function()
+			local pending = {}
+			for id, row in pairs(store.ledger) do
+				if row.state == 'reserved' then
+					pending[#pending + 1] = { id = id, contractId = row.contractId, phase = row.phase,
+						citizenId = row.citizenId, amount = row.amount, durable = row.durable_version == 1 }
+				end
+			end
+			return result(pending)
+		end
+		S.OpInfo = function(id)
+			local row = store.ledger[id]
+			return result(row and { state = row.state, durable_version = row.durable_version or 0,
+				amount = row.amount, contract_id = row.contractId, phase = row.phase, citizen_id = row.citizenId })
+		end
 		S.Committed = function(id) return result(store.ledger[id] and store.ledger[id].state == 'committed') end
 		S.MintedLastHour = function()
 			local total = 0
@@ -69,6 +87,7 @@ local function boot(side, configure)
 		fixtures(env, file)
 		if configure then configure(env, file) end
 	end
+	if side == 'server' then dofile('tests/money-store.lua').Install(env) end
 	if side == 'client' then control.Fire('onClientResourceStart', 'opx_infinity') end
 	control.Pump(300); control.ReadyPages()
 	return env, control

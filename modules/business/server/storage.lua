@@ -34,6 +34,10 @@ local Storage = OPX.Storage
 local Result = OPX.Result
 
 M.Storage = {}
+M.Storage.COLUMNS = {
+	{ TABLE = 'opx77_company_ledger', COLUMN = 'attempt_token',
+		DEFINITION = 'VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL' },
+}
 
 M.Storage.SCHEMA = {
 	[[
@@ -55,6 +59,7 @@ CREATE TABLE IF NOT EXISTS opx77_company_ledger (
     balance_after BIGINT NULL DEFAULT NULL,
     reason VARCHAR(96) NOT NULL DEFAULT '',
     actor VARCHAR(48) NULL DEFAULT NULL,
+    attempt_token VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_opx77_company_ledger_op (op_id),
     KEY ix_opx77_company_ledger_group (kind, group_key, id)
@@ -81,78 +86,74 @@ end
 -- @return Result carrying { delta, balance_after, kind, group_key } or nil
 function M.Storage.Receipt(opId)
 	return Storage.Single([[
-SELECT kind, group_key, delta, balance_after
+SELECT kind, group_key, delta, balance_after, attempt_token
   FROM opx77_company_ledger
  WHERE op_id = @op
   ]], { op = opId })
 end
 
--- The statement that writes a movement's balance_after, shared by all three.
+-- Each statement is gated by the attempt nonce. A guarded INSERT matching zero
+-- rows cannot cause an earlier receipt with the same op_id to move money again.
 local STAMP = 'UPDATE opx77_company_ledger l JOIN opx77_company_accounts a ' ..
 	'ON a.kind = l.kind AND a.group_key = l.group_key ' ..
-	'SET l.balance_after = a.balance WHERE l.op_id = ?'
+	'SET l.balance_after = a.balance WHERE l.op_id = ? AND l.attempt_token = ?'
 
---- Credits an account, creating it at the first credit. One transaction.
--- @author dop42
--- @param op table { id, kind, group, amount, reason, actor }
--- @return Result
-function M.Storage.Credit(op)
-	return Storage.Transaction({
-		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor) ' ..
-			"VALUES (?, ?, ?, ?, ?, NULLIF(?, ''))",
-			values = { op.id, op.kind, op.group, op.amount, op.reason, op.actor or '' } },
-		{ query = 'INSERT INTO opx77_company_accounts (kind, group_key, balance) VALUES (?, ?, ?) ' ..
-			'ON DUPLICATE KEY UPDATE balance = balance + VALUES(balance)',
-			values = { op.kind, op.group, op.amount } },
-		{ query = STAMP, values = { op.id } },
-	})
-end
-
---- Debits an account if, and only if, it covers the amount. One transaction;
---- a debit it cannot cover commits nothing, and the missing receipt says so.
--- @author dop42
--- @param op table { id, kind, group, amount, reason, actor }
--- @return Result
-function M.Storage.Debit(op)
-	return Storage.Transaction({
-		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor) ' ..
-			"SELECT ?, kind, group_key, ?, ?, NULLIF(?, '') FROM opx77_company_accounts " ..
-			'WHERE kind = ? AND group_key = ? AND balance >= ?',
-			values = { op.id, -op.amount, op.reason, op.actor or '', op.kind, op.group, op.amount } },
-		{ query = 'UPDATE opx77_company_accounts a JOIN opx77_company_ledger l ' ..
-			'ON l.kind = a.kind AND l.group_key = a.group_key ' ..
-			'SET a.balance = a.balance + l.delta WHERE l.op_id = ?',
-			values = { op.id } },
-		{ query = STAMP, values = { op.id } },
-	})
-end
-
---- Moves money between two accounts: the debit guarded as above, the credit
---- written from the debit's own row, so a debit refused credits nothing.
--- @author dop42
--- @param op table { out, into, from = {kind, group}, to = {kind, group}, amount, reason, actor }
--- @return Result
-function M.Storage.Move(op)
-	return Storage.Transaction({
-		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor) ' ..
-			"SELECT ?, kind, group_key, ?, ?, NULLIF(?, '') FROM opx77_company_accounts " ..
-			'WHERE kind = ? AND group_key = ? AND balance >= ?',
-			values = { op.out, -op.amount, op.reason, op.actor or '', op.from.kind, op.from.group, op.amount } },
-		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor) ' ..
-			'SELECT ?, ?, ?, -delta, reason, actor FROM opx77_company_ledger WHERE op_id = ?',
-			values = { op.into, op.to.kind, op.to.group, op.out } },
+function M.Storage.CreditStatements(op)
+	return {
+		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor, attempt_token) ' ..
+			"SELECT ?, ?, ?, ?, ?, NULLIF(?, ''), ? WHERE COALESCE((SELECT balance " ..
+			'FROM opx77_company_accounts WHERE kind = ? AND group_key = ? FOR UPDATE), 0) <= ?',
+			values = { op.id, op.kind, op.group, op.amount, op.reason, op.actor or '', op.attempt,
+				op.kind, op.group, 9007199254740991 - op.amount } },
 		{ query = 'INSERT INTO opx77_company_accounts (kind, group_key, balance) ' ..
-			'SELECT kind, group_key, 0 FROM opx77_company_ledger WHERE op_id = ? ' ..
-			'ON DUPLICATE KEY UPDATE balance = balance',
-			values = { op.into } },
+			'SELECT kind, group_key, delta FROM opx77_company_ledger WHERE op_id = ? AND attempt_token = ? ' ..
+			'ON DUPLICATE KEY UPDATE balance = balance + VALUES(balance)', values = { op.id, op.attempt } },
+		{ query = STAMP, values = { op.id, op.attempt } },
+	}
+end
+
+function M.Storage.Credit(op) return Storage.Transaction(M.Storage.CreditStatements(op)) end
+
+function M.Storage.DebitStatements(op)
+	return {
+		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor, attempt_token) ' ..
+			"SELECT ?, kind, group_key, ?, ?, NULLIF(?, ''), ? FROM opx77_company_accounts " ..
+			'WHERE kind = ? AND group_key = ? AND balance >= ? FOR UPDATE',
+			values = { op.id, -op.amount, op.reason, op.actor or '', op.attempt, op.kind, op.group, op.amount } },
 		{ query = 'UPDATE opx77_company_accounts a JOIN opx77_company_ledger l ' ..
 			'ON l.kind = a.kind AND l.group_key = a.group_key ' ..
-			'SET a.balance = a.balance + l.delta WHERE l.op_id = ? OR l.op_id = ?',
-			values = { op.out, op.into } },
-		{ query = STAMP, values = { op.out } },
-		{ query = STAMP, values = { op.into } },
-	})
+			'SET a.balance = a.balance + l.delta WHERE l.op_id = ? AND l.attempt_token = ?',
+			values = { op.id, op.attempt } },
+		{ query = STAMP, values = { op.id, op.attempt } },
+	}
 end
+
+function M.Storage.Debit(op) return Storage.Transaction(M.Storage.DebitStatements(op)) end
+
+function M.Storage.MoveStatements(op)
+	return {
+		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor, attempt_token) ' ..
+			"SELECT ?, kind, group_key, ?, ?, NULLIF(?, ''), ? FROM opx77_company_accounts " ..
+			'WHERE kind = ? AND group_key = ? AND balance >= ? AND COALESCE((SELECT balance ' ..
+			'FROM opx77_company_accounts target WHERE target.kind = ? AND target.group_key = ? FOR UPDATE), 0) <= ? FOR UPDATE',
+			values = { op.out, -op.amount, op.reason, op.actor or '', op.attempt,
+				op.from.kind, op.from.group, op.amount, op.to.kind, op.to.group, 9007199254740991 - op.amount } },
+		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor, attempt_token) ' ..
+			'SELECT ?, ?, ?, -delta, reason, actor, ? FROM opx77_company_ledger WHERE op_id = ? AND attempt_token = ?',
+			values = { op.into, op.to.kind, op.to.group, op.attempt, op.out, op.attempt } },
+		{ query = 'INSERT INTO opx77_company_accounts (kind, group_key, balance) ' ..
+			'SELECT kind, group_key, 0 FROM opx77_company_ledger WHERE op_id = ? AND attempt_token = ? ' ..
+			'ON DUPLICATE KEY UPDATE balance = balance', values = { op.into, op.attempt } },
+		{ query = 'UPDATE opx77_company_accounts a JOIN opx77_company_ledger l ' ..
+			'ON l.kind = a.kind AND l.group_key = a.group_key ' ..
+			'SET a.balance = a.balance + l.delta WHERE (l.op_id = ? OR l.op_id = ?) AND l.attempt_token = ?',
+			values = { op.out, op.into, op.attempt } },
+		{ query = STAMP, values = { op.out, op.attempt } },
+		{ query = STAMP, values = { op.into, op.attempt } },
+	}
+end
+
+function M.Storage.Move(op) return Storage.Transaction(M.Storage.MoveStatements(op)) end
 
 --- Records a movement ANOTHER writer already applied to the balance (the
 --- dealership's settled sales), so the history and the bus see it. Idempotent
@@ -184,4 +185,40 @@ SELECT delta, reason, actor, UNIX_TIMESTAMP(created_at) AS at
  ORDER BY id DESC
  LIMIT @limit
   ]], { kind = kind, group = group, limit = limit })
+end
+
+--- The company participant in one character-wallet transaction.
+-- Eligibility subqueries lock the company row with the wallet before either
+-- balance changes. Every effect is gated by this exact wallet attempt.
+function M.Storage.WalletStatements(op, kind, key, amount, deposit)
+	local delta = deposit and amount or -amount
+	local gate = ' FROM opx77_money_ledger WHERE op_id = ? AND attempt_token = ?'
+	local statements = {
+		{ query = 'INSERT INTO opx77_company_ledger (op_id, kind, group_key, delta, reason, actor) ' ..
+			'SELECT ?, ?, ?, ?, ?, ?' .. gate,
+			values = { op.id, kind, key, delta, op.reason, op.citizenId, op.id, op.attempt } },
+		{ query = 'INSERT INTO opx77_company_accounts (kind, group_key, balance) SELECT ?, ?, 0' ..
+			gate .. ' ON DUPLICATE KEY UPDATE balance = balance',
+			values = { kind, key, op.id, op.attempt } },
+		{ query = 'UPDATE opx77_company_accounts a JOIN opx77_money_ledger l ' ..
+			'ON l.op_id = ? AND l.attempt_token = ? SET a.balance = a.balance + ? ' ..
+			'WHERE a.kind = ? AND a.group_key = ?',
+			values = { op.id, op.attempt, delta, kind, key } },
+		{ query = 'UPDATE opx77_company_ledger l JOIN opx77_company_accounts a ' ..
+			'ON a.kind = l.kind AND a.group_key = l.group_key SET l.balance_after = a.balance ' ..
+			'WHERE l.op_id = ? AND EXISTS (SELECT 1 FROM opx77_money_ledger m ' ..
+			'WHERE m.op_id = ? AND m.attempt_token = ?)',
+			values = { op.id, op.id, op.attempt } },
+	}
+	local guard
+	if deposit then
+		guard = { query = 'COALESCE((SELECT balance FROM opx77_company_accounts ' ..
+			'WHERE kind = ? AND group_key = ? FOR UPDATE), 0) <= ?',
+			values = { kind, key, 9007199254740991 - amount }, error = 'money.tooLarge' }
+	else
+		guard = { query = 'EXISTS (SELECT 1 FROM opx77_company_accounts ' ..
+			'WHERE kind = ? AND group_key = ? AND balance >= ? FOR UPDATE)',
+			values = { kind, key, amount }, error = 'insufficient_funds' }
+	end
+	return statements, guard
 end

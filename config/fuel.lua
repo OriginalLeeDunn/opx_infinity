@@ -50,6 +50,8 @@ OPX.Config.MODULES.fuel = {
 	-- ── what burns it ──────────────────────────────────────────────────────
 
 	CONSUMPTION = {
+		-- Avoid stranding players before at least one station has surveyed points.
+		REQUIRE_OPEN_STATION = true,
 		-- How often the server burns every tank, in milliseconds. ox ticks every
 		-- 1000 ms on the client; this is the same second, on the server.
 		TICK_MS = 1000,

@@ -78,6 +78,7 @@ local EN = {
 	['invoices.refused.not_enough_money'] = 'Not enough eddies: the bill is on your tab.',
 	['invoices.refused.charge_failed'] = 'The payment did not go through: the bill is on your tab.',
 	['invoices.refused.disputed'] = 'That bill is held for staff review.',
+	['invoices.refused.payment_pending'] = 'This payment is being checked. Please do not pay again. Contact an administrator if it remains pending.',
 	['invoices.refused.payout_pending'] = 'Paid. The payout is still going through.',
 	['invoices.refused.error'] = 'Something went wrong with that bill.',
 }
@@ -155,6 +156,7 @@ local FR = {
 	['invoices.refused.not_enough_money'] = 'Pas assez d\'eddies : la facture est sur ton ardoise.',
 	['invoices.refused.charge_failed'] = 'Le paiement n\'est pas passé : la facture est sur ton ardoise.',
 	['invoices.refused.disputed'] = 'Cette facture est bloquée pour examen par le staff.',
+	['invoices.refused.payment_pending'] = 'Ce paiement est en cours de vérification. Ne payez pas à nouveau. Contactez un administrateur si cela persiste.',
 	['invoices.refused.payout_pending'] = 'Payé. Le versement est encore en cours.',
 	['invoices.refused.error'] = 'Un problème est survenu avec cette facture.',
 }

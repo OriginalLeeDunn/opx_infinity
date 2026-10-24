@@ -9,10 +9,9 @@
 -- the same reason. Every statement yields and answers a `Result`, so every one
 -- of them has to be reached from a `CreateThread`.
 --
--- No foreign key on a place, and nothing durable about a purchase lives here: a
--- dealer is a place in the world and belongs to no character. What a player
--- BOUGHT is a vehicle, and that row is the vehicles module's -- this module
--- creates none.
+-- A dealer is a place in the world and belongs to no character. Ownership is
+-- stored by vehicles; this module stores fixed company/commission obligations
+-- in the same wallet transaction as the purchase.
 
 local M = OPX.Modules.Get('dealership')
 
@@ -115,6 +114,22 @@ CREATE TABLE IF NOT EXISTS opx77_company_pending (
     plate VARCHAR(32) NULL DEFAULT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_opx77_company_pending_token (token)
+) ENGINE=InnoDB
+]],
+ [[
+CREATE TABLE IF NOT EXISTS opx77_dealership_payouts (
+    op_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    phase VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    citizen_id VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL,
+    kind VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL,
+    group_key VARCHAR(48) CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL,
+    money_type VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    amount BIGINT NOT NULL,
+    plate VARCHAR(12) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    paid TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    last_attempt_at BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (op_id, phase),
+    KEY idx_opx77_dealer_payout_pending (paid, last_attempt_at)
 ) ENGINE=InnoDB
 ]],
 }
@@ -236,4 +251,44 @@ SELECT balance
   FROM opx77_company_accounts
  WHERE kind = @kind AND group_key = @group
   ]], { kind = kind, group = group })
+end
+
+--- Fixed payout destinations are obligations committed with buyer and vehicle.
+function M.Storage.SaleStatements(op, entity, sale, moneyType, cut, company)
+	local statements = {}
+	for _, payout in ipairs({ { phase = 'commission', citizen = sale.sellerCitizen, amount = cut },
+		{ phase = 'company', kind = sale.kind, group = sale.group, amount = company } }) do
+		if payout.amount > 0 then
+			statements[#statements + 1] = {
+				query = 'INSERT INTO opx77_dealership_payouts (op_id, phase, citizen_id, kind, group_key, money_type, amount, plate) '
+					.. "SELECT op_id, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ? FROM opx77_money_ledger "
+					.. 'WHERE op_id = ? AND attempt_token = ?',
+				values = { payout.phase, payout.citizen or '', payout.kind or '', payout.group or '', moneyType,
+					payout.amount, entity.plate, op.id, op.attempt },
+			}
+		end
+	end
+	return statements
+end
+
+function M.Storage.PendingSales(limit)
+	return Storage.Query('SELECT op_id, phase, citizen_id, kind, group_key, money_type, amount, plate '
+		.. 'FROM opx77_dealership_payouts WHERE paid = 0 ORDER BY last_attempt_at, op_id, phase LIMIT @limit', { limit = limit })
+end
+
+function M.Storage.SalePaid(id, phase)
+	return Storage.Update('UPDATE opx77_dealership_payouts SET paid = 1 WHERE op_id = @id AND phase = @phase',
+		{ id = id, phase = phase })
+end
+
+function M.Storage.SaleStatus(id)
+	local read = Storage.Scalar('SELECT COUNT(*) FROM opx77_dealership_payouts WHERE op_id = @id AND paid = 0', { id = id })
+	if not read.ok then return read end
+	return Result.Ok(tonumber(read.value) == 0)
+end
+
+--- Rotate failed recipients so one full page cannot starve later obligations.
+function M.Storage.SaleAttempt(id, phase)
+	return Storage.Update('UPDATE opx77_dealership_payouts SET last_attempt_at = UNIX_TIMESTAMP() WHERE op_id = @id AND phase = @phase',
+		{ id = id, phase = phase })
 end

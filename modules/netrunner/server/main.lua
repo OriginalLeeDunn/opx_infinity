@@ -743,9 +743,7 @@ local function brokerOf(key)
 	return nil
 end
 
---- Sells every shard in the bag the broker buys. Shards leave the bag first;
---- the money is paid after, and a refused payment puts them back. Answers the
---- code.
+--- Sells eligible shards and credits their price in the same durable trade.
 -- @author dop42
 -- @param player integer
 -- @param payload table { broker }
@@ -765,9 +763,9 @@ function M.Sell(player, payload)
 		return answer(player, false, 'too_far')
 	end
 	local api = inventory()
-	if api == nil or type(api.RemoveFromSlot) ~= 'function' then return answer(player, false, 'no_inventory') end
+	if api == nil or type(api.AtomicTrade) ~= 'function' then return answer(player, false, 'no_inventory') end
 	local now = wallS()
-	local total, sold, refused, hot = 0, {}, 0, 0
+	local total, sold, refused, hot, changes = 0, {}, 0, 0, {}
 	local items = itemsOf(citizenId)
 	for index = 1, #items do
 		local item = items[index]
@@ -776,27 +774,24 @@ function M.Sell(player, payload)
 			if price == nil then
 				refused = refused + 1
 			else
-				local read, removed = pcall(api.RemoveFromSlot, citizenId, item.slot, 1, item)
-				if read and type(removed) == 'table' and removed.ok == true then
-					total = total + price
-					sold[#sold + 1] = item.metadata
-					if isHot then hot = hot + 1 end
-				end
+				total = total + price
+				sold[#sold + 1] = item.metadata
+				changes[#changes + 1] = { name = item.name, count = -1, slot = item.slot, metadata = item.metadata }
+				if isHot then hot = hot + 1 end
 			end
 		end
 	end
 	if #sold == 0 then return answer(player, false, refused > 0 and 'broker_refuses' or 'nothing_to_sell') end
-	local paid = false
-	local money = character()
-	if total <= 0 then
-		paid = true
-	elseif money ~= nil and type(money.AddMoneyOffline) == 'function' then
-		local read, result = pcall(money.AddMoneyOffline, citizenId, broker.currency, total, 'netrunner:sell:' .. broker.key)
-		paid = read and type(result) == 'table' and result.ok == true
-	end
-	if not paid then
-		for _, metadata in ipairs(sold) do pcall(api.AddItem, citizenId, built.shardItem.name, 1, metadata) end
-		return answer(player, false, 'sale_failed')
+	local read, paid = pcall(api.AtomicTrade, citizenId, broker.currency, total, changes, 'netrunner:sell:' .. broker.key, nil, function()
+		local live, here = playerOf(player), pointOf(player)
+		if not live or live.PlayerData.citizenId ~= citizenId or OPX.Life.Down(player) then return nil, 'no_character' end
+		if not here or here.bucket ~= broker.bucket or distance(here, broker.x, broker.y, broker.z) > OPX.Spots.ServerReach(broker.radius) then
+			return nil, 'too_far'
+		end
+		return function() return {} end
+	end)
+	if not read or type(paid) ~= 'table' or not paid.ok then
+		return answer(player, false, type(paid) == 'table' and paid.error == 'money.pending' and 'money.pending' or 'sale_failed')
 	end
 	OPX.Audit.Log({ event = 'netrunner.sell', message = ('player %d sold %d shard(s) for %d at %s'):format(player,
 		#sold, total, broker.key), data = { broker = broker.key, count = #sold, total = total, hot = hot },

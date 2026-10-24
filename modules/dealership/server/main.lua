@@ -7,13 +7,8 @@
 -- measures it, the bucket must agree, the model must be one THIS dealer sells,
 -- and the money must really be there.
 --
--- THE ORDER OF THE TWO WRITES IS NOT FREE. A purchase moves money and creates a
--- vehicle, and only one of those can be undone: the character contract can give
--- money back, and the vehicles contract creates a row and offers no way to
--- remove one. So the charge goes first and the registration second, and a
--- registration that is refused -- the ceiling, a refused insertion, a plate that
--- could not be drawn -- is answered with a refund of exactly what was taken. The
--- reverse order would hand out a free car every time a row could not be written.
+-- Buyer debit, ownership and fixed professional-sale payout obligations share
+-- one transaction. Unknown replies stay pending and must never be refunded.
 --
 -- This module owns no vehicle a player drives and no plate. What a character
 -- owns, and every rule about how much of it they may own, stays in one place:
@@ -397,69 +392,23 @@ end
 -- @param entry table the stock row
 -- @param dest table|nil the destination garage
 -- @return Result
-local function purchaseOnce(source, data, dealer, entry, dest)
-	local paid, refusal = character.RemoveMoney(source, currency, entry.price,
-		'dealership:' .. entry.key)
-	if not paid then
-		-- The character contract answers a catalogue key of its own
-		-- (`money.insufficient`, `money.offline`), which is a code the player
-		-- can be shown; anything that is not a string is a fault of ours.
-		return Result.Err(type(refusal) == 'string' and refusal or 'dealership.paymentFailed')
-	end
-
-	-- GUARDED, BECAUSE OF WHAT IS ON THE OTHER SIDE OF IT. The row is written by
-	-- another module, and a throw inside it unwinds THIS frame -- past the refund
-	-- below and out of the caller -- so the player is charged and owns nothing,
-	-- with no line anywhere that says how much. That is not hypothetical: a
-	-- setting `vehicles` never received made `Register` compare a nil, the money
-	-- went out twice and not one row was written. A throw is a refusal like any
-	-- other, and the message is kept for the log so the next one is diagnosable.
-	local answered, made = pcall(vehicles.Register, data.citizenId, entry.record, {
-		garage = dest ~= nil and dest.key or nil,
-	})
-	if not answered then
-		Open77.log.error(('[dealership] %s: vehicles.Register threw for %s: %s')
-			:format(tostring(data.citizenId), entry.key, tostring(made)))
-		made = Result.Err('dealership.registerFailed')
-	elseif type(made) ~= 'table' then
-		-- THE OTHER WAY THE SAME MONEY GETS LOST. The pcall above guards a THROW;
-		-- this guards a RETURN that is not a Result. `made.ok` on a nil raises
-		-- here, three lines after `RemoveMoney` and before the refund that the
-		-- comment above exists to protect -- so the throw the pcall was added to
-		-- survive would simply move down the function. A contract that answers
-		-- the wrong shape is a refusal like any other.
-		Open77.log.error(('[dealership] %s: vehicles.Register answered a %s for %s')
-			:format(tostring(data.citizenId), type(made), entry.key))
-		made = Result.Err('dealership.registerFailed')
-	end
-	if not made.ok then
-		-- THE HALF THAT CAN BE UNDONE. Nothing was owned, so the money goes
-		-- back; a refund that itself fails is the one outcome that costs a
-		-- player money, and it is said in the log with everything needed to
-		-- settle it by hand.
-		-- TO THE CITIZEN WHO PAID, NOT TO THE CONNECTION. `Register` yielded,
-		-- and in that window the buyer can have logged off -- `AddMoney(source)`
-		-- then answered `notLoggedIn` and the money was simply gone -- or gone
-		-- back to the selection screen and loaded ANOTHER character, which was
-		-- then refunded money it never paid. `AddMoneyOffline` pays the loaded
-		-- balance when the character is online and the row when it is not;
-		-- `payCitizen` asks it only when the connection no longer holds them.
-		local back, why = payCitizen(source, data.citizenId, entry.price,
-			'dealership:refund:' .. entry.key)
-		if not back then
-			Open77.log.error(
-				('[dealership] %s was charged %d %s for %s and the vehicle was refused (%s); ' ..
-					'the refund ALSO failed (%s) -- settle this by hand')
-					:format(tostring(data.citizenId), entry.price, currency, entry.key,
-						tostring(made.error), tostring(why)))
-		else
-			Open77.log.warn(
-				('[dealership] %s refused %s after payment (%s); %d %s refunded')
-					:format(tostring(data.citizenId), entry.key, tostring(made.error),
-						entry.price, currency))
+local function purchaseOnce(source, data, dealer, entry, dest, sale)
+	local payment = { moneyType = currency, amount = entry.price, reason = 'dealership:' .. entry.key }
+	if sale then
+		local cut, company = Access.Split(entry.price)
+		payment.participant = function(op, entity)
+			return Store.SaleStatements(op, entity, sale, currency, cut, company)
 		end
-		return made
 	end
+	local answered, made = pcall(vehicles.Purchase, source, entry.record, {
+		garage = dest ~= nil and dest.key or nil,
+	}, payment)
+	if not answered or type(made) ~= 'table' then
+		-- No compensation: an ownership transaction may already have committed.
+		Open77.log.error('[dealership] durable vehicle purchase did not return a result')
+		return Result.Err('money.pending')
+	end
+	if not made.ok then return made end
 
 	local plate = made.value and made.value.plate or nil
 
@@ -545,6 +494,7 @@ local function purchaseOnce(source, data, dealer, entry, dest)
 
 	return Result.Ok({
 		plate = plate,
+		opId = made.value.opId,
 		entry = entry.key,
 		model = entry.label,
 		dealer = dealer.key,
@@ -579,11 +529,11 @@ end
 -- claim is taken and given back with nothing in between that can skip the
 -- release: a throw is caught, logged, and answered like a failed payment --
 -- by the guards inside it, a throw can only come from before the charge.
-local function purchase(source, data, dealer, entry, dest)
+local function purchase(source, data, dealer, entry, dest, sale)
 	local who = data.citizenId
 	if buying[who] then return Result.Err('error.tooFast') end
 	buying[who] = true
-	local ran, result = pcall(purchaseOnce, source, data, dealer, entry, dest)
+	local ran, result = pcall(purchaseOnce, source, data, dealer, entry, dest, sale)
 	buying[who] = nil
 	if not ran then
 		Open77.log.error(('[dealership] the purchase of %s by %s threw: %s')
@@ -764,10 +714,54 @@ local function bank(kind, group, amount, plate)
 	return true
 end
 
+local settlingSales = false
+--- Replays owed payouts with fixed recipients and stable receipt ids.
+function M.SettleSales()
+	if settlingSales then return 0 end
+	settlingSales = true
+	local settled = 0
+	local ran, failure = pcall(function()
+		local read = Store.PendingSales(PENDING_PAGE)
+		if not read.ok then return end
+		for _, row in ipairs(read.value or {}) do
+			local attempted = Store.SaleAttempt(row.op_id, row.phase)
+			if not attempted.ok then return end
+			local id = row.op_id .. ':' .. row.phase
+			local answer
+			if row.phase == 'commission' then
+				local owner = character.GetPlayerByCitizenId(row.citizen_id)
+				if owner then
+					local ok, why = character.AddMoney(owner, row.money_type, tonumber(row.amount),
+						'dealership:commission:' .. row.plate, id)
+					answer = ok and Result.Ok(true) or Result.Err(why)
+				else
+					answer = character.AddMoneyOffline(row.citizen_id, row.money_type, tonumber(row.amount),
+						'dealership:commission:' .. row.plate, id)
+				end
+			elseif row.phase == 'company' then
+				local accounts = OPX.Api.Get('accounts')
+				if accounts and type(accounts.Deposit) == 'function' then
+					answer = accounts.Deposit(row.kind, row.group_key, tonumber(row.amount),
+						'dealership:sale:' .. row.plate, id)
+				end
+			end
+			-- Unknown/failed destinations remain owed; never redirect a commission.
+			if type(answer) == 'table' and answer.ok then
+				local marked = Store.SalePaid(row.op_id, row.phase)
+				if marked.ok then settled = settled + 1 end
+			end
+		end
+	end)
+	settlingSales = false
+	if not ran then Open77.log.error('[dealership] payout reconciliation failed: ' .. tostring(failure)) end
+	return settled
+end
+
 --- Pays in what the ledger says is owed. One pass, never two at once.
 -- @author dop42
 -- @return integer how many rows were settled
 function M.SettlePending()
+	M.SettleSales()
 	if sweeping then return 0 end
 	sweeping = true
 	local settled = 0
@@ -1067,7 +1061,7 @@ function M.Accept(buyer, token, yes, destKey)
 		return Result.Err('dealership.cannotAfford', entry.key)
 	end
 
-	local bought = purchase(buyer, buyerData, dealer, entry, dest)
+	local bought = purchase(buyer, buyerData, dealer, entry, dest, offer)
 	if not bought.ok then
 		local why = tostring(bought.error)
 		local money = why == 'dealership.cannotAfford' or why:sub(1, 6) == 'money.'
@@ -1078,26 +1072,9 @@ function M.Accept(buyer, token, yes, destKey)
 
 	-- ── where the money goes ─────────────────────────────────────────────
 	local cut, company = Access.Split(entry.price)
-	local paid = true
-	if cut > 0 then
-		-- TO THE SELLER'S CITIZEN, for the reason the refund is: `purchase`
-		-- yielded, and a seller who swapped character meanwhile had the
-		-- commission paid to whichever character the connection held now.
-		local given, why = payCitizen(offer.seller, offer.sellerCitizen, cut,
-			'dealership:commission:' .. entry.key)
-		if not given then
-			paid = false
-			-- NOT A FAILED SALE, and it is banked to the company instead rather
-			-- than evaporating: the buyer owns the vehicle, and a commission
-			-- that could not be paid is money that belongs to somebody.
-			Open77.log.warn(('[dealership] the %d %s commission for %s could not be paid to ' ..
-				'player %d (%s); it is banked to the company instead'):format(cut,
-				tostring(currency), safe(entry.key), offer.seller, tostring(why)))
-			company = company + cut
-			cut = 0
-		end
-	end
-	local banked = bank(offer.kind, offer.group, company, bought.value.plate)
+	M.SettleSales()
+	local status = Store.SaleStatus(bought.value.opId)
+	local paid, banked = status.ok and status.value == true, status.ok and status.value == true
 
 	local player = character.GetPlayer(buyer)
 	if player ~= nil then
@@ -1142,7 +1119,7 @@ function M.Accept(buyer, token, yes, destKey)
 	-- A CUT OF NOTHING IS NOT "YOU EARNED €$0". It is nothing when the seller
 	-- could not be paid (the money went to the company) or the operator set no
 	-- commission; the seller still hears that the sale is done.
-	if (tonumber(cut) or 0) > 0 then
+	if paid and (tonumber(cut) or 0) > 0 then
 		OPX.NotifyLocale(offer.seller, 'dealership.commission',
 			{ amount = character.FormatMoney(cut, currency), model = entry.label }, 'success')
 	else

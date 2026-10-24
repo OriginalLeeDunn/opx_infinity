@@ -272,22 +272,39 @@ end
 local unfund = S.Unfund
 
 --- Pays a player out of a corp's money. Answers ok and how, or false and why.
-function S.Pay(player, corp, amount, opId, reason)
+function S.Pay(player, corp, amount, opId, reason, changes)
 	if amount <= 0 then return true, 'none' end
 	local cid = type(player) == 'string' and player or citizenOf(playerOf(player))
 	if cid == nil then return false, 'payment_failed' end
-	local via, why = fund(corp, amount, opId, reason)
-	if via == nil then return false, why end
-	local api = character()
-	local paid = false
-	if api ~= nil and type(api.AddMoney) == 'function' then
-		local read, ok = pcall(api.AddMoney, cid, built.currency, amount, reason)
-		paid = read and ok == true
+	local treasury, api = accountsApi(), character()
+	local via, why, paid
+	if treasury then
+		if type(treasury.PayCitizen) ~= 'function' then return false, 'corp_budget' end
+		local answer = treasury.PayCitizen(corp.account.kind, corp.account.key, cid, built.currency, amount, reason, opId, changes)
+		paid, via, why = answer.ok, 'account', answer.error
+	else
+		-- Replays do not reserve mint capacity twice. The wallet receipt remains
+		-- the proof even after this resource restarted and forgot its window.
+		local receipt = api and api.MoneyReceipt and api.MoneyReceipt(opId)
+		if receipt and not receipt.ok then return false, 'payment_failed' end
+		if not (receipt and receipt.value) then
+			via, why = fund(corp, amount, opId, reason)
+			if not via then return false, why end
+		else via = 'mint' end
+		local answer
+		if changes then
+			local inventory = OPX.Api.Get('inventory')
+			answer = inventory and inventory.AtomicTrade and inventory.AtomicTrade(cid, built.currency, amount, changes, reason, opId)
+		else
+			local loaded = api and api.GetPlayerByCitizenId and api.GetPlayerByCitizenId(cid)
+			if loaded and api.AtomicMoney then answer = api.AtomicMoney(loaded, built.currency, amount, 'add', reason, opId)
+			else answer = api and api.AddMoneyOffline and api.AddMoneyOffline(cid, built.currency, amount, reason, opId) end
+		end
+		paid, why = type(answer) == 'table' and answer.ok, type(answer) == 'table' and answer.error
+		if not paid and why ~= 'money.pending' and not (receipt and receipt.value) then unfund(corp, amount, via, opId, reason) end
 	end
-	if not paid then
-		unfund(corp, amount, via, opId, reason)
-		return false, 'payment_failed'
-	end
+	if not paid then return false, why == 'money.pending' and 'money.pending' or 'payment_failed' end
+
 	OPX.Audit.Log({ event = 'corpo.pay', message = ('player %s paid %d by %s (%s, %s)'):format(player, amount,
 		corp.key, via, opId), data = { corp = corp.key, amount = amount, via = via, op = opId }, source = player })
 	return true, via
@@ -496,20 +513,24 @@ local fail = S.Fail
 
 --- Ends an assignment as a success: the corp pays, standing moves, the quarter
 --- is counted and its bonus paid the first time the target is met.
-function S.Complete(assignment, player)
+function S.Complete(assignment, player, changes)
 	if assignments[assignment.id] ~= assignment then return end
-	assignments[assignment.id] = nil
-	despawn(assignment)
+	if assignment.settling then return false, 'payment_failed' end
+	assignment.settling = true
 	local corp = built.corps[assignment.corp]
 	local reason = ('corpo:%s:%d'):format(assignment.corp, assignment.id)
 	local paid, via = pay(assignment.cid, corp, assignment.pay, ('corpo:%d:%s:pay'):format(assignment.id, assignment.serial),
-		reason)
+		reason, changes)
+	assignment.settling = nil
+	if not paid then assignment.paymentPending = via == 'money.pending'; return false, via end
+	assignments[assignment.id] = nil
+	despawn(assignment)
 	local record = recordOf(assignment.cid, corp.key)
 	local _, owed = Access.Succeed(record, assignment.standing, built)
 	if owed then
 		local bonus = built.quarter.bonus
 		local got = pay(assignment.cid, corp, bonus, ('corpo:q:%s:%s:%d'):format(assignment.cid, corp.key, record.q),
-			reason .. ':quarter')
+			'corpo:quarter:' .. corp.key .. ':' .. record.q)
 		if got then
 			record.qPaid = true
 			if citizenOf(playerOf(player)) == assignment.cid then
@@ -669,8 +690,9 @@ function M.Deliver(player, payload)
 			assignment.player = player
 			local slot, metadata = slotOf(player, assignment)
 			if slot == nil then return answer(player, false, 'no_item') end
-			if not takeSlot(cid, slot, itemName(assignment.item), metadata) then return answer(player, false, 'no_item') end
-			complete(assignment, player)
+			local finished, code = complete(assignment, player,
+				{ { name = itemName(assignment.item), count = -1, slot = slot, metadata = metadata } })
+			if finished == false then return answer(player, false, code) end
 			return true, 'completed'
 		end
 	end
@@ -691,12 +713,10 @@ function M.HandIn(player, loaded, office)
 			and metadata.thief == cid then
 			local hired, why = employee(player, corp)
 			if hired == nil then return answer(player, false, why) end
-			if not takeSlot(cid, item.slot, item.name, metadata) then return answer(player, false, 'no_item') end
 			local amount = Access.Between(built.espionage.pay[1], built.espionage.pay[2], M.Roll())
 			local paid, refusal = pay(cid, corp, amount, ('corpo:spy:%s'):format(tostring(metadata.serial)),
-				'corpo:espionage:' .. corp.key)
+				'corpo:espionage:' .. corp.key, { { name = item.name, count = -1, slot = item.slot, metadata = metadata } })
 			if not paid then
-				giveItem(cid, 'datashard', metadata)
 				if citizenOf(playerOf(player)) ~= cid then return false, refusal end
 				return answer(player, false, refusal)
 			end
@@ -1005,6 +1025,13 @@ end
 -- ── the clock ───────────────────────────────────────────────────────────────
 
 local function tickOne(assignment, now)
+	if assignment.paymentPending then
+		local api = character()
+		local receipt = api and api.MoneyReceipt and api.MoneyReceipt(('corpo:%d:%s:pay'):format(assignment.id, assignment.serial))
+		local player = api and api.GetPlayerByCitizenId and api.GetPlayerByCitizenId(assignment.cid)
+		if receipt and receipt.ok and receipt.value and player then return complete(assignment, player.PlayerData.source, {}) end
+		return
+	end
 	if now >= assignment.deadlineMs then return fail(assignment, 'expired') end
 	local player = assignment.player
 	if player == nil then return end
@@ -1065,7 +1092,7 @@ local function onLeft(player)
 	for id, assignment in pairs(assignments) do
 		if assignment.player == player then
 			assignment.barId = nil
-			if assignment.stage == Stage.ESCORT then
+			if assignment.stage == Stage.ESCORT and not assignment.paymentPending then
 				assignment.player = nil
 				pcall(fail, assignment, 'vip_lost')
 			else

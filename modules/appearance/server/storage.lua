@@ -125,3 +125,11 @@ function M.Storage.PurgeCharacter(citizenId)
 	return Storage.Execute('DELETE FROM opx77_character_clothing WHERE citizen_id = @citizen',
 		{ citizen = citizenId })
 end
+
+--- A paid outfit and its wallet debit share the same receipt attempt.
+function M.Storage.ClothingStatements(op, encoded)
+	return { { query = 'INSERT INTO opx77_character_clothing (citizen_id, clothing) ' ..
+		'SELECT ?, ? FROM opx77_money_ledger WHERE op_id = ? AND attempt_token = ? ' ..
+		'ON DUPLICATE KEY UPDATE clothing = VALUES(clothing)',
+		values = { op.citizenId, encoded, op.id, op.attempt } } }
+end
