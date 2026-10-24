@@ -987,8 +987,10 @@ cannot take a shot. Practice has no economic effects or persisted game state.
 
 The native baseline checked is Devkit `2.50.0+op77.148`; the test VPS uses
 `2.50.0+op77.152`. Install
-[`opx_pool_assets`](https://github.com/opx77-framework/opx_pool_assets) and its
-`archivexl >=1.27.1` dependency, then load both before Infinity. The framework
+[`opx_pool_assets`](https://github.com/opx77-framework/opx_pool_assets) and require ArchiveXL through the official signed index:
+`requiredMods.packages = [{ "id": "archivexl", "minVersion": "1.27.1" }]`.
+Load the asset resource before Infinity. Do not load the DLL-preloading
+`archivexl` resource on a secured server; that route is deliberately rejected. The framework
 manifest declares the asset-resource dependency. Keep the server's existing
 required-mod trust/review policy; do not silently enable unsecured mode to install
 a loader. Restart the server, fully quit Cyberpunk, and reconnect through the
