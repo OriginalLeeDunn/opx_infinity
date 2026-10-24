@@ -542,7 +542,10 @@ local function backed(source, row)
 end
 
 --- Clears a pair whose native initialization could not be verified.
-local function failPair(source, first, second)
+local function failPair(source, first, second, reason, operation)
+	Open77.log.warn(('[inventory] dual wield for player %d failed at %s: %s; weapons=%s/%s')
+		:format(source, tostring(operation or 'unknown'), tostring(reason or 'weapon_request_failed'),
+			tostring(first and first.record or '-'), tostring(second and second.record or '-')))
 	if type(Open77.weapons.clear) == 'function' then
 		local id = Open77.weapons.clear(source)
 		if id then remember(id, { source = source, kind = 'clear' }) end
@@ -554,7 +557,9 @@ local function failPair(source, first, second)
 	if first then first.loading = false; reading[first.serial] = nil end
 	if second then second.loading = false; reading[second.serial] = nil end
 	Weapons.Announce(source, nil)
-	OPX.NotifyLocale(source, 'inventory.error.weapon_refused', nil, 'error')
+	local key = reason == 'dual_wield_pair_unavailable' and 'inventory.error.weapon_pair_unavailable'
+		or 'inventory.error.weapon_refused'
+	OPX.NotifyLocale(source, key, nil, 'error')
 end
 
 --- Resumes the relay step a completion answers.
@@ -647,13 +652,14 @@ local function completed(playerId, requestId, _operation, accepted, reason, resu
 		local _, second = findHeld(bag, partner)
 		if accepted ~= true or not first or not second or not a or not b
 			or type(a.ammo) ~= 'table' or type(b.ammo) ~= 'table' then
-			failPair(source, held, partner)
+			failPair(source, held, partner, accepted == true and 'invalid_pair_snapshot' or reason, 'pairRead')
 			return
 		end
 		local capacityA = Common.Integer(a.ammo.capacity, 1, 100000)
 		local capacityB = Common.Integer(b.ammo.capacity, 1, 100000)
 		if not capacityA or not capacityB then
-			failPair(source, held, partner)
+			failPair(source, held, partner, ('pair_ammo_state_unavailable capacity=%s/%s drawn=%s/%s')
+				:format(tostring(a.ammo.capacity), tostring(b.ammo.capacity), tostring(a.drawn), tostring(b.drawn)), 'pairRead')
 			return
 		end
 		local ammoA = Common.Integer(first.metadata.ammo, 0, held.max) or 0
@@ -662,23 +668,23 @@ local function completed(playerId, requestId, _operation, accepted, reason, resu
 		local shared = a.ammo.tweakDbId == b.ammo.tweakDbId
 		local reserve = shared and (ammoA + ammoB - magA - magB) or (ammoB - magB)
 		held.sharedAmmo, partner.sharedAmmo = shared, shared
-		local id = Open77.weapons.setAmmo(source, slotOf(held), { reserve = shared and 0 or (ammoA - magA), magazine = magA, activate = true })
+		local id, failure = Open77.weapons.setAmmo(source, slotOf(held), { reserve = shared and 0 or (ammoA - magA), magazine = magA, activate = true })
 		if id then
 			remember(id, { source = source, kind = 'pairFirst', held = held, partner = partner,
 				amounts = { reserve = reserve, magazine = magB, activate = true } })
-		else failPair(source, held, partner) end
+		else failPair(source, held, partner, failure, 'pairFirst') end
 		return
 	end
 	if step.kind == 'pairFirst' or step.kind == 'pairLast' then
 		if held ~= step.held or mapOf(step.partner)[source] ~= step.partner then return end
 		if accepted == true and step.kind == 'pairFirst' then
-			local id = Open77.weapons.setAmmo(source, slotOf(step.partner), step.amounts)
+			local id, failure = Open77.weapons.setAmmo(source, slotOf(step.partner), step.amounts)
 			if id then remember(id, { source = source, kind = 'pairLast', held = held, partner = step.partner }); return end
-			failPair(source, held, step.partner)
+			failPair(source, held, step.partner, failure, 'pairLast')
 			return
 		end
 		held.loading, step.partner.loading = false, false
-		if accepted ~= true then failPair(source, held, step.partner) end
+		if accepted ~= true then failPair(source, held, step.partner, reason, step.kind) end
 		return
 	end
 
@@ -711,7 +717,7 @@ local function completed(playerId, requestId, _operation, accepted, reason, resu
 	if step.kind == 'assign' then
 		if held ~= step.held then return end
 		if accepted ~= true then
-			if step.held.hand == 'left' then failPair(source, step.held, step.partner); return end
+			if step.held.hand == 'left' then failPair(source, step.held, step.partner, reason, 'assign'); return end
 			map[source] = nil
 			Weapons.Announce(source, nil)
 			Open77.log.warn(('[inventory] drawing %s for player %d failed: %s')
@@ -867,7 +873,7 @@ function Weapons.SweepPending()
 			pending[key] = nil
 			if step.kind == 'pairRead' or step.kind == 'pairFirst' or step.kind == 'pairLast'
 				or (step.kind == 'assign' and step.held and step.held.hand == 'left') then
-				failPair(step.source, step.held, step.partner)
+				failPair(step.source, step.held, step.partner, 'request_timeout', step.kind)
 			end
 			if step.held then step.held.loading = false; reading[step.held.serial] = nil end
 			if step.partner then step.partner.loading = false; reading[step.partner.serial] = nil end

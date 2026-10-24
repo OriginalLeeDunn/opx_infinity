@@ -15991,9 +15991,9 @@ do
 			clear = function() return request('clear') end,
 			get = function() return { fresh = true, drawn = true } end,
 		}
-		local function complete(result, accepted)
+		local function complete(result, accepted, reason)
 			local r = requests[#requests]
-			env.TriggerEvent('open77:weapons:completed', tostring(player), r.id, r.operation, accepted ~= false, nil, result)
+			env.TriggerEvent('open77:weapons:completed', tostring(player), r.id, r.operation, accepted ~= false, reason, result)
 		end
 		local slot = m.Options.WEAPON_SLOT
 		local function snapshot(total, magA, magB)
@@ -16057,6 +16057,22 @@ do
 		complete(nil, false)
 		check('a failed pair initialization removes native creation ammunition', requests[#requests].operation == 'clear'
 			and W.Held(player) == nil and W.Held(player, 'left') == nil)
+		complete({}) -- Finish the clear before another loadout is authorized.
+		local notices = {}
+		env.OPX.NotifyLocale = function(_, key) notices[#notices + 1] = key end
+		W.Use(player, bag, 1, item)
+		complete({ tweakDbId = 'right', ammo = { capacity = 18 } }); complete({})
+		W.Use(player, bag, 2, item, 'left')
+		complete({}); complete(snapshot(bag.items[1].metadata.ammo))
+		complete(nil, false, 'dual_wield_pair_unavailable')
+		check('native incompatibility receives a friendly pair-specific refusal',
+			notices[#notices] == 'inventory.error.weapon_pair_unavailable')
+		local warnings = table.concat(control.log.warn, '\n')
+		check('operators retain the actual native refusal and failed step',
+			warnings:find('dual_wield_pair_unavailable', 1, true) ~= nil
+			and warnings:find('failed at assign', 1, true) ~= nil)
+		check('an incompatible pair still clears native creation ammunition',
+			requests[#requests].operation == 'clear' and W.Held(player) == nil)
 
 	end
 end

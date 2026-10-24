@@ -781,8 +781,11 @@ state and a shared reserve only once, replacing completed snapshots atomically.
 Both client and server need Open77 **2.50.0+op77.152** and the matching bundled
 `open77_weapons` resource (an older bundle may still advertise version 0.1.0).
 New refusals: `dual_wield_unavailable`, `primary_required`,
-`weapon_in_other_hand`; incompatible native pairs use the existing
-`weapon_refused` notification. Older builds retain single-weapon support.
+`weapon_in_other_hand`. The native `dual_wield_pair_unavailable` refusal
+uses `weapon_pair_unavailable`, explaining that another pair is needed; other
+failures use `weapon_refused`. The failed step and native reason are logged
+server-side. Error toasts include a localized suggestion to contact an
+administrator if the refusal seems mistaken. Older builds retain single-weapon support.
 Open77 documents inconsistent native reload allocation when the shared reserve
 is too low; OPX does not infer ownership grants from magazine increases.
 
@@ -1775,7 +1778,9 @@ git archive --format=tar HEAD open77.lua config core lib locales modules web \
 ```
 
 Archive from the **commit**, not the working tree, so what is deployed is what is
-recorded. `opx_lib` must be installed and listed in the server's `resources.load`
+recorded. When upgrading the base game, review `simulation.expectedGameBuild`
+in the preserved host configuration as well: Cyberpunk 2077 2.5 uses `25000`;
+leaving `23100` rejects verified 2.5 clients even with an updated server binary. `opx_lib` must be installed and listed in the server's `resources.load`
 before `opx_infinity`, or the platform refuses to start this resource.
 
 Never `DROP DATABASE` — the grants live with it and the server authenticates as a
