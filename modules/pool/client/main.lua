@@ -259,7 +259,7 @@ end
 function M.Start()
 	R.Reset(); G.Reset()
 	spec = Model.Table()
-	if not spec then return end
+	if not spec or not R.Register() then return end
 	target, prompts = OPX.Api.Get('target'), OPX.Api.Get('prompts')
 	if target then target.RegisterSpheres('pool', { { x = spec.x, y = spec.y, z = spec.z, radius = 2 } }, {
 		id = 'practice', label = locale('pool.tableMenu'), icon = 'interact', distance = 3,

@@ -44,6 +44,7 @@ function Model.Models()
 		result[name] = path
 	end
 	result.objects = {}
+	result.registerObjects = raw.objects == nil
 	local used = {}
 	if raw.objects ~= nil and (type(raw.objects) ~= 'table' or #raw.objects ~= Model.BALLS-1) then return nil end
 	for number = 1, Model.BALLS-1 do

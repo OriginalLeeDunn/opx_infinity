@@ -9,8 +9,22 @@ end
 env.Open77.players.localId = function() return 7 end
 env.Open77.character.position = function() return 99,10,1 end
 env.Open77.input.axis = function() return mouse end
+local registrations, registeredModels, registrationRefusal = {}, {}, nil
 env.Open77.props = {
+ registerModel = function(id, definition)
+  if registrationRefusal then return nil,registrationRefusal end
+  assert(id:match('^pool_ball_%d+$') and type(definition)=='table','invalid registration arguments')
+  local number=tonumber(id:match('%d+$'))
+  assert(definition.mesh:match('ball_'..string.char(98+number)..'_billiard%.mesh$'),'wrong mesh in registration')
+  assert(definition.visualEntity==('opx\\pool\\ball_%02d.ent'):format(number),'wrong cooked host')
+  assert(definition.physicalEntity==nil,'visual pool ball acquired a physical host')
+  local result='opaque-registered-model:'..id
+  registrations[id]=definition;registeredModels[result]=true
+  return result
+ end,
 	create = function(options)
+		assert(not options.model:match('%.mesh$'),'raw mesh bypassed its cooked host')
+		assert(options.model=='recreation.tent' or options.model=='recreation.gym_equipment' or registeredModels[options.model],'renderer invented a registration ID')
 		local modes={static=true,kinematic=true,dynamic=true,none=true}
 		if not modes[options.physics] then return nil,'invalid_physics' end
 		assert(options.collision==false and options.physics=='none' and options.visible==true,'pool visual prop acquired collision/physics')
@@ -65,6 +79,8 @@ local drawnModels={}
 for _,prop in pairs(props)do drawnModels[prop.model]=true end
 local distinct=0;for _ in pairs(drawnModels)do distinct=distinct+1 end
 assert(distinct==16,'object balls reused the same yellow model')
+local registeredCount=0;for _ in pairs(registrations) do registeredCount=registeredCount+1 end
+assert(registeredCount==15,'not all fifteen cooked hosts were registered')
 assert(creates==16 and state.allowShoot==false and state.allowAim==false,'practice did not render/hold weapons')
 M.Client.Frame(); M.Client.Guide(); M.Client.Strip()
 assert(cameraHeld and state.freezePosition==true and guideShown,'entry did not arm a camera/guide')
@@ -72,12 +88,12 @@ control.input.down.V=true;control.Advance(20);M.Client.Frame();control.input.dow
 assert(cameraFov==52,'inventory V key switched pool view')
 control.input.down.mouse3=true;control.Advance(20);M.Client.Frame();control.input.down.mouse3=false
 assert(cameraFov>52,'middle click did not switch pool view')
-local function measured(fn)
+local function measured(fn, ceiling)
 	local cost=0
 	debug.sethook(function() cost=cost+100 end,'',100)
 	local ok,why=pcall(fn)
 	debug.sethook()
-	assert(ok,why); assert(cost<5000,'client resume exceeds full-rack budget: '..cost)
+	assert(ok,why); assert(cost<(ceiling or 5000),'client resume exceeds full-rack budget: '..cost)
 	return cost
 end
 local worst=0
@@ -173,6 +189,17 @@ local accepted=packet(2,50);accepted.epoch=13;accepted.game=M.Match.New(choice.m
 M.Client.Receive(accepted);M.Client.Frame();M.Client.Frame()
 assert(cameraHeld,'real menu selection failed to arm camera')
 M.Stop()
+-- Registration of all fifteen hosts stays inside one client resume.
+M.Stop();M.Init();worst=math.max(worst,measured(M.Start,8000));M.Stop()
+-- A missing/refused registry must never spawn raw meshes or placeholders.
+M.Stop();registrationRefusal='model_registration_conflict'
+local beforeRefusal=creates
+M.Init();M.Start();M.Client.Watch();M.Client.Draw()
+assert(M.Render.Failed() and creates==beforeRefusal,'registration refusal spawned fallback cylinders')
+M.Stop();registrationRefusal=nil
+local registry=env.Open77.props.registerModel;env.Open77.props.registerModel=nil
+M.Init();M.Start();assert(M.Render.Failed(),'old client silently spawned unsupported models');M.Stop()
+env.Open77.props.registerModel=registry
 -- A just-created native entity may not be transformable until streaming ends.
 M.Render.Reset(); failed=false
 local geometry={x=100,y=10,z=1,yaw=0}

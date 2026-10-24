@@ -53,7 +53,7 @@ auto_start true
 -- and puts it on `OPX.Lib`; see that file for why only the client half uses it.
 dependency "opx_lib"
 -- Cooked pool hosts and table cleanup are mounted by the launcher before boot.
-dependency "opx_pool_assets >=0.2.0"
+dependency "opx_pool_assets >=0.3.0"
 
 reload_policy "reconnect"
 

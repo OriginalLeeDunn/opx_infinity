@@ -5,13 +5,13 @@ local Model = M.Model
 M.Render = {}
 local R = M.Render
 local ids, stick, created, failure, stroke = {}, nil, {}, nil, nil
-local models
+local models, registered
 function R.Clear()
 	for index, id in pairs(ids) do Open77.props.remove(id); ids[index] = nil end
 	if stick then Open77.props.remove(stick); stick = nil end
 	created, stroke = {}, nil
 end
-function R.Reset() R.Clear(); failure = nil; models = Model.Models() end
+function R.Reset() R.Clear(); failure = nil; models = Model.Models(); registered = false end
 local function fail(why)
 	if not failure then
 		failure = tostring(why)
@@ -20,6 +20,29 @@ local function fail(why)
 	end
 	R.Clear()
 	return false
+end
+-- op77.152 registerModel(id, {mesh, visualEntity, physicalEntity?}) returns
+-- an opaque resource-owned model ID. Cooked visual hosts are shipped by assets
+-- 0.3.0; a raw .mesh name alone falls back to a marker on this client.
+function R.Register()
+	if failure then return false end
+	if registered then return true end
+	if not models then return fail('invalid model configuration') end
+	if models.registerObjects then
+		if type(Open77.props.registerModel) ~= 'function' then return fail('prop model registration requires op77.152 or later') end
+		for number = 1, Model.BALLS-1 do
+			local ok, model, why = pcall(Open77.props.registerModel, 'pool_ball_' .. number, {
+				mesh = models.objects[number], visualEntity = ('opx\\pool\\ball_%02d.ent'):format(number),
+			})
+			if not ok or type(model) ~= 'string' or #model == 0 or #model > 256 or model:find('%c') then
+				return fail('registerModel ball ' .. number .. ': ' .. tostring(ok and (why or model) or model))
+			end
+			models.objects[number] = model
+		end
+	end
+	registered = true
+	if models.registerObjects then OPX.Note('pool', 'registered fifteen cooked visual ball hosts') end
+	return true
 end
 local function make(model, position, yaw)
 	local id, why = Open77.props.create({ model = model, position = position, yaw = yaw or 0, collision = false, physics = "none", visible = true })
@@ -48,8 +71,7 @@ function R.StickTransform(spec, ball, angle, power, forward)
 end
 function R.Draw(spec, positions, aiming, angle, power)
 	if failure then return false end
-	models = models or Model.Models()
-	if not models then return fail('invalid model configuration') end
+	if not R.Register() then return false end
 	for index, ball in ipairs(positions) do
 		if ball[3] then
 			local position = Model.World(spec, ball[1], ball[2])
