@@ -20,9 +20,6 @@ local M = OPX.Modules.Declare{
 	id = 'chat',
 	side = 'both',
 	fatal = false,
-	-- Not a requirement: without it the box simply never hides. With it, the box
-	-- gives the keyboard back while a player is down, instead of fighting the
-	-- down screen for it.
 	-- `downed` is not a requirement: without it the box simply never hides. With
 	-- it, the box gives the keyboard back while a player is down.
 	-- `character` is not one either: a runtime without it is one where the
